@@ -176,7 +176,7 @@ Module['FS_createPath']("/", "pack", true, true);
     }
 
     }
-    loadPackage({"files": [{"filename": "/pack/bzImage", "start": 0, "end": 8268288}, {"filename": "/pack/edk2-aarch64-code.fd", "start": 8268288, "end": 75377152}, {"filename": "/pack/efi-virtio.rom", "start": 75377152, "end": 75537920}, {"filename": "/pack/rootfs.bin", "start": 75537920, "end": 173803008}, {"filename": "/pack/vm.state", "start": 173803008, "end": 265433682}], "remote_package_size": 265433682});
+    loadPackage({"files": [{"filename": "/pack/bzImage", "start": 0, "end": 8268288}, {"filename": "/pack/edk2-aarch64-code.fd", "start": 8268288, "end": 75377152}, {"filename": "/pack/efi-virtio.rom", "start": 75377152, "end": 75537920}, {"filename": "/pack/rootfs.bin", "start": 75537920, "end": 173803008}, {"filename": "/pack/vm.state", "start": 173803008, "end": 265450044}], "remote_package_size": 265450044});
 
   })();
 
