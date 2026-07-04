@@ -31,16 +31,16 @@
     { id: "custom",    name: "ISO / disk image…",                          boot: "cdrom",
       url: "", kind: "cdrom", ram: 512, vga: 32 },
     { id: "x64pw",     name: "64-bit Linux + Python & Wine (x86_64) — QEMU-Wasm",  boot: "q64",
-      base: "vendor/qemu-aload/", url: "", ram: 512 },
+      base: "vendor/qemu-aload/", url: "", ram: 1536 },
     // Lightweight graphical desktop: its OWN image (no Wine, no browser — browsers freeze Xvnc under
     // TCG). twm/tint2 + a terminal + mc file manager. Reuses the x86_64 engine (wasm shared from
     // qemu-aload — no duplication). The image auto-starts the desktop, so boot64 sends no start-desktop.
     { id: "x64pwd",    name: "64-bit Linux — Desktop (x86_64) — QEMU-Wasm",  boot: "q64",
-      base: "vendor/qemu-desktop/", wasm: "../qemu-aload/qemu-system-x86_64.wasm", url: "", ram: 512, gui: true },
+      base: "vendor/qemu-desktop/", wasm: "../qemu-aload/qemu-system-x86_64.wasm", url: "", ram: 1536, gui: true },
     // REAL 64-bit ARM (aarch64) Linux — separate QEMU engine (qemu-system-aarch64). Alpine + Python +
     // internet; no Wine (x86-only). wasm names the engine binary so run.js fetches the right one.
     { id: "arm64",     name: "64-bit Linux — ARM64 (aarch64) — QEMU-Wasm",  boot: "q64",
-      base: "vendor/qemu-aarch64/", wasm: "qemu-system-aarch64.wasm", url: "", ram: 512, arch: "arm64" },
+      base: "vendor/qemu-aarch64/", wasm: "qemu-system-aarch64.wasm", url: "", ram: 1536, arch: "arm64" },
   ];
 
   // The 64-bit Linux rootfs (~213 MB compressed) is NOT bundled in the app — it's hosted on a GitHub
@@ -54,13 +54,13 @@
   const ROOTFS_REMOTE = {
     "vendor/qemu-aload/": { files: [
       { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux64-v1/qemu64-rootfs.data.gz",
-        name: "qemu64-rootfs-666819936.data.gz", mb: 220 },
+        name: "qemu64-rootfs-718508644.data.gz", mb: 260 },
     ] },
     "vendor/qemu-aarch64/": { files: [
       { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-arm64-v1/qemu-aarch64-engine.wasm.gz",
-        name: "qemu-aarch64-engine-58401136.wasm.gz", mb: 20 },
+        name: "qemu-aarch64-engine-58401341.wasm.gz", mb: 20 },
       { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-arm64-v1/qemu-aarch64-rootfs.data.gz",
-        name: "qemu-aarch64-rootfs-265450044.data.gz", mb: 57 },
+        name: "qemu-aarch64-rootfs-265429461.data.gz", mb: 57 },
     ] },
     "vendor/qemu-desktop/": { files: [   // x86_64 engine shared from qemu-aload; only the rootfs downloads
       { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v1/qemu-desktop-rootfs.data.gz",
@@ -337,7 +337,7 @@
             <select class="e-sel" id="kind" style="width:96px">
               <option value="cdrom">CD/ISO</option><option value="hda">HDD</option><option value="fda">Floppy</option>
             </select>
-            <input class="e-in" id="ram" style="width:64px" type="number" value="512" title="RAM (MB). More is NOT faster here — the limit is the emulated CPU, and too much RAM pressures the iPad and slows everything down.">
+            <input class="e-in" id="ram" style="width:64px" type="number" value="1536" title="RAM (MB) for the 64-bit guests — up to 1536 (the engine's 3 GB WebAssembly heap must also hold the OS image; QEMU itself caps at 2047). More RAM helps big pip installs and file work; it does NOT speed up the CPU.">
             <select class="e-sel" id="cores" style="width:104px;display:none" title="CPU cores for the 64-bit Linux guests (applies at boot). 2 = balanced default: real parallel execution, and idle power stays as low as 1 core. More cores help CPU-heavy parallel jobs; disk-heavy jobs gain little beyond 2. 1 = simplest. Power is only spent while cores are actually busy.">
               <option value="1">1 core</option>
               <option value="2" selected>2 cores</option>
@@ -607,20 +607,31 @@
               wasm: g.wasm || "qemu-system-x86_64.wasm",   // engine binary name (aarch64 guest = qemu-system-aarch64.wasm)
               netWs: "ws://127.0.0.1:8889/",   // in-app gVisor netstack (MiniOSApp.startNetStack) -> real internet
               vnc: "ws://127.0.0.1:8889/vnc",   // noVNC GUI bridge: netstack /vnc endpoint -> vn.Dial(guest x11vnc:5900)
-              ram: Math.min(512, Math.max(64, +ramInput.value || g.ram || 512)),   // toolbar drives QEMU -m; CAPPED at 512 — 512 boots / 768 OOMs after stripping the dead vm.state (Mac-verified)
+              ram: Math.min(1536, Math.max(64, +ramInput.value || g.ram || 1536)),   // toolbar drives QEMU -m; cap 1536 (Mac-verified boot; 2047 = QEMU wasm hard max but doesn't fit the 3GB heap beside the rootfs)
               smp: Math.max(1, Math.min(8, +coresSel.value || (args && +args.cores) || 0)) || undefined,   // toolbar "cores" (falls back to UEFI setup, then the guest's baked -smp)
               onStatus: (m) => { try { status.textContent = m; } catch (e) {} },
               onReady: (r) => {
                 setState("Running");
                 qemuTerm = r && (r.xterm || r.term); qemuFs = r && r.fs; panel64Ref = panel64;
+                try { panel64.setFs && panel64.setFs(qemuFs); } catch (e) {}   // Files tab ⬆/⬇ transfers
                 try { panel64.setXterm(qemuTerm); } catch (e) {}
                 try { if (r && r.connectGui) panel64.onGuiOpen = (host) => r.connectGui(host, panel64.setGuiStatus); } catch (e) {}
-                // Both guests open the GUI straight away (connectGui auto-retries until Xvnc is up).
-                try { panel64.showGui(); } catch (e) {}
                 if (g.gui) {   // full-screen desktop (the qemu-desktop image auto-starts twm/tint2 + terminal + mc)
+                  try { panel64.showGui(); } catch (e) {}   // the desktop IS the GUI → connect immediately
                   status.textContent = "Running — full-screen x86_64 Linux desktop (terminal + mc file manager). It comes up ~20–40s after boot; tap a window, then ⌨ Type to use the keyboard.";
                 } else {        // [ terminal | GUI ]: blank GUI until you launch an X program from the terminal
-                  status.textContent = "Running — x86_64 Linux. Type commands in the left terminal; the GUI on the right stays blank until you launch a graphical program (e.g. `xeyes &`, or a Wine app). Tap the GUI then ⌨ Type to use the keyboard in it.";
+                  // LAZY DISPLAY (power/heat): do NOT connect noVNC on boot — a connected viewer renders
+                  // the (blank) Xvnc framebuffer continuously = wasted CPU/GPU even with nothing on screen.
+                  // Connect only when the user first taps the GUI pane (i.e. actually wants to see output).
+                  try { panel64.setGuiStatus("Graphical output appears here. Launch an X app (e.g. `xeyes &`) or a Wine `.exe` in the terminal, then TAP here to show it."); } catch (e) {}
+                  try {
+                    const guiHost = panel64.guiHost;
+                    if (guiHost) {
+                      const connectOnce = () => { guiHost.removeEventListener("pointerdown", connectOnce, true); try { panel64.showGui(); } catch (e) {} };
+                      guiHost.addEventListener("pointerdown", connectOnce, true);
+                    }
+                  } catch (e) {}
+                  status.textContent = "Running — x86_64 Linux. Type in the left terminal; the GUI stays OFF (saves power) until you launch a graphical program and TAP the right pane to show it.";
                 }
               },
               onError: (e) => { setState("64-bit error"); status.textContent = e.message; },
@@ -788,6 +799,21 @@
           // --- 64-bit path: the QEMU guest reads a real terminal, so send ANSI bytes to the
           // xterm/pty (xterm.paste) instead of v86 PS/2 scancodes. qemuTerm is set in boot64. ---
           const send64 = (s) => { try { qemuTerm && qemuTerm.paste(s); } catch (e) {} };
+          // Cursor keys must respect the terminal's DECCKM (application-cursor-keys) mode: full-screen
+          // TUIs (mc, ncdu, vi, htop) send ESC[?1h then expect ESC O A for ↑ (not ESC [ A). We paste
+          // bytes directly (bypassing xterm's own mode-aware keymap), so we read the mode off xterm and
+          // emit the right form — otherwise arrows do nothing inside those apps.
+          const ARROW_L = { ArrowUp: "A", ArrowDown: "B", ArrowRight: "C", ArrowLeft: "D" };
+          const appCursor = () => {
+            try {
+              const t = qemuTerm; if (!t) return false;
+              if (t.modes && typeof t.modes.applicationCursorKeysMode === "boolean") return t.modes.applicationCursorKeysMode;
+              const c = t._core || t.__core;
+              const dm = c && ((c.coreService && c.coreService.decPrivateModes) || (c._coreService && c._coreService.decPrivateModes));
+              return !!(dm && dm.applicationCursorKeys);
+            } catch (e) { return false; }
+          };
+          const arrowSeq = (keyName) => { const L = ARROW_L[keyName]; return L ? ("\x1b" + (appCursor() ? "O" : "[") + L) : null; };
           const ANSI = { Enter: "\r", Backspace: "\x7f", Tab: "\t", Escape: "\x1b", Delete: "\x1b[3~",
             ArrowUp: "\x1b[A", ArrowDown: "\x1b[B", ArrowLeft: "\x1b[D", ArrowRight: "\x1b[C" };
           const ctrlByte = (ch) => String.fromCharCode(String(ch).toLowerCase().charCodeAt(0) & 0x1f);
@@ -823,6 +849,7 @@
                 if (e.key && e.key.length === 1) { guiText(e.key, ctrlOn || e.ctrlKey); if (ctrlOn) setCtrl(false); return true; }
                 return false;
               }
+              if (ARROW_L[e.key]) { send64(arrowSeq(e.key)); return true; }  // DECCKM-aware cursor keys
               if (ANSI[e.key]) { send64(ANSI[e.key]); return true; }   // else feed the serial pty
               if (e.key && e.key.length === 1) {
                 if (ctrlOn || e.ctrlKey) { send64(ctrlByte(e.key)); setCtrl(false); } else send64(e.key);
@@ -865,6 +892,7 @@
                   if (gch) { guiText(gch, info.ctrl || ctrlOn); if (ctrlOn) setCtrl(false); }
                   return;
                 }
+                if (ARROW_L[qk]) { send64(arrowSeq(qk)); return; }   // DECCKM-aware cursor keys
                 if (ANSI[qk]) { send64(ANSI[qk]); return; }    // else serial pty
                 const qch = info.char || (qk && qk.length === 1 ? qk : "");
                 if (!qch) return;
@@ -900,7 +928,9 @@
                 else { const GK = { esc: GUIKS.Escape, tab: GUIKS.Tab, up: GUIKS.ArrowUp, down: GUIKS.ArrowDown, left: GUIKS.ArrowLeft, right: GUIKS.ArrowRight }; if (GK[k]) guiKey(GK[k]); }
                 return;
               }
-              const SEQ = { ctrlc: "\x03", esc: "\x1b", tab: "\t", up: "\x1b[A", down: "\x1b[B", left: "\x1b[D", right: "\x1b[C" };
+              const BTN2ARROW = { up: "ArrowUp", down: "ArrowDown", left: "ArrowLeft", right: "ArrowRight" };
+              if (BTN2ARROW[k]) { send64(arrowSeq(BTN2ARROW[k])); return; }   // DECCKM-aware cursor keys
+              const SEQ = { ctrlc: "\x03", esc: "\x1b", tab: "\t" };
               if (SEQ[k]) send64(SEQ[k]);   // else ANSI to the serial pty
               return;
             }

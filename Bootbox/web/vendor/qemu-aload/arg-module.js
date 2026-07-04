@@ -18,7 +18,7 @@ Module['arguments'] =
     "-L", "/pack/",
     "-drive", "if=virtio,format=raw,file=/pack/rootfs.bin",
     "-kernel", "/pack/bzImage",
-    "-append", "console=ttyS0,115200n8 root=/dev/vda rootwait ro quiet loglevel=4 nowatchdog nosoftlockup audit=0 tsc=reliable no_timer_check cryptomgr.notests random.trust_cpu=on QEMU_MODE=1 init=/sbin/tini -- /sbin/init",
+    "-append", "nohz=on console=ttyS0,115200n8 root=/dev/vda rootwait ro quiet loglevel=4 nowatchdog nosoftlockup audit=0 tsc=reliable no_timer_check cryptomgr.notests random.trust_cpu=on QEMU_MODE=1 init=/sbin/tini -- /sbin/init",
     "-virtfs", "local,path=/,mount_tag=wasi0,security_model=passthrough,id=wasi0",
     "-virtfs", "local,path=/pack,mount_tag=wasi1,security_model=passthrough,id=wasi1",
     "-nic", "none"

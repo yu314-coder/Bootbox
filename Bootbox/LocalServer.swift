@@ -98,17 +98,17 @@ final class LocalServer {
         // Cache filename is size-tagged so a rebuilt image re-downloads instead of size-mismatching
         // load.js (keep in sync with emulator.js ROOTFS_REMOTE.name).
         if rel == "vendor/qemu-aload/qemu-system-x86_64.data.gz" {
-            let cached = VMStorage.importsDir().appendingPathComponent("qemu64-rootfs-666819936.data.gz")
+            let cached = VMStorage.importsDir().appendingPathComponent("qemu64-rootfs-718508644.data.gz")
             return FileManager.default.fileExists(atPath: cached.path) ? cached : nil
         }
         // ARM64 (aarch64) guest: BOTH the engine wasm and the rootfs are download-on-demand (neither
         // bundled). The gzip-on-the-fly path requests the .wasm.gz / .data.gz; serve the cached files.
         if rel == "vendor/qemu-aarch64/qemu-system-aarch64.wasm.gz" {
-            let cached = VMStorage.importsDir().appendingPathComponent("qemu-aarch64-engine-58401136.wasm.gz")
+            let cached = VMStorage.importsDir().appendingPathComponent("qemu-aarch64-engine-58401341.wasm.gz")
             return FileManager.default.fileExists(atPath: cached.path) ? cached : nil
         }
         if rel == "vendor/qemu-aarch64/qemu-system-aarch64.data.gz" {
-            let cached = VMStorage.importsDir().appendingPathComponent("qemu-aarch64-rootfs-265450044.data.gz")
+            let cached = VMStorage.importsDir().appendingPathComponent("qemu-aarch64-rootfs-265429461.data.gz")
             return FileManager.default.fileExists(atPath: cached.path) ? cached : nil
         }
         // Desktop guest (x86_64, no Wine/browser): rootfs download-on-demand; engine wasm shared from

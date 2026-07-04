@@ -118,7 +118,7 @@
       '</div>' +
       '<div class="q64-gui"><div class="q64-guimsg">Tap 🖥️ GUI after the guest boots. The Linux desktop comes up ~20–40s after the # prompt.</div></div>' +
       '<div class="q64-files">' +
-      '<div class="q64-fbar"><button class="q64-fbtn q64-fup" title="Up">‹</button><div class="q64-fpath">/</div><button class="q64-fbtn q64-fref" title="Refresh">⟳</button></div>' +
+      '<div class="q64-fbar"><button class="q64-fbtn q64-fup" title="Up">‹</button><div class="q64-fpath">/</div><button class="q64-fbtn q64-fsend" title="Copy a file from the iPad (Files app → Bootbox) into this folder">⬆ From iPad</button><button class="q64-fbtn q64-fref" title="Refresh">⟳</button></div>' +
       '<div class="q64-flist"><div class="q64-fmsg">Open after the guest boots.</div></div>' +
       '<div class="q64-fview"><div class="q64-fbar"><button class="q64-fbtn q64-fclose">‹ Files</button><div class="q64-fpath q64-fvname"></div></div><pre></pre></div>' +
       '</div>' +
@@ -251,8 +251,10 @@
       if (!html) html = '<div class="q64-fmsg">Empty folder.</div>';
       flist.innerHTML = html;
       Array.prototype.forEach.call(flist.querySelectorAll(".q64-frow"), function (r) {
-        r.onclick = function () {
+        r.onclick = function (ev) {
+          var dl = ev.target && ev.target.closest && ev.target.closest(".q64-fdl");
           var nm = r.getAttribute("data-nm"), isd = r.getAttribute("data-d") === "1";
+          if (dl) { downloadFile(joinPath(dir, nm), nm); return; }
           if (isd) loadFiles(joinPath(dir, nm)); else openFile(joinPath(dir, nm), nm);
         };
       });
@@ -262,8 +264,52 @@
       return '<div class="q64-frow" data-nm="' + esc(name).replace(/"/g, "&quot;") + '" data-d="' + (isDir ? "1" : "0") + '">' +
         '<span class="q64-fic">' + icon + "</span>" +
         '<span class="q64-fnm">' + esc(name) + "</span>" +
-        (isDir ? '<span class="q64-fch">›</span>' : '<span class="q64-fsz">' + esc(size) + "</span>") +
+        (isDir ? '<span class="q64-fch">›</span>'
+               : '<button class="q64-fbtn q64-fdl" data-dl="' + esc(name).replace(/"/g, "&quot;") + '" title="Save this file to the iPad (Files app → Bootbox)">⬇</button>') +
         "</div>";
+    }
+    // ⬇ guest → iPad: read the file as base64 over the pty, decode, POST to the host
+    // (LocalServer `POST /save/<name>` writes it into the Files-app Bootbox folder).
+    async function downloadFile(path, name) {
+      fmsg("Reading " + name + " …");
+      var qp = "'" + path.replace(/'/g, "'\\''") + "'";
+      var sz = parseInt(await scrape("stat -c %s " + qp + " 2>/dev/null || echo -1", 20000), 10);
+      if (isNaN(sz) || sz < 0) { fmsg("Can't read " + name); return; }
+      if (sz > 32 * 1024 * 1024) { fmsg("Too big for the panel (" + (sz/1048576|0) + " MB > 32 MB) — use /share or split it."); return; }
+      var b64 = await scrape("base64 " + qp + " | tr -d '\\n'", 240000);
+      if (!b64 || b64 === "__BUSY__") { fmsg("Read failed — try again."); return; }
+      var bin;
+      try { var s = atob(b64.replace(/[^A-Za-z0-9+/=]/g, "")); bin = new Uint8Array(s.length); for (var i = 0; i < s.length; i++) bin[i] = s.charCodeAt(i); }
+      catch (e) { fmsg("Decode failed (not a clean read)."); return; }
+      try {
+        var resp = await fetch("/save/" + encodeURIComponent(name), { method: "POST", body: bin });
+        fmsg(resp.ok ? ("Saved ⬇ " + name + " → Files app → Bootbox (" + (bin.length/1024|0) + " KB)") : ("Host save failed: HTTP " + resp.status));
+      } catch (e) { fmsg("Host save unavailable here (" + ((e && e.message) || e) + ")"); }
+    }
+    // ⬆ iPad → guest: pick an imported file (Files app → Bootbox), stream it into the shared
+    // /share folder (host-side 9p write — instant), then cp it into the current directory.
+    async function uploadFromIpad() {
+      if (!shareFs || !shareFs.write) { fmsg("Upload needs a running 64-bit guest."); return; }
+      var names = [];
+      try {
+        var r = await (window.Bridge ? Bridge.call("binary", "list", {}) : null);
+        names = Array.isArray(r) ? r : (r && r.result) || [];
+      } catch (e) {}
+      if (!names.length) { fmsg("No files in the iPad Bootbox folder (add some via the Files app)."); return; }
+      var pick = prompt("Copy which file into " + curDir + "?\n\n" + names.join("\n"), names[0]);
+      if (!pick || names.indexOf(pick) < 0) return;
+      fmsg("Copying " + pick + " from the iPad …");
+      try {
+        var resp = await fetch("vmres://iso/" + encodeURIComponent(pick));
+        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        var bytes = new Uint8Array(await resp.arrayBuffer());
+        if (!shareFs.write(pick, bytes)) throw new Error("9p write failed");
+        var qsrc = "'/share/" + pick.replace(/'/g, "'\\''") + "'";
+        var qdst = "'" + (curDir === "/" ? "/" : curDir + "/").replace(/'/g, "'\\''") + "'";
+        await scrape("cp " + qsrc + " " + qdst + " && echo COPIED", 60000);
+        fmsg("⬆ " + pick + " → " + curDir);
+        loadFiles(curDir);
+      } catch (e) { fmsg("Upload failed: " + ((e && e.message) || e)); }
     }
     async function openFile(path, name) {
       fvname.textContent = name;
@@ -276,6 +322,9 @@
       fviewPre.textContent = (res == null ? "Terminal not ready." : res) || "(empty file)";
       fviewPre.scrollTop = 0;
     }
+    var fsendBtn = panel.querySelector(".q64-fsend");
+    if (fsendBtn) fsendBtn.onclick = function () { uploadFromIpad(); };
+    var shareFs = null;
     fupBtn.onclick = function () { if (curDir !== "/") loadFiles(parentOf(curDir)); };
     frefBtn.onclick = function () { loadFiles(curDir); };
     fcloseBtn.onclick = function () { fview.style.display = "none"; };
@@ -295,6 +344,7 @@
       runCmd: runCmd,
       guiHost: guiEl,
       onGuiOpen: null,
+      setFs: function (f) { shareFs = f; },
       showGui: function () { showTab("gui"); },
       // True only when keys should go to the GUI: the GUI is the focused surface (desktop = always;
       // console = after you tap the GUI canvas) AND it's visible. Drives emulator.js key routing.
@@ -312,12 +362,14 @@
 
     // ---- apply the boot mode ----
     if (mode === "console" || mode === "desktop") {
-      // Right pane is GUI-only: hide the Console + Files tabs (the LEFT terminal is the console).
+      // The LEFT terminal is the console → hide the redundant Console tab. The 📁 Files tab STAYS in
+      // console mode: it's the point-and-tap file manager for the guest FS (browse, download to the
+      // iPad, upload from the Files app) — much easier than shell commands for managing files.
       var cTab = panel.querySelector('.q64-tab[data-tab="console"]');
       var fTab = panel.querySelector('.q64-tab[data-tab="files"]');
       if (cTab) cTab.style.display = "none";
-      if (fTab) fTab.style.display = "none";
-      panel.classList.add("gui-active");          // GUI is the only surface — keep the pane wide
+      if (fTab && mode === "desktop") fTab.style.display = "none";   // desktop = GUI-only surface
+      panel.classList.add("gui-active");          // keep the pane wide
     }
     if (mode === "desktop") {
       termHost.style.display = "none";            // no console pane — the desktop fills the screen

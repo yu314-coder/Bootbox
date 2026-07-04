@@ -74,10 +74,46 @@
     termEl.style.cssText = "width:100%;height:100%;background:#0b0f1a";
     host.appendChild(termEl);
 
-    const xterm = new Terminal({ fontSize: 13, theme: { background: "#0b0f1a" } });
+    const xterm = new Terminal({
+      fontSize: 13, theme: { background: "#0b0f1a" },
+      scrollback: 10000,          // was default 1000 — keep real history to scroll back through
+      scrollSensitivity: 3,       // wheel/trackpad
+      fastScrollModifier: "shift",
+    });
     xterm.open(termEl);
     const { master, slave } = openpty();
     xterm.loadAddon(master);
+
+    // --- Touch-drag scrolling of the scrollback (iPad has no scroll wheel). xterm's own touch
+    // handling is unreliable here, so drive it directly: a vertical finger drag scrolls by whole
+    // rows; a short tap (< ~8 px) is NOT a scroll and falls through to focus/keyboard. Also handles
+    // trackpad/wheel via the native 'wheel' event → scrollLines. When a full-screen (alt-buffer) TUI
+    // like mc/ncdu/vi is up, the app owns the screen (no scrollback), so we don't hijack the drag —
+    // arrow keys navigate instead.
+    (function wireScroll() {
+      function altBuffer() { try { return xterm.buffer && xterm.buffer.active && xterm.buffer.active.type === "alternate"; } catch (e) { return false; } }
+      function cellH() {
+        try { var ds = xterm._core && xterm._core._renderService && xterm._core._renderService.dimensions;
+          return (ds && (ds.actualCellHeight || (ds.css && ds.css.cell && ds.css.cell.height))) || 17; } catch (e) { return 17; }
+      }
+      var sy = 0, acc = 0, dragging = false;
+      termEl.addEventListener("touchstart", function (e) {
+        if (e.touches.length !== 1 || altBuffer()) { dragging = false; return; }
+        sy = e.touches[0].clientY; acc = 0; dragging = true;
+      }, { passive: true });
+      termEl.addEventListener("touchmove", function (e) {
+        if (!dragging || e.touches.length !== 1) return;
+        var y = e.touches[0].clientY, dy = y - sy; sy = y; acc += dy;
+        var h = cellH(), rows = (acc / h) | 0;
+        if (rows) { acc -= rows * h; try { xterm.scrollLines(-rows); } catch (er) {} if (e.cancelable) e.preventDefault(); }
+      }, { passive: false });
+      termEl.addEventListener("wheel", function (e) {
+        if (altBuffer()) return;
+        var rows = Math.round(e.deltaY / cellH()) || (e.deltaY > 0 ? 1 : -1);
+        try { xterm.scrollLines(rows); } catch (er) {}
+        if (e.cancelable) e.preventDefault();
+      }, { passive: false });
+    })();
 
     // --- Fit the terminal to its container. Without this xterm is a fixed 80x24 grid that only
     // fills the top-left of the pane; the rest is dead space where taps/drag do nothing (the exact

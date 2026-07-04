@@ -76,6 +76,11 @@ RUN chmod +x /usr/local/bin/pip && ln -sf pip /usr/local/bin/pip3 && echo "PIP-U
 #    mc (Midnight Commander) is added as a fast TUI file manager (runs in the terminal; type `mc`).
 RUN apk add --no-cache tigervnc twm tint2 xsetroot xterm font-misc-misc ttf-dejavu mc 2>&1 | tail -2 && \
     echo "GUI-LAYER-OK Xvnc=$(ls /usr/bin/Xvnc 2>/dev/null) twm=$(ls /usr/bin/twm 2>/dev/null) tint2=$(ls /usr/bin/tint2 2>/dev/null) mc=$(ls /usr/bin/mc 2>/dev/null) ($(apk info 2>/dev/null | wc -l) pkgs)"
+# 5b) Everyday terminal tools PRE-INSTALLED (apk-over-the-emulated-NIC is slow — `apk add ncdu`
+#     took the user minutes). All tiny TUI/CLI utilities; ncurses-terminfo ensures full-screen
+#     apps (ncdu/htop/mc) draw correctly on the xterm-256color pty.
+RUN apk add --no-cache ncdu htop tree nano less ncurses-terminfo tmux 2>&1 | tail -1 && \
+    echo "TOOLS-OK $(which ncdu htop tree nano less tmux | tr '\n' ' ')"
 # 5a) SLIM the rootfs (workflow-verified: python + the whole desktop still work, ldd-clean after).
 #     Removes perl (a tigervnc dep we never use — xstart execs Xvnc directly, ~40 MB), the libgtk-3
 #     libs (tint2 links gdk-pixbuf, NOT libgtk-3, ~9 MB), all-but-4 DejaVu variants (~8 MB), and

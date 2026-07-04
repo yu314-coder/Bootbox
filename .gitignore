@@ -10,7 +10,7 @@ qemu-build/
 c2w-src/
 
 # Guest-image build outputs (rebuilt via ubuntu-build/Dockerfile.* + container2wasm)
-ubuntu-build/alpine-*-out/
+ubuntu-build/alpine-*/
 ubuntu-build/u1804-out/
 ubuntu-build/ubuntu-out/
 ubuntu-build/*.log
