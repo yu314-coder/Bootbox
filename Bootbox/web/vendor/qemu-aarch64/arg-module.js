@@ -6,7 +6,7 @@ Module['arguments'] =
     // AP-wake race under wasm leaves the 2nd vCPU out of the MP table (thread exists, unused).
     "-cpu", "cortex-a53", "-machine", "virt",
     "-bios", "/pack/edk2-aarch64-code.fd",
-    "-nographic", "-m", "128M", "-accel", "tcg,tb-size=500,thread=multi", "-smp", "2,sockets=1",
+    "-nographic", "-m", "128M", "-accel", "tcg,tb-size=192,thread=multi", "-smp", "2,sockets=1",
     "-L", "/pack/",
     "-drive", "if=virtio,format=raw,file=/pack/rootfs.bin",
     "-kernel", "/pack/bzImage",

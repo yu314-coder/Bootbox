@@ -53,6 +53,7 @@
       ".q64-fbar{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#fff;border-bottom:1px solid #d8dade}" +
       ".q64-fbtn{flex:0 0 auto;cursor:pointer;background:#eef0f4;border:1px solid #d8dade;border-radius:7px;height:30px;min-width:30px;padding:0 10px;color:#0067ed;font:600 14px/1 -apple-system,sans-serif}" +
       ".q64-fbtn:active{background:#e1e4ea}" +
+      ".q64-armed{background:#ffe0e0;border-color:#ff9d9d;color:#d70015}" +
       ".q64-fbtn[disabled]{opacity:.4}" +
       ".q64-fpath{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font:600 13px/1 ui-monospace,monospace;color:#3a3a3c;direction:rtl;text-align:left}" +
       ".q64-flist{flex:1;min-height:0;overflow:auto;-webkit-overflow-scrolling:touch}" +
@@ -164,11 +165,21 @@
     // Unique per-panel marker prefix so begin/end markers never collide with anything already in the
     // scrollback (other tooling, prior output, or the user echoing "zzB").
     var SESS = "QF" + Math.floor((Math.random() || 0.5) * 1e9).toString(36) + "_";
-    function readBuf() {
+    function readBuf(maxLines) {
       if (!xt) return "";
       try {
         var b = xt.buffer.active, s = "", i, ln;
-        for (i = 0; i < b.length; i++) { ln = b.getLine(i); if (ln) s += ln.translateToString(true) + "\n"; }
+        // Scan only the recent tail by default — the begin/end markers are always in the newest output,
+        // and scanning all ~10000 scrollback lines (translateToString each) on every poll was the main
+        // per-poll cost. Callers that produce huge output (base64 download) pass 0 for a full scan.
+        var start = (maxLines && b.length > maxLines) ? b.length - maxLines : 0;
+        for (i = start; i < b.length; i++) {
+          ln = b.getLine(i); if (!ln) continue;
+          // A row with isWrapped=true is the continuation of the previous row (the terminal soft-wrapped a
+          // line longer than the width). Join it WITHOUT a newline so one logical output line stays one line.
+          if (ln.isWrapped && s.length && s.charAt(s.length - 1) === "\n") s = s.slice(0, -1) + ln.translateToString(true) + "\n";
+          else s += ln.translateToString(true) + "\n";
+        }
         return s;
       } catch (e) { return ""; }
     }
@@ -177,18 +188,23 @@
 
     // Run a command in the guest pty and resolve its output (between markers). Serialized via `busy`
     // so the Console, Files browser and key input never interleave on the shared pty.
-    function scrape(cmd, timeoutMs) {
+    function scrape(cmd, timeoutMs, bigOutput) {
       return new Promise(function (resolve) {
         if (!xt) return resolve(null);
         if (busy) return resolve("__BUSY__");
         busy = true;
         var n = ++markN, B = SESS + "B" + n, E = SESS + "E" + n;
-        var line = "printf '" + B + "\\n'; " + cmd + " 2>&1; printf '" + E + "\\n'\r";
+        // Lead with a bare CR so any half-typed console line is submitted (harmlessly erroring) and we
+        // start from a fresh prompt — the auto-retry in loadFiles then covers that first wasted attempt.
+        // (Avoid Ctrl-U here: some paste paths pass it through literally and corrupt the command.)
+        var line = "\rprintf '" + B + "\\n'; " + cmd + " 2>&1; printf '" + E + "\\n'\r";
         try { (xt.paste || xt.input).call(xt, line); } catch (e) { busy = false; return resolve(null); }
-        var t0 = Date.now(), to = timeoutMs || 30000;
+        var t0 = Date.now(), to = timeoutMs || 30000, win = bigOutput ? 0 : 1500;
         (function poll() {
-          var buf = readBuf();
+          var buf = readBuf(win);
           var bi = buf.lastIndexOf(B + "\n"), ei = buf.lastIndexOf(E + "\n");
+          // If the begin marker scrolled past the tail window (unexpectedly large output), retry full-scan once.
+          if (win && (bi < 0 || ei <= bi)) { var full = readBuf(0); bi = full.lastIndexOf(B + "\n"); ei = full.lastIndexOf(E + "\n"); if (bi >= 0 && ei > bi) buf = full; }
           if (bi >= 0 && ei > bi) {
             var res = buf.slice(bi + (B + "\n").length, ei)
               .split("\n").filter(function (l) { return l.indexOf(SESS) < 0; })
@@ -196,7 +212,7 @@
             busy = false; return resolve(res);
           }
           if (Date.now() - t0 > to) { busy = false; return resolve("(timed out — the guest may be slow; try again)"); }
-          setTimeout(poll, 250);
+          setTimeout(poll, 90);
         })();
       });
     }
@@ -217,16 +233,30 @@
     function parentOf(dir) { if (dir === "/" || dir === "") return "/"; var p = dir.replace(/\/$/, "").replace(/\/[^/]*$/, ""); return p === "" ? "/" : p; }
     function fmsg(t) { flist.innerHTML = '<div class="q64-fmsg">' + esc(t) + "</div>"; }
 
-    async function loadFiles(dir) {
+    async function loadFiles(dir, _retry) {
       if (!xt) { fmsg("Open after the guest boots (wait for the # prompt)."); return; }
       dir = dir || "/";
       curDir = dir;
       fpath.textContent = dir;
       fupBtn.disabled = (dir === "/");
-      fmsg("Loading " + dir + " …");
-      // -A: dotfiles too (no . / ..). -p: trailing / on dirs. -1: one per line. Quote the path.
+      if (!_retry) fmsg("Loading " + dir + " …");
+      // The FIRST listing right after boot is slow (~20s) because the emulated CPU is still finishing the
+      // guest's boot; once it settles a listing is <1s. Explain that if it's taking a while, so it doesn't
+      // look stuck (this is the "it works the second time" the user hit — the 2nd try is post-settle).
+      var slow = setTimeout(function () { if (curDir === dir) fmsg("Loading " + dir + " … (the first listing is slow while the guest finishes booting — a moment)"); }, 3500);
+      // -A: dotfiles too (hidden files show, no . / ..). -p: trailing / on dirs. -1: one name per line.
+      // (NOT ls -l: it stats every entry — slow on the emulated CPU during first-boot — and its wide rows
+      // soft-wrap at the terminal width, corrupting the scrape. Names-only is fast and wrap-proof.)
       var qd = "'" + dir.replace(/'/g, "'\\''") + "'";
       var res = await scrape("ls -Ap1 " + qd + " 2>&1", 40000);
+      clearTimeout(slow);
+      // AUTO-RETRY once — this is exactly the "it works the second time" the user hit: the first scrape can
+      // land while the pty is momentarily busy or mid-line, so retry once automatically before giving up.
+      if (!_retry && (res === "__BUSY__" || res == null || (typeof res === "string" && res.indexOf("timed out") >= 0))) {
+        await new Promise(function (r) { setTimeout(r, 400); });
+        if (curDir !== dir) return;
+        return loadFiles(dir, true);
+      }
       if (res === "__BUSY__") { fmsg("Busy — tap ⟳ to retry."); return; }
       if (res == null) { fmsg("Terminal not ready."); return; }
       if (curDir !== dir) return;   // user navigated again while we waited
@@ -234,39 +264,58 @@
       if (lines.length === 1 && /No such file|not found|Permission denied|cannot/i.test(lines[0])) { fmsg(lines[0]); return; }
       var dirs = [], files = [];
       lines.forEach(function (l) {
-        if (/^(ls:|total )/.test(l)) return;
-        if (l.charAt(l.length - 1) === "/") dirs.push(l.slice(0, -1));
-        else files.push(l);
+        if (/^total\s/.test(l) || /^ls:/.test(l)) return;
+        var isDir = l.charAt(l.length - 1) === "/";       // -p marks dirs with a trailing slash
+        var name = isDir ? l.slice(0, -1) : l;
+        if (name === "" || name === "." || name === "..") return;
+        (isDir ? dirs : files).push({ name: name, size: "" });
       });
-      dirs.sort(); files.sort();
+      var byName = function (a, b) { return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0); };
+      dirs.sort(byName); files.sort(byName);
       var html = "";
-      dirs.forEach(function (d) { html += row("📁", d, "", true); });
+      dirs.forEach(function (d) { html += row("📁", d.name, "", true); });
       files.forEach(function (f) {
-        var ic = "📄"; if (/\.(png|jpg|jpeg|gif|bmp|svg|ico)$/i.test(f)) ic = "🖼️";
-        else if (/\.(sh|py|js|c|cpp|go|rs|rb|pl|conf|cfg|ini|json|yaml|yml|txt|md|log)$/i.test(f)) ic = "📄";
-        else if (/\.(gz|zip|tar|xz|bz2|7z)$/i.test(f)) ic = "🗜️";
-        else if (f.indexOf(".") < 0) ic = "⚙️";
-        html += row(ic, f, "", false);
+        var ic = "📄"; if (/\.(png|jpg|jpeg|gif|bmp|svg|ico)$/i.test(f.name)) ic = "🖼️";
+        else if (/\.(gz|zip|tar|xz|bz2|7z)$/i.test(f.name)) ic = "🗜️";
+        else if (f.name.indexOf(".") < 0) ic = "⚙️";
+        html += row(ic, f.name, f.size, false);
       });
       if (!html) html = '<div class="q64-fmsg">Empty folder.</div>';
       flist.innerHTML = html;
       Array.prototype.forEach.call(flist.querySelectorAll(".q64-frow"), function (r) {
         r.onclick = function (ev) {
-          var dl = ev.target && ev.target.closest && ev.target.closest(".q64-fdl");
+          var t = ev.target && ev.target.closest ? ev.target.closest(".q64-fbtn") : null;
           var nm = r.getAttribute("data-nm"), isd = r.getAttribute("data-d") === "1";
-          if (dl) { downloadFile(joinPath(dir, nm), nm); return; }
+          if (t && t.classList.contains("q64-fdl")) { downloadFile(joinPath(dir, nm), nm); return; }
+          if (t && t.classList.contains("q64-frm")) { deleteEntry(t, joinPath(dir, nm), nm, isd); return; }
           if (isd) loadFiles(joinPath(dir, nm)); else openFile(joinPath(dir, nm), nm);
         };
       });
       flist.scrollTop = 0;
     }
     function row(icon, name, size, isDir) {
-      return '<div class="q64-frow" data-nm="' + esc(name).replace(/"/g, "&quot;") + '" data-d="' + (isDir ? "1" : "0") + '">' +
+      var q = esc(name).replace(/"/g, "&quot;");
+      return '<div class="q64-frow" data-nm="' + q + '" data-d="' + (isDir ? "1" : "0") + '">' +
         '<span class="q64-fic">' + icon + "</span>" +
         '<span class="q64-fnm">' + esc(name) + "</span>" +
-        (isDir ? '<span class="q64-fch">›</span>'
-               : '<button class="q64-fbtn q64-fdl" data-dl="' + esc(name).replace(/"/g, "&quot;") + '" title="Save this file to the iPad (Files app → Bootbox)">⬇</button>') +
+        (size ? '<span class="q64-fsz">' + esc(size) + "</span>" : "") +
+        (isDir ? "" : '<button class="q64-fbtn q64-fdl" title="Save to the iPad (Files app → Bootbox)">⬇</button>') +
+        '<button class="q64-fbtn q64-frm" title="Delete">🗑</button>' +
+        (isDir ? '<span class="q64-fch">›</span>' : "") +
         "</div>";
+    }
+    // Delete with a confirm-tap (WKWebView blocks window.confirm): first tap arms (🗑→✓?), second deletes.
+    async function deleteEntry(btn, path, name, isDir) {
+      if (btn.getAttribute("data-arm") !== "1") {
+        btn.setAttribute("data-arm", "1"); btn.textContent = "✓?"; btn.classList.add("q64-armed");
+        setTimeout(function () { if (btn) { btn.removeAttribute("data-arm"); btn.textContent = "🗑"; btn.classList.remove("q64-armed"); } }, 2500);
+        return;
+      }
+      fmsg("Deleting " + name + " …");
+      var qp = "'" + path.replace(/'/g, "'\\''") + "'";
+      var res = await scrape("rm -rf " + qp + " && echo OK", 30000);
+      fmsg(/OK/.test(res || "") ? ("Deleted " + name) : ("Delete failed: " + (res || "?")));
+      loadFiles(curDir);
     }
     // ⬇ guest → iPad: read the file as base64 over the pty, decode, POST to the host
     // (LocalServer `POST /save/<name>` writes it into the Files-app Bootbox folder).
@@ -276,7 +325,7 @@
       var sz = parseInt(await scrape("stat -c %s " + qp + " 2>/dev/null || echo -1", 20000), 10);
       if (isNaN(sz) || sz < 0) { fmsg("Can't read " + name); return; }
       if (sz > 32 * 1024 * 1024) { fmsg("Too big for the panel (" + (sz/1048576|0) + " MB > 32 MB) — use /share or split it."); return; }
-      var b64 = await scrape("base64 " + qp + " | tr -d '\\n'", 240000);
+      var b64 = await scrape("base64 " + qp + " | tr -d '\\n'", 240000, true);
       if (!b64 || b64 === "__BUSY__") { fmsg("Read failed — try again."); return; }
       var bin;
       try { var s = atob(b64.replace(/[^A-Za-z0-9+/=]/g, "")); bin = new Uint8Array(s.length); for (var i = 0; i < s.length; i++) bin[i] = s.charCodeAt(i); }
@@ -288,25 +337,42 @@
     }
     // ⬆ iPad → guest: pick an imported file (Files app → Bootbox), stream it into the shared
     // /share folder (host-side 9p write — instant), then cp it into the current directory.
+    // vmres:// → http path: the 64-bit guest runs on the http origin (crossOriginIsolated), where the
+    // custom vmres:// scheme isn't served — it must be rewritten to /vmres/… (this rewrite was MISSING,
+    // so the old raw fetch("vmres://…") failed and the upload silently did nothing).
+    function pRes(u) { return (u.indexOf("vmres://") === 0 && location.protocol === "http:") ? location.origin + "/vmres/" + u.slice(8) : u; }
     async function uploadFromIpad() {
-      if (!shareFs || !shareFs.write) { fmsg("Upload needs a running 64-bit guest."); return; }
+      if (!shareFs || !shareFs.write) { fmsg("Upload needs a running 64-bit guest (wait for the # prompt)."); return; }
+      fmsg("Reading the iPad Bootbox folder …");
       var names = [];
       try {
-        var r = await (window.Bridge ? Bridge.call("binary", "list", {}) : null);
+        var r = await (window.Bridge ? Bridge.call("binary", "list") : null);
         names = Array.isArray(r) ? r : (r && r.result) || [];
       } catch (e) {}
-      if (!names.length) { fmsg("No files in the iPad Bootbox folder (add some via the Files app)."); return; }
-      var pick = prompt("Copy which file into " + curDir + "?\n\n" + names.join("\n"), names[0]);
-      if (!pick || names.indexOf(pick) < 0) return;
+      names = names.filter(function (n) { return n && n.charAt(0) !== "." && !/\.part$/i.test(n); });
+      if (!names.length) { fmsg("No files in the iPad Bootbox folder. Add some in the Files app (On My iPad → Bootbox), then tap ⬆ From iPad again."); return; }
+      // In-panel picker — window.prompt() is blocked/unreliable in WKWebView, so the old chooser never
+      // appeared → "upload cannot work". Render the iPad files as tappable rows instead.
+      var html = '<div class="q64-fmsg">Tap a file to copy into ' + esc(curDir) + ' (⟳ to cancel):</div>';
+      names.forEach(function (n) {
+        html += '<div class="q64-frow q64-pick" data-nm="' + esc(n).replace(/"/g, "&quot;") + '"><span class="q64-fic">⬆</span><span class="q64-fnm">' + esc(n) + "</span></div>";
+      });
+      flist.innerHTML = html;
+      Array.prototype.forEach.call(flist.querySelectorAll(".q64-pick"), function (r) {
+        r.onclick = function () { doUpload(r.getAttribute("data-nm")); };
+      });
+    }
+    async function doUpload(pick) {
       fmsg("Copying " + pick + " from the iPad …");
       try {
-        var resp = await fetch("vmres://iso/" + encodeURIComponent(pick));
-        if (!resp.ok) throw new Error("HTTP " + resp.status);
+        var resp = await fetch(pRes("vmres://iso/" + pick));
+        if (!resp.ok) throw new Error("HTTP " + resp.status + " reading it from the iPad");
         var bytes = new Uint8Array(await resp.arrayBuffer());
-        if (!shareFs.write(pick, bytes)) throw new Error("9p write failed");
+        if (!shareFs.write(pick, bytes)) throw new Error("share write failed");
         var qsrc = "'/share/" + pick.replace(/'/g, "'\\''") + "'";
-        var qdst = "'" + (curDir === "/" ? "/" : curDir + "/").replace(/'/g, "'\\''") + "'";
-        await scrape("cp " + qsrc + " " + qdst + " && echo COPIED", 60000);
+        var dst = (curDir === "/" ? "/" : curDir + "/");
+        var res = await scrape("cp " + qsrc + " '" + dst.replace(/'/g, "'\\''") + "' && echo OK", 60000);
+        if (!/OK/.test(res || "")) throw new Error(res || "copy into the folder failed");
         fmsg("⬆ " + pick + " → " + curDir);
         loadFiles(curDir);
       } catch (e) { fmsg("Upload failed: " + ((e && e.message) || e)); }

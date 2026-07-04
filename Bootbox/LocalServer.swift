@@ -104,11 +104,11 @@ final class LocalServer {
         // ARM64 (aarch64) guest: BOTH the engine wasm and the rootfs are download-on-demand (neither
         // bundled). The gzip-on-the-fly path requests the .wasm.gz / .data.gz; serve the cached files.
         if rel == "vendor/qemu-aarch64/qemu-system-aarch64.wasm.gz" {
-            let cached = VMStorage.importsDir().appendingPathComponent("qemu-aarch64-engine-58401341.wasm.gz")
+            let cached = VMStorage.importsDir().appendingPathComponent("qemu-aarch64-engine-16240484.wasm.gz")
             return FileManager.default.fileExists(atPath: cached.path) ? cached : nil
         }
         if rel == "vendor/qemu-aarch64/qemu-system-aarch64.data.gz" {
-            let cached = VMStorage.importsDir().appendingPathComponent("qemu-aarch64-rootfs-265429461.data.gz")
+            let cached = VMStorage.importsDir().appendingPathComponent("qemu-aarch64-rootfs-265519785.data.gz")
             return FileManager.default.fileExists(atPath: cached.path) ? cached : nil
         }
         // Desktop guest (x86_64, no Wine/browser): rootfs download-on-demand; engine wasm shared from

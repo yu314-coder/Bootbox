@@ -58,9 +58,9 @@
     ] },
     "vendor/qemu-aarch64/": { files: [
       { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-arm64-v1/qemu-aarch64-engine.wasm.gz",
-        name: "qemu-aarch64-engine-58401341.wasm.gz", mb: 20 },
+        name: "qemu-aarch64-engine-16240484.wasm.gz", mb: 4 },
       { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-arm64-v1/qemu-aarch64-rootfs.data.gz",
-        name: "qemu-aarch64-rootfs-265429461.data.gz", mb: 57 },
+        name: "qemu-aarch64-rootfs-265519785.data.gz", mb: 57 },
     ] },
     "vendor/qemu-desktop/": { files: [   // x86_64 engine shared from qemu-aload; only the rootfs downloads
       { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v1/qemu-desktop-rootfs.data.gz",
