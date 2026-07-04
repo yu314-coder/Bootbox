@@ -1,0 +1,118 @@
+:root {
+  --accent: #0078d4;
+  --bios-bg: #0a0a23;
+  --bios-fg: #d6d6f5;
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body {
+  margin: 0; padding: 0; height: 100%; width: 100%;
+  overflow: hidden; background: #000;
+  font-family: "Segoe UI", -apple-system, system-ui, sans-serif;
+  -webkit-user-select: none; user-select: none;
+}
+
+#machine { position: fixed; inset: 0; background: #000; }
+.screen { position: absolute; inset: 0; }
+.hidden { display: none !important; }
+
+/* ---------- Power button ---------- */
+#power-btn {
+  position: fixed; right: 14px; bottom: 14px; z-index: 9999;
+  width: 46px; height: 46px; border-radius: 50%;
+  border: 1px solid #444; background: rgba(20,20,20,0.7);
+  color: #aaa; font-size: 20px; cursor: pointer;
+}
+#power-btn:active { background: #333; }
+
+/* ---------- BIOS ---------- */
+#bios {
+  background: var(--bios-bg); color: var(--bios-fg);
+  font-family: "Cascadia Mono", "SF Mono", Menlo, monospace;
+  padding: 28px 40px; overflow: auto;
+}
+#bios .bios-title {
+  text-align: center; border-bottom: 1px solid #3a3a6a;
+  padding-bottom: 10px; margin-bottom: 18px;
+  letter-spacing: 2px; font-size: 18px; color: #fff;
+}
+#bios .bios-cols { display: flex; gap: 40px; }
+#bios .bios-pane { flex: 1; }
+#bios h3 { color: #8ad; border-bottom: 1px dotted #345; padding-bottom: 4px; }
+#bios .bios-row {
+  display: flex; justify-content: space-between; padding: 6px 8px;
+  border-radius: 4px; cursor: pointer; font-size: 14px;
+}
+#bios .bios-row.sel { background: #2a2a5a; outline: 1px solid #5a5acf; }
+#bios .bios-val { color: #9f9; }
+#bios .bios-help {
+  margin-top: 18px; border-top: 1px solid #3a3a6a; padding-top: 10px;
+  font-size: 12px; color: #99a; min-height: 40px;
+}
+#bios .bios-footer {
+  position: absolute; bottom: 18px; left: 40px; right: 40px;
+  font-size: 12px; color: #778; display: flex; gap: 24px; flex-wrap: wrap;
+}
+#bios .bios-btn {
+  display: inline-block; margin-top: 14px; margin-right: 10px;
+  padding: 8px 16px; border: 1px solid #5a5acf; border-radius: 6px;
+  background: #1a1a3a; color: #cfcfff; cursor: pointer; font-size: 13px;
+}
+#bios .bios-btn:active { background: #2a2a5a; }
+
+/* ---------- Boot (modern, Windows-11 style) ---------- */
+#boot {
+  background:
+    radial-gradient(1200px 800px at 50% 28%, rgba(58,150,221,0.16), transparent 60%),
+    linear-gradient(160deg, #0b1426 0%, #060b16 55%, #04070e 100%);
+  color: #eaf0ff;
+  display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 0;
+  font-family: "Segoe UI", -apple-system, system-ui, sans-serif;
+}
+#boot .boot-stage {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 34px; animation: bootFade .6s ease both;
+}
+@keyframes bootFade { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+
+#boot .logo {
+  width: 104px; height: 104px; display: grid;
+  grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; gap: 8px;
+  filter: drop-shadow(0 10px 30px rgba(58,150,221,.45));
+  animation: logoPulse 2.6s ease-in-out infinite;
+}
+#boot .logo span {
+  background: linear-gradient(150deg, #5cb0ff, #2f86dd);
+  border-radius: 8px;
+}
+#boot .logo span:nth-child(1){ animation: tileIn .5s .00s both; }
+#boot .logo span:nth-child(2){ animation: tileIn .5s .08s both; }
+#boot .logo span:nth-child(3){ animation: tileIn .5s .16s both; }
+#boot .logo span:nth-child(4){ animation: tileIn .5s .24s both; }
+@keyframes tileIn { from { opacity: 0; transform: scale(.6); } to { opacity: 1; transform: none; } }
+@keyframes logoPulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.04); } }
+
+#boot .wordmark { font-size: 26px; font-weight: 300; letter-spacing: 3px; opacity: .92; }
+#boot .wordmark b { font-weight: 600; }
+
+/* Win11-style orbiting dot spinner */
+#boot .dots { position: relative; width: 46px; height: 46px; animation: spin 1.4s linear infinite; }
+#boot .dots i {
+  position: absolute; top: 0; left: 50%; width: 6px; height: 6px; margin-left: -3px;
+  border-radius: 50%; background: #cfe2ff;
+  transform-origin: 3px 23px;
+}
+#boot .dots i:nth-child(1){ transform: rotate(0deg);   opacity: 1;   }
+#boot .dots i:nth-child(2){ transform: rotate(45deg);  opacity: .85; }
+#boot .dots i:nth-child(3){ transform: rotate(90deg);  opacity: .7;  }
+#boot .dots i:nth-child(4){ transform: rotate(135deg); opacity: .55; }
+#boot .dots i:nth-child(5){ transform: rotate(180deg); opacity: .4;  }
+#boot .dots i:nth-child(6){ transform: rotate(225deg); opacity: .28; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+#boot .boot-msg { font-size: 13px; color: #9fb3d6; letter-spacing: .5px; min-height: 18px; }
+#boot .boot-hint {
+  position: absolute; bottom: 26px; font-size: 12px; color: #6b7f9e; letter-spacing: .5px;
+}
+#boot .post { display: none; } /* legacy verbose POST hidden by default */

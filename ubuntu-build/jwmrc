@@ -1,0 +1,67 @@
+<?xml version="1.0"?>
+<!-- Bootbox 64-bit Linux desktop. JWM = a tiny, single-binary window manager that reaches its event
+     loop instantly (unlike fluxbox, which hung under the qemu-wasm TCG CPU and blocked every window
+     map). Gives a taskbar + start menu + clock = a lightweight "desktop computer" feel. -->
+<JWM>
+  <RootMenu height="26" onroot="12">
+    <Program icon="utilities-terminal" label="Terminal">xterm -fn fixed -bg black -fg green</Program>
+    <Program icon="system-file-manager" label="File Manager">pcmanfm</Program>
+    <Separator/>
+    <Program label="Python (REPL)">xterm -fn fixed -bg black -fg white -e python3</Program>
+    <Program label="Disk usage (root)">xterm -fn fixed -e sh -c 'ls -la /; echo; df -h; echo; read x'</Program>
+    <Separator/>
+    <Restart label="Restart desktop" icon="view-refresh"/>
+  </RootMenu>
+
+  <!-- Bottom taskbar: start button, window list, system tray, clock. -->
+  <Tray x="0" y="-1" height="30" autohide="off">
+    <TrayButton label=" Bootbox ">root:1</TrayButton>
+    <Spacer width="4"/>
+    <TaskList maxwidth="260"/>
+    <Spacer/>
+    <Dock/>
+    <Clock format="%a %H:%M"> </Clock>
+  </Tray>
+
+  <Desktops width="1" height="1">
+    <Background type="solid">#1f3350</Background>
+  </Desktops>
+
+  <Group>
+    <Option>tiled</Option>
+  </Group>
+
+  <FocusModel>click</FocusModel>
+  <SnapMode distance="10">border</SnapMode>
+  <MoveMode>opaque</MoveMode>
+  <ResizeMode>opaque</ResizeMode>
+  <DoubleClickTime>400</DoubleClickTime>
+  <DoubleClickDelta>2</DoubleClickDelta>
+
+  <!-- Window-title and menu colours: a clean blue, vaguely desktop-like. -->
+  <WindowStyle>
+    <Font>Sans-9:bold</Font>
+    <Foreground>#dfe8f5</Foreground>
+    <Background>#2c4a6e</Background>
+    <Active><Foreground>#ffffff</Foreground><Background>#2f6bdb</Background></Active>
+  </WindowStyle>
+  <TrayStyle>
+    <Font>Sans-9</Font>
+    <Background>#10203a</Background>
+    <Foreground>#cfe0f5</Foreground>
+  </TrayStyle>
+  <MenuStyle>
+    <Font>Sans-9</Font>
+    <Background>#16263f</Background>
+    <Foreground>#dfe8f5</Foreground>
+    <Active><Background>#2f6bdb</Background><Foreground>#ffffff</Foreground></Active>
+  </MenuStyle>
+
+  <Key key="Up">up</Key>
+  <Key key="Down">down</Key>
+  <Key key="Right">right</Key>
+  <Key key="Left">left</Key>
+  <Key mask="A" key="Tab">nextstacked</Key>
+  <Key mask="A" key="F2">exec:xterm</Key>
+  <Key mask="A" key="F4">close</Key>
+</JWM>

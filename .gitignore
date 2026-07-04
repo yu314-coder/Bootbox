@@ -1,0 +1,34 @@
+# ── Local multi-GB image/build trees — never in git (assets ship via GitHub Releases) ──
+linux-iso/
+build-arch/
+vm/
+distros/
+DerivedData/
+boxedwine/
+qemu-wasm/
+qemu-build/
+c2w-src/
+
+# Guest-image build outputs (rebuilt via ubuntu-build/Dockerfile.* + container2wasm)
+ubuntu-build/alpine-*-out/
+ubuntu-build/u1804-out/
+ubuntu-build/ubuntu-out/
+ubuntu-build/*.log
+
+# Xcode / packaging artifacts
+*.xcarchive
+*.ipa
+build/
+*.log
+
+# Test-harness scratch (created ad hoc during Mac verification)
+Bootbox/web/live*.html
+Bootbox/web/vendor/qemu-aload/qemu-system-x86_64.data
+Bootbox/web/vendor/qemu-aload/qemu-system-x86_64.data.gz
+Bootbox/web/vendor/qemu-aarch64/qemu-system-aarch64.wasm
+Bootbox/web/vendor/qemu-aarch64/qemu-system-aarch64.data.gz
+Bootbox/web/vendor/qemu-desktop/qemu-system-x86_64.data.gz
+Bootbox/web/vendor/qemu-dbg/
+
+# OS noise
+.DS_Store

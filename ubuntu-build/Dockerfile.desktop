@@ -1,0 +1,51 @@
+# Bootbox DESKTOP guest (x86_64) — a lightweight graphical desktop. NO Wine (that stays in the console
+# guest). Web browser = `links`: heavy graphical browsers (BadWolf/WebKitGTK, dillo) were TESTED and
+# they FLOOD the single-threaded Xvnc under the TCG CPU until the GUI freezes (unusable, proven), so
+# instead we ship `links` — a TEXT browser in a terminal (`links URL`, never touches X → safe). It
+# fetches + renders real pages as text and (unlike the heavy ones) does NOT freeze the GUI. (links -g
+# graphics mode was tested too — it stays light/doesn't freeze X, but never maps a window, so text only.)
+# Plus twm/tint2 + terminal + mc (Midnight Commander) file manager. Python + pip preloaded. Far
+# smaller than the Wine image → no OOM.
+FROM alpine:3.20
+
+# 1) Python 3 + FAST pip (uv) + stdlib bytecode (so python startup is fast under the TCG CPU).
+RUN set -eux; \
+    apk add --no-cache python3 py3-pip curl tar; \
+    (apk add --no-cache uv 2>/dev/null || { \
+       curl -fsSL https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-unknown-linux-musl.tar.gz -o /tmp/uv.tgz; \
+       tar xzf /tmp/uv.tgz -C /tmp; cp /tmp/uv-*/uv /tmp/uv-*/uvx /usr/local/bin/; rm -rf /tmp/uv*; }); \
+    rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED; \
+    python3 -m compileall -j 0 -q /usr/lib/python3.12 || true; \
+    (/usr/local/bin/uv --version || uv --version)
+ENV UV_SYSTEM_PYTHON=1
+COPY pip-uv.sh /usr/local/bin/pip
+RUN chmod +x /usr/local/bin/pip && ln -sf pip /usr/local/bin/pip3 && echo "PIP-UV-OK"
+
+# 2) PIP OPTIMIZATION: pre-install a bigger curated set of common PURE-PYTHON packages so the user's
+#    `pip install X` is INSTANT for them (no resolve/download). Compile their bytecode too. (C-extension
+#    packages like numpy aren't pre-installed: PyPI ships glibc manylinux wheels, not musl, so they'd
+#    build from source on Alpine — slow; `apk add py3-numpy` is the fast path if ever needed.)
+RUN set -eux; \
+    KEEP="requests flask rich click pyyaml httpx beautifulsoup4 pydantic urllib3 certifi idna charset-normalizer jinja2 markupsafe itsdangerous werkzeug python-dateutil six setuptools wheel packaging typing-extensions"; \
+    uv pip install $KEEP 2>&1 | tail -2 || true; \
+    uv cache clean 2>&1 | tail -1 || true; \
+    python3 -m compileall -j 0 -q /usr/lib/python3.12/site-packages || true; \
+    echo "PIP-PRELOAD [$(echo $KEEP | wc -w) pkgs] cache=$(du -sh /root/.cache/uv 2>/dev/null | cut -f1)"
+
+# 3) Desktop: Xvnc (X+VNC in one) + twm (the only WM that survives the single-threaded Xvnc under TCG)
+#    + tint2 (panel) + xterm + browsers + mc.
+RUN set -eux; \
+    apk add --no-cache tigervnc twm tint2 xsetroot xterm font-misc-misc ttf-dejavu mc links; \
+    echo "DESKTOP-LAYER $(apk info 2>/dev/null | wc -l) pkgs mc=$(command -v mc)"
+
+# 4) Slim (docs/man/locale/extra fonts) — keeps the download small.
+RUN set -eux; \
+    rm -rf /usr/share/man /usr/share/doc /usr/share/gtk-doc /usr/share/locale /usr/share/i18n /usr/share/info /var/cache/apk/*; \
+    (cd /usr/share/fonts/dejavu 2>/dev/null && ls | grep -vE '^(DejaVuSans\.ttf|DejaVuSans-Bold\.ttf|DejaVuSansMono\.ttf|DejaVuSansMono-Bold\.ttf|fonts\.)' | xargs rm -f) || true; \
+    fc-cache -f 2>/dev/null || true; \
+    echo "SLIM usr=$(du -sm /usr | cut -f1)MB total=$(du -sm / 2>/dev/null | cut -f1)MB"
+
+# Boots straight into the full desktop (launcher menu + browser + file manager).
+COPY xstart-desktop.sh /usr/local/bin/xstart
+RUN chmod +x /usr/local/bin/xstart
+CMD ["/usr/local/bin/xstart"]

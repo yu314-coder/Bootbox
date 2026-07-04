@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Bootbox</title>
+  <link rel="stylesheet" href="css/boot.css" />
+  <link rel="stylesheet" href="css/desktop.css" />
+</head>
+<body>
+  <div id="machine">
+    <section id="bios" class="screen hidden"></section>
+    <section id="boot" class="screen hidden"></section>
+
+    <section id="framebuffer" class="screen hidden">
+      <div id="wallpaper"></div>
+      <div id="desktop-icons"></div>
+      <div id="windows"></div>
+      <div id="taskbar">
+        <button id="start-button" title="Start"><span class="start-glyph"></span></button>
+        <div id="search-box"><input type="text" placeholder="Type here to search" /></div>
+        <div id="task-buttons"></div>
+        <div id="tray">
+          <div id="tray-icons"></div>
+          <div id="clock"><span id="clock-time"></span><span id="clock-date"></span></div>
+        </div>
+      </div>
+      <div id="start-menu" class="hidden"></div>
+      <div id="notifications"></div>
+      <div id="context-menu" class="hidden"></div>
+    </section>
+
+    <button id="power-btn" title="Power">&#9211;</button>
+  </div>
+
+  <script src="js/kernel/bridge.js?v=2"></script>
+  <script src="js/kernel/vfs.js"></script>
+  <script src="js/kernel/kernel.js"></script>
+  <script src="js/kernel/wm.js"></script>
+  <script src="js/runtime/android.js"></script>
+  <script src="js/runtime/win32.js"></script>
+  <script src="js/runtime/launcher.js"></script>
+  <script src="js/runtime/pyodide.js"></script>
+  <script src="js/runtime/dex.js"></script>
+  <script src="js/runtime/boxedwine.js"></script>
+  <script src="js/bios.js"></script>
+  <script src="js/lock.js"></script>
+  <script src="js/setup.js"></script>
+  <script src="js/boot.js?v=2"></script>
+  <script src="js/apps/registry.js"></script>
+  <script src="js/apps/filemanager.js"></script>
+  <script src="js/apps/settings.js"></script>
+  <script src="js/apps/terminal.js"></script>
+  <script src="js/apps/about.js"></script>
+  <script src="js/apps/store.js"></script>
+  <script src="js/apps/binaries.js"></script>
+  <script src="js/apps/wine.js"></script>
+  <script src="js/apps/biosmenu.js?v=7"></script>
+  <script src="js/apps/camera.js"></script>
+  <script src="js/apps/voicememo.js"></script>
+  <script src="js/apps/vision.js"></script>
+  <script src="js/apps/runtimes.js"></script>
+  <script src="js/apps/emulator.js?v=7"></script>
+  <script src="js/apps/browser.js"></script>
+  <script src="js/apps/win10apps.js"></script>
+  <script src="js/apps/downloads.js"></script>
+  <script src="js/apps/snipping.js"></script>
+  <script src="js/apps/stickynotes.js"></script>
+  <script src="js/selftest.js"></script>
+  <script src="js/shell.js"></script>
+  <script src="js/bootbox.js?v=2"></script>
+  <script src="js/main.js?v=2"></script>
+</body>
+</html>

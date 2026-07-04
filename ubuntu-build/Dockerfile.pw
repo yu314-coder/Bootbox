@@ -1,0 +1,98 @@
+# Fast-pip variant of the Python/Wine Alpine guest.
+# Builds ON TOP of the already-built alpine-loaded:latest (python3.12 + pip + wine),
+# so only these 3 cheap layers are new.
+FROM alpine-loaded:latest
+
+# 1) uv = a single static Rust binary that replaces pip. No Python import tree, so its
+#    startup is instant even on the emulated CPU (the real cause of the slow `pip install`).
+RUN set -eux; \
+    apk add --no-cache curl tar; \
+    if apk add --no-cache uv 2>/dev/null; then echo "uv via apk"; else \
+      curl -fsSL https://github.com/astral-sh/uv/releases/latest/download/uv-x86_64-unknown-linux-musl.tar.gz -o /tmp/uv.tgz; \
+      tar xzf /tmp/uv.tgz -C /tmp; \
+      cp /tmp/uv-x86_64-unknown-linux-musl/uv /tmp/uv-x86_64-unknown-linux-musl/uvx /usr/local/bin/; \
+      rm -rf /tmp/uv*; \
+    fi; \
+    (/usr/local/bin/uv --version || uv --version)
+
+# 2) Pre-compile ALL bytecode (stdlib + site-packages). The .pyc is +11 MB but LOAD-BEARING under
+#    the TCG CPU: without the stdlib .pyc, a fresh boot re-parses the whole stdlib from source on
+#    first import — measured ~5 s for a trivial import and 30 s+ for `import flask` on-device. With
+#    it, imports are fast. (compileall site-packages-only was a mistake — it tanked python startup.)
+RUN python3 -m compileall -j 0 -q /usr/lib/python3.12 || true
+
+# 3) Single-user appliance: drop EXTERNALLY-MANAGED so pip/uv install into the system python
+#    directly (uv REFUSES --system installs while the marker is present — that was the bug).
+#    Default uv to the system python so `uv pip install X` just works with no flags.
+RUN rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED
+ENV UV_SYSTEM_PYTHON=1
+# The guest's network is a WebSocket-relayed virtio NIC over the emulated (TCG) CPU, so large-wheel
+# downloads (numpy/scipy/pillow, `pip install manim`, …) are MUCH slower than a native link and blow
+# past uv's default 30 s per-request timeout → "Failed to download distribution due to network timeout.
+# Try increasing UV_HTTP_TIMEOUT". Give downloads real headroom, and cut concurrency so the single
+# emulated NIC isn't fighting many parallel streams. PIP_DEFAULT_TIMEOUT covers the real-pip fallthrough.
+# (These are image ENV so they reach the interactive shell — kernel-cmdline env does NOT; verified.)
+ENV UV_HTTP_TIMEOUT=600
+ENV UV_CONCURRENT_DOWNLOADS=4
+ENV PIP_DEFAULT_TIMEOUT=600
+# numpy 2.x musllinux wheels are compiled for x86-64-v2 (SSE4.x/POPCNT) — the emulated qemu64 CPU
+# doesn't advertise those, and raising the CPUID is NOT safe (the wasm TCG backend mis-executes
+# SSE4-era instructions: Go-init crashes). numpy 1.x wheels do RUNTIME CPU dispatch and work
+# perfectly (verified: numpy 1.26.4 install+import+compute). A baked-in constraints file makes a
+# plain `pip install numpy` (or anything that pulls numpy in) resolve to the working line
+# automatically — no user knowledge needed. Extend this file as more baseline-raised pkgs appear.
+RUN printf 'numpy<2\n' > /etc/pip-constraints.txt
+ENV UV_CONSTRAINT=/etc/pip-constraints.txt
+ENV PIP_CONSTRAINT=/etc/pip-constraints.txt
+# 4) Pre-install requests cleanly via uv — also verifies the fast path works at build time.
+RUN uv pip install requests 2>&1 | tail -3 && python3 -c "import requests; print('requests', requests.__version__)" && echo "UV-WORKS-OK"
+
+# 4a) Make common `pip install`s FAST by PRE-INSTALLING small, very common pure-Python packages —
+#     the user gets them with ZERO pip time. We do NOT pre-warm a wheel cache for the big ones
+#     (numpy/pillow/…): that left ~120 MB of cached wheels in the rootfs (boot-OOM risk) to save one
+#     download per package — not worth it. So `uv cache clean` strips the download cache too; the
+#     pre-installed packages live in site-packages and are independent of the cache.
+RUN KEEP="flask rich click pyyaml httpx beautifulsoup4 pydantic urllib3 certifi idna charset-normalizer jinja2 markupsafe itsdangerous werkzeug python-dateutil six setuptools wheel packaging typing-extensions"; \
+    uv pip install $KEEP 2>&1 | tail -2 || true; \
+    uv cache clean 2>&1 | tail -1 || true; \
+    python3 -m compileall -j 0 -q /usr/lib/python3.12/site-packages || true; \
+    echo "PIP-PREINSTALL [requests $KEEP] ($(echo $KEEP | wc -w) pkgs, cache=$(du -sh /root/.cache/uv 2>/dev/null | cut -f1))"
+
+# 4b) Make `pip` ITSELF fast by routing it to uv. The user's `pip install` is slow because plain
+#     pip imports its vendored `rich` under emulation; uv has no Python import tree. /usr/local/bin
+#     is ahead of /usr/bin in PATH so this wrapper wins; it forwards install/uninstall/list/etc. to
+#     `uv pip` and falls through to the real /usr/bin/pip for anything uv pip doesn't implement.
+COPY pip-uv.sh /usr/local/bin/pip
+RUN chmod +x /usr/local/bin/pip && ln -sf pip /usr/local/bin/pip3 && echo "PIP-UV-OK"
+
+# 5) GRAPHICAL DESKTOP. Xvnc (tigervnc) is an X server that renders to RAM AND serves VNC from ONE
+#    process (no kernel DRM/fb/evdev, so no guest-kernel rebuild) — unlike x11vnc, which blocked on
+#    XGetImage under TCG. The desktop = twm (window manager) + tint2 (a bottom taskbar/panel, cairo-
+#    rendered) + xterm + a solid wallpaper (xsetroot). twm/tint2, NOT jwm/fluxbox/pcmanfm: jwm and
+#    fluxbox HANG the single-threaded Xvnc under TCG (they flood it → black screen), and GTK apps
+#    (pcmanfm) are too slow to render under emulation. tint2 is only a panel (no WM grab) so it's
+#    safe. The graphical file manager is the in-app Files tab (browses the FS over the pty), so no
+#    pcmanfm needed. Wine (already installed) renders into this X display too.
+#    mc (Midnight Commander) is added as a fast TUI file manager (runs in the terminal; type `mc`).
+RUN apk add --no-cache tigervnc twm tint2 xsetroot xterm font-misc-misc ttf-dejavu mc 2>&1 | tail -2 && \
+    echo "GUI-LAYER-OK Xvnc=$(ls /usr/bin/Xvnc 2>/dev/null) twm=$(ls /usr/bin/twm 2>/dev/null) tint2=$(ls /usr/bin/tint2 2>/dev/null) mc=$(ls /usr/bin/mc 2>/dev/null) ($(apk info 2>/dev/null | wc -l) pkgs)"
+# 5a) SLIM the rootfs (workflow-verified: python + the whole desktop still work, ldd-clean after).
+#     Removes perl (a tigervnc dep we never use — xstart execs Xvnc directly, ~40 MB), the libgtk-3
+#     libs (tint2 links gdk-pixbuf, NOT libgtk-3, ~9 MB), all-but-4 DejaVu variants (~8 MB), and
+#     docs/locales/apk-cache. Smaller rootfs.bin = lower boot-OOM risk + smaller download.
+#     WINE IS KEPT (user feature). The boot-OOM was the pip cache (removed above), not wine, and the
+#     app stays small via download-on-demand hosting of the .data.gz — so wine's ~371 MB stays.
+RUN set -eux; \
+    rm -rf /usr/lib/perl5 /usr/share/perl5 /usr/bin/perl /usr/bin/perldoc /usr/bin/vncserver; \
+    rm -rf /usr/lib/libgtk-3* /usr/lib/libgdk-3* /usr/lib/libgailutil-3* /usr/lib/gtk-3.0 /usr/share/themes /etc/gtk-3.0; \
+    (cd /usr/share/fonts/dejavu 2>/dev/null && ls | grep -vE '^(DejaVuSans\.ttf|DejaVuSans-Bold\.ttf|DejaVuSansMono\.ttf|DejaVuSansMono-Bold\.ttf|fonts\.)' | xargs rm -f) || true; \
+    fc-cache -f 2>/dev/null || true; \
+    rm -rf /usr/share/man /usr/share/doc /usr/share/gtk-doc /usr/share/locale /usr/share/i18n /usr/share/info /var/cache/apk/*; \
+    echo "SLIM-OK pkgs=$(apk info 2>/dev/null | wc -l) usr=$(du -sm /usr 2>/dev/null | cut -f1)MB"
+# Start a BARE X (Xvnc + twm) in the background on boot, then drop to the interactive serial shell.
+# The plain guest's GUI stays blank until a program is launched; the "Desktop" guest's full chrome
+# (wallpaper + terminal + tint2 taskbar) is started on demand by start-desktop (the app runs it).
+COPY xstart.sh /usr/local/bin/xstart
+COPY start-desktop.sh /usr/local/bin/start-desktop
+RUN chmod +x /usr/local/bin/xstart /usr/local/bin/start-desktop
+CMD ["/usr/local/bin/xstart"]

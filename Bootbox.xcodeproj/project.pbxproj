@@ -1,0 +1,476 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 70;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		56C16F437AE4EB139391A5A8 /* CoreFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = C36892A7B5EC9691EA92643F /* CoreFoundation.framework */; };
+		A0000000000000000000BF01 /* BootboxFileProvider.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = A0000000000000000000E002 /* BootboxFileProvider.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		A50AB6F1448B381C67A124B9 /* Security.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D96D2E16B95E49BFF38FC037 /* Security.framework */; };
+		FF70153CD139AB505497599A /* Iosnet.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = 313FAA940F823EB6A80590D2 /* Iosnet.xcframework */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		A0000000000000000000X001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A0000000000000000000J001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A0000000000000000000T002;
+			remoteInfo = BootboxFileProvider;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A0000000000000000000Y001 /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 13;
+			files = (
+				A0000000000000000000BF01 /* BootboxFileProvider.appex in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		313FAA940F823EB6A80590D2 /* Iosnet.xcframework */ = {isa = PBXFileReference; includeInIndex = 1; name = Iosnet.xcframework; path = Frameworks/Iosnet.xcframework; sourceTree = SOURCE_ROOT; };
+		A0000000000000000000E001 /* Bootbox.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Bootbox.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		A0000000000000000000E002 /* BootboxFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = BootboxFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		C36892A7B5EC9691EA92643F /* CoreFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreFoundation.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/CoreFoundation.framework; sourceTree = DEVELOPER_DIR; };
+		D96D2E16B95E49BFF38FC037 /* Security.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Security.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS18.0.sdk/System/Library/Frameworks/Security.framework; sourceTree = DEVELOPER_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		A0000000000000000000H001 /* Exceptions for "Bootbox" folder in "Bootbox" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = A0000000000000000000T001 /* Bootbox */;
+		};
+		A0000000000000000000H002 /* Exceptions for "FileProvider" folder in "BootboxFileProvider" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = A0000000000000000000T002 /* BootboxFileProvider */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		A0000000000000000000F001 /* Bootbox */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A0000000000000000000H001 /* Exceptions for "Bootbox" folder in "Bootbox" target */,
+			);
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+				web,
+			);
+			path = Bootbox;
+			sourceTree = "<group>";
+		};
+		A0000000000000000000F002 /* FileProvider */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				A0000000000000000000H002 /* Exceptions for "FileProvider" folder in "BootboxFileProvider" target */,
+			);
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = FileProvider;
+			sourceTree = "<group>";
+		};
+/* End PBXFileSystemSynchronizedRootGroup section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		A0000000000000000000B001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FF70153CD139AB505497599A /* Iosnet.xcframework in Frameworks */,
+				56C16F437AE4EB139391A5A8 /* CoreFoundation.framework in Frameworks */,
+				A50AB6F1448B381C67A124B9 /* Security.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A0000000000000000000B002 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		A0000000000000000000G001 = {
+			isa = PBXGroup;
+			children = (
+				A0000000000000000000F001 /* Bootbox */,
+				A0000000000000000000F002 /* FileProvider */,
+				A0000000000000000000P001 /* Products */,
+				CC191DDBD42D823CAAE31D87 /* Frameworks */,
+			);
+			sourceTree = "<group>";
+		};
+		A0000000000000000000P001 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				A0000000000000000000E001 /* Bootbox.app */,
+				A0000000000000000000E002 /* BootboxFileProvider.appex */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		CC191DDBD42D823CAAE31D87 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				313FAA940F823EB6A80590D2 /* Iosnet.xcframework */,
+				E49019D0C5736BBEDB377F7F /* iOS */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		E49019D0C5736BBEDB377F7F /* iOS */ = {
+			isa = PBXGroup;
+			children = (
+				C36892A7B5EC9691EA92643F /* CoreFoundation.framework */,
+				D96D2E16B95E49BFF38FC037 /* Security.framework */,
+			);
+			name = iOS;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		A0000000000000000000T001 /* Bootbox */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A0000000000000000000L002 /* Build configuration list for PBXNativeTarget "Bootbox" */;
+			buildPhases = (
+				A0000000000000000000S001 /* Sources */,
+				A0000000000000000000B001 /* Frameworks */,
+				A0000000000000000000R001 /* Resources */,
+				A0000000000000000000Y001 /* Embed Foundation Extensions */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				A0000000000000000000D001 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				A0000000000000000000F001 /* Bootbox */,
+			);
+			name = Bootbox;
+			productName = Bootbox;
+			productReference = A0000000000000000000E001 /* Bootbox.app */;
+			productType = "com.apple.product-type.application";
+		};
+		A0000000000000000000T002 /* BootboxFileProvider */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A0000000000000000000L004 /* Build configuration list for PBXNativeTarget "BootboxFileProvider" */;
+			buildPhases = (
+				A0000000000000000000S002 /* Sources */,
+				A0000000000000000000B002 /* Frameworks */,
+				A0000000000000000000R002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				A0000000000000000000F002 /* FileProvider */,
+			);
+			name = BootboxFileProvider;
+			productName = BootboxFileProvider;
+			productReference = A0000000000000000000E002 /* BootboxFileProvider.appex */;
+			productType = "com.apple.product-type.app-extension";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		A0000000000000000000J001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+				TargetAttributes = {
+					A0000000000000000000T001 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+					A0000000000000000000T002 = {
+						CreatedOnToolsVersion = 16.0;
+					};
+				};
+			};
+			buildConfigurationList = A0000000000000000000L001 /* Build configuration list for PBXProject "Bootbox" */;
+			compatibilityVersion = "Xcode 15.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = A0000000000000000000G001;
+			minimizedProjectReferenceProxies = 1;
+			productRefGroup = A0000000000000000000P001 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				A0000000000000000000T001 /* Bootbox */,
+				A0000000000000000000T002 /* BootboxFileProvider */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		A0000000000000000000R001 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A0000000000000000000R002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		A0000000000000000000S001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A0000000000000000000S002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		A0000000000000000000D001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A0000000000000000000T002 /* BootboxFileProvider */;
+			targetProxy = A0000000000000000000X001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		A0000000000000000000C001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = iphoneos;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		A0000000000000000000C002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				SDKROOT = iphoneos;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		A0000000000000000000C003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Bootbox/Bootbox.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = LYK4LV2859;
+				ENABLE_PREVIEWS = YES;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Frameworks",
+				);
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Bootbox/Info.plist;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.2.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lresolv",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = euleryu.bootbox;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A0000000000000000000C004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Bootbox/Bootbox.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = LYK4LV2859;
+				ENABLE_PREVIEWS = YES;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(PROJECT_DIR)/Frameworks",
+				);
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = Bootbox/Info.plist;
+				INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 0.2.0;
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lresolv",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = euleryu.bootbox;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		A0000000000000000000C005 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = FileProvider/FileProvider.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = LYK4LV2859;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = FileProvider/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.2.0;
+				PRODUCT_BUNDLE_IDENTIFIER = euleryu.bootbox.FileProvider;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		A0000000000000000000C006 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = FileProvider/FileProvider.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = LYK4LV2859;
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = FileProvider/Info.plist;
+				IPHONEOS_DEPLOYMENT_TARGET = 16.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@executable_path/../../Frameworks",
+				);
+				MARKETING_VERSION = 0.2.0;
+				PRODUCT_BUNDLE_IDENTIFIER = euleryu.bootbox.FileProvider;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A0000000000000000000L001 /* Build configuration list for PBXProject "Bootbox" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A0000000000000000000C001 /* Debug */,
+				A0000000000000000000C002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A0000000000000000000L002 /* Build configuration list for PBXNativeTarget "Bootbox" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A0000000000000000000C003 /* Debug */,
+				A0000000000000000000C004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		A0000000000000000000L004 /* Build configuration list for PBXNativeTarget "BootboxFileProvider" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				A0000000000000000000C005 /* Debug */,
+				A0000000000000000000C006 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = A0000000000000000000J001 /* Project object */;
+}

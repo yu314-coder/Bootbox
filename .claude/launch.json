@@ -1,0 +1,9 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    { "name": "bootbox-web", "runtimeExecutable": "python3", "runtimeArgs": ["-m", "http.server", "8777", "--directory", "/Volumes/D/github/iso/Bootbox/web"], "port": 8777 },
+    { "name": "v86test", "runtimeExecutable": "python3", "runtimeArgs": ["/Volumes/D/win98build/rangeserver.py", "/Volumes/D/win98build/v86test", "8744"], "port": 8744 },
+    { "name": "v86win2k", "runtimeExecutable": "python3", "runtimeArgs": ["/Volumes/D/win2kbuild/rangeserver.py", "/Volumes/D/win2kbuild/v86test", "8791"], "port": 8791 },
+    { "name": "v86winxp", "runtimeExecutable": "python3", "runtimeArgs": ["/Volumes/D/winxpbuild/rangeserver.py", "/Volumes/D/winxpbuild/v86test", "8793"], "port": 8793 }
+  ]
+}

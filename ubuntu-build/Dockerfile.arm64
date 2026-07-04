@@ -1,0 +1,15 @@
+# ARM64 (aarch64) Alpine Linux for Bootbox — a REAL 64-bit ARM guest via QEMU-Wasm.
+#
+# Distinct from the x86_64 guest: NO Wine (Wine runs Windows x86 binaries — meaningless on ARM) and
+# no desktop in v1. Just a usable 64-bit ARM Linux: terminal + Python 3 + pip + real internet (the
+# in-app netstack bridges the guest's -netdev socket the same way it does for x86_64).
+#
+# Built --platform=linux/arm64, which is NATIVE on the Apple Silicon build host (colima), so the
+# container build itself is fast; only the c2w --to-js pack step takes time.
+FROM --platform=linux/arm64 alpine:3.20
+RUN set -eux; \
+    apk add --no-cache python3 py3-pip; \
+    rm -f /usr/lib/python3.12/EXTERNALLY-MANAGED 2>/dev/null || true; \
+    python3 -m compileall -j 0 -q /usr/lib/python3.12 2>/dev/null || true; \
+    echo "ARM64-BUILD-OK arch=$(uname -m) $(python3 --version) pkgs=$(apk info 2>/dev/null | wc -l)"
+CMD ["/bin/sh", "-l"]

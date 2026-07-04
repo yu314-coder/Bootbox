@@ -1,0 +1,6 @@
+# Rebuilds the python3.12 + pip + wine base (alpine-loaded:latest) that colima lost when its
+# corrupted snapshot store was cleared on restart. Alpine 3.20 ships python 3.12; wine is in the
+# community repo (enabled by default in the official image). Dockerfile.pw builds ON TOP of this.
+FROM alpine:3.20
+RUN apk add --no-cache python3 py3-pip wine 2>&1 | tail -3 && \
+    python3 --version && (wine --version 2>/dev/null || true) && echo "BASE-LOADED-OK"

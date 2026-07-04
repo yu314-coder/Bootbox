@@ -1,0 +1,8 @@
+framework module "Iosnet" {
+	header "ref.h"
+    header "Iosnet.objc.h"
+    header "Universe.objc.h"
+    header "Iosnet.h"
+
+    export *
+}
