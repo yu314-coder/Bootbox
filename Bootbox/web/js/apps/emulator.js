@@ -338,7 +338,7 @@
               <option value="cdrom">CD/ISO</option><option value="hda">HDD</option><option value="fda">Floppy</option>
             </select>
             <input class="e-in" id="ram" style="width:64px" type="number" value="1536" title="RAM (MB) for the 64-bit guests — up to 1536 (the engine's 3 GB WebAssembly heap must also hold the OS image; QEMU itself caps at 2047). More RAM helps big pip installs and file work; it does NOT speed up the CPU.">
-            <select class="e-sel" id="cores" style="width:104px;display:none" title="CPU cores for the 64-bit Linux guests (applies at boot). 2 = balanced default: real parallel execution, and idle power stays as low as 1 core. More cores help CPU-heavy parallel jobs; disk-heavy jobs gain little beyond 2. 1 = simplest. Power is only spent while cores are actually busy.">
+            <select class="e-sel" id="cores" style="width:104px;display:none" title="CPU cores for the 64-bit Linux guests. Changing this reboots the guest to apply it. Each core is a full software-emulated CPU, so more cores run genuinely in parallel (faster builds / numpy / compiles) BUT also run hotter and draw more power under load. 1 = coolest · 2 = balanced (default) · pick 4–8 only for heavy parallel compute. Disk-heavy work (apt, ncdu) gains little past 2.">
               <option value="1">1 core</option>
               <option value="2" selected>2 cores</option>
               <option value="4">4 cores</option>
@@ -382,6 +382,11 @@
         let qemuTerm = null;   // 64-bit QEMU xterm (set when q64 boots); the keyboard routes here, not to v86 `emu`
         let panel64Ref = null; // the QEMU_PANEL (set in boot64); the keyboard routes to the GUI's noVNC when its tab is active
         let qemuFs = null;     // 64-bit guest /share file API (read/write/list Module.FS "/share") for Save/Share
+        // window.__q64Live: a QEMU-Wasm engine has instantiated in THIS page realm. Emscripten/QEMU can't be
+        // re-instantiated in the same realm (workers + wasm SharedMemory persist), so a second boot (e.g. after
+        // changing CPU cores/RAM) must reload the page for a clean restart — otherwise run.js reuses the live
+        // self.Module and the guest is "stuck" at the 1st boot's -smp. Realm-level (not closure-level) so that
+        // closing and reopening the emulator window still sees the engine that is already running in the page.
 
         // Detect emulation speed of this device. WKWebView gets WASM JIT, but its
         // strength varies (sideloaded/real device = fast; constrained = slow). We
@@ -435,7 +440,22 @@
           const g = GUESTS.find(x => x.id === guestSel.value) || GUESTS[0];
           qemuTerm = null; qemuFs = null;   // reset; boot64 re-sets them once the 64-bit terminal is ready
           // 64-bit mode runs on a different engine (QEMU-Wasm), not v86.
-          if (g.boot === "q64") { setCfg({ guest: g.id }); return boot64(g); }
+          if (g.boot === "q64") {
+            setCfg({ guest: g.id });
+            // If a 64-bit engine already ran in this realm, we CANNOT cleanly re-instantiate it (emscripten
+            // workers + wasm SharedMemory are one-shot). Reload the page for a fresh realm and auto-resume the
+            // boot — this is what makes a new CPU-core / RAM selection actually take effect (the "stuck at 2
+            // cores" bug: without this, run.js reused the live Module and the guest kept the first boot's -smp).
+            if (window.__q64Live) {
+              // Carry cores+RAM in the reboot payload (not just via the debounced config save) so the new
+              // selection is applied even if the page reloads before VFS's 250 ms save flushes.
+              try { sessionStorage.setItem("bootbox.reboot", JSON.stringify({ guest: g.id, cores: +coresSel.value || undefined, ram: +ramInput.value || undefined })); } catch (e) {}
+              try { status.textContent = "Rebooting to apply new settings…"; } catch (e) {}
+              location.reload();
+              return;
+            }
+            return boot64(g);
+          }
           const kernelBoot = g.boot === "kernel";
           const img = g.id === "custom" ? imgInput.value.trim() : g.url;
           let kind = kindSel.value;
@@ -612,6 +632,7 @@
               onStatus: (m) => { try { status.textContent = m; } catch (e) {} },
               onReady: (r) => {
                 setState("Running");
+                window.__q64Live = true;   // engine is live in this realm → a later reboot must reload (see boot()).
                 qemuTerm = r && (r.xterm || r.term); qemuFs = r && r.fs; panel64Ref = panel64;
                 try { panel64.setFs && panel64.setFs(qemuFs); } catch (e) {}   // Files tab ⬆/⬇ transfers
                 try { panel64.setXterm(qemuTerm); } catch (e) {}

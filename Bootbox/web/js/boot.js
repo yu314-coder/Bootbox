@@ -45,9 +45,18 @@
       document.querySelectorAll(".screen").forEach(s => s.classList.add("hidden"));
       try { if (Kernel.nvram.sound) chime(); } catch (e) {}
       try {
+        // A one-shot reboot (set by the emulator when it reloads the page to apply new CPU-core / RAM
+        // settings to a 64-bit guest) takes priority: resume straight into that guest and auto-boot.
+        let reboot = null;
+        try { reboot = sessionStorage.getItem("bootbox.reboot"); } catch (e) {}
+        if (reboot) {
+          try { sessionStorage.removeItem("bootbox.reboot"); } catch (e) {}
+          let p; try { p = JSON.parse(reboot); } catch (e) { p = { guest: reboot }; }
+          Bootbox.runVM({ guest: p.guest, cores: p.cores, ram: p.ram, autoboot: true });
+        }
         // Land on the boot manager ("select operating system"). nvram.bootGuest
         // skips the menu and boots a fixed guest straight away.
-        if (Kernel.nvram.bootGuest) {
+        else if (Kernel.nvram.bootGuest) {
           Bootbox.runVM({ guest: Kernel.nvram.bootGuest, autoboot: true });
         } else {
           Bootbox.showBootMenu();
