@@ -56,10 +56,12 @@
     // mismatch (build 64 — heals caches poisoned by a saved GitHub error body, the
     // on-device "TypeError: Load failed" bug) and rejects truncated transfers.
     "vendor/qemu-aload/": { files: [
-      // wine v2 (build 62): wine-staging 11.5 + esync + baked prefix + winetest/cx16test diagnostics.
-      // Pairs with the bundled cx16lock engine (lock-based cmpxchg16b instead of stop-the-world).
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux64-wine-v2/qemu64-wine2-rootfs.data.gz",
-        name: "qemu64-wine2-rootfs-943299652.data.gz", mb: 310, size: 308877983 },
+      // wine v3 (build 65): wine-staging 11.5 + esync + baked prefix + BUILD-TIME GUI cache warm-up
+      // (winemine ran to a real window during the image build — first on-device run skips minutes
+      // of font/registry cache building) + winetest v3 (patient, staged). Pairs with the bundled
+      // cx16lock engine (lock-based cmpxchg16b, on-device verified: 2x penalty vs 8-byte CAS).
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux64-wine-v3/qemu64-wine3-rootfs.data.gz",
+        name: "qemu64-wine3-rootfs-943336509.data.gz", mb: 310, size: 308852283 },
     ] },
     "vendor/qemu-aarch64/": { files: [
       { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-arm64-v1/qemu-aarch64-engine.wasm.gz",

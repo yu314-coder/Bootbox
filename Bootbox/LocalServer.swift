@@ -98,7 +98,7 @@ final class LocalServer {
         // Cache filename is size-tagged so a rebuilt image re-downloads instead of size-mismatching
         // load.js (keep in sync with emulator.js ROOTFS_REMOTE.name).
         if rel == "vendor/qemu-aload/qemu-system-x86_64.data.gz" {
-            let cached = VMStorage.importsDir().appendingPathComponent("qemu64-wine2-rootfs-943299652.data.gz")
+            let cached = VMStorage.importsDir().appendingPathComponent("qemu64-wine3-rootfs-943336509.data.gz")
             return FileManager.default.fileExists(atPath: cached.path) ? cached : nil
         }
         // ARM64 (aarch64) guest: BOTH the engine wasm and the rootfs are download-on-demand (neither

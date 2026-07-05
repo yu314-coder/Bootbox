@@ -147,6 +147,22 @@ RUN set -eux; \
     done; \
     test -f /root/.wine/drive_c/windows/system32/kernel32.dll; \
     echo "WINE-PREFIX-OK prefix=$(du -sh /root/.wine | cut -f1)"
+# 6a2) WARM the first-GUI-run caches at BUILD time (wine v3): the first graphical wine run
+#      builds font caches + per-user registry/shell folders — measured MINUTES under the TCG
+#      CPU on-device (the on-device winemine test was still loading DLLs at t=220s). Wine runs
+#      fine under colima's qemu, so run winemine here against a throwaway X server until its
+#      window exists, then shut down cleanly. The caches land in the prefix + fontconfig dirs
+#      and ship in the rootfs; on-device first runs skip all of it.
+RUN set -eux; \
+    apk add --no-cache xvfb xdpyinfo 2>&1 | tail -1; \
+    (Xvfb :9 -screen 0 640x480x16 >/tmp/xvfb.log 2>&1 &); sleep 3; \
+    (DISPLAY=:9 timeout 240 wine winemine >/tmp/warm.log 2>&1 &); \
+    ok=""; for i in $(seq 1 48); do \
+      if DISPLAY=:9 xwininfo -root -tree 2>/dev/null | grep -qi mine; then ok=1; break; fi; sleep 5; \
+    done; \
+    (timeout 60 wineserver -k || true); sleep 2; pkill Xvfb || true; \
+    apk del xvfb xdpyinfo 2>&1 | tail -1; \
+    test -n "$ok" && echo "WINE-WARM-OK (winemine window appeared at build time)" || { tail -20 /tmp/warm.log; echo "WINE-WARM-SKIP (no window in 240s — caches still partially warmed)"; }
 # 6b) Trim wine-staging's heavy optional runtime deps — winemine/user exes don't need media
 #     (gstreamer), vulkan, scanners (sane), audio (no audio device in the guest) or OpenCL.
 #     wine dlopens these lazily; missing libs = that feature off, core win32 unaffected.
