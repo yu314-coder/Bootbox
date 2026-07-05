@@ -248,6 +248,13 @@
       cmd = (cmd || "").trim();
       if (!cmd) return;
       if (!xt) { show(cmd, "Terminal not ready yet — wait for the # prompt."); return; }
+      // GUI-intent pre-connect (build 67): if the command will draw on the X desktop, start the
+      // noVNC connection NOW (in the background) instead of waiting for the first GUI-tab tap —
+      // by the time the window exists, the viewer is already live. Keeps the lazy-display power
+      // win for plain console work (no match = no connect).
+      if (/(^|[\s\/;(])(wine|winetest|xterm|xeyes|xclock|winemine|winecfg|start-desktop)\b|DISPLAY=/.test(cmd)) {
+        try { if (typeof api.onGuiOpen === "function") api.onGuiOpen(guiEl); } catch (e) {}
+      }
       show(cmd, "…running…");
       var res = await scrape(cmd, 90000);
       if (res === "__BUSY__") { show(cmd, "Busy with another command — try again in a moment."); return; }
@@ -426,7 +433,9 @@
       var b = document.createElement("button");
       b.className = "q64-qb"; b.textContent = pair[0]; b.title = pair[1];
       // pair[2] === "gui": after running, auto-open the 🖥️ GUI tab so you immediately watch for the window.
-      b.onclick = function () { runCmd(pair[1]); if (pair[2] === "gui") setTimeout(function () { try { showTab("gui"); } catch (e) {} }, 3500); };
+      // gui-flagged buttons: runCmd's intent pre-connect starts the viewer at command time, so
+      // switch tabs sooner (1.2s) — the desktop is usually already connecting when we land on it.
+      b.onclick = function () { runCmd(pair[1]); if (pair[2] === "gui") setTimeout(function () { try { showTab("gui"); } catch (e) {} }, 1200); };
       grid.appendChild(b);
     });
     runBtn.onclick = function () { runCmd(inp.value); inp.value = ""; };

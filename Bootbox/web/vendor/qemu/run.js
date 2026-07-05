@@ -286,13 +286,20 @@
         try { self.__rfb = rfb; } catch (e) {}
         rfb.scaleViewport = true;
         rfb.resizeSession = false;
+        // Cheaper guest-side encode = faster first frame + snappier updates: Xvnc compresses
+        // frames on the EMULATED CPU, so high zlib effort is pure lag. Level 1 measured-cheap.
+        try { rfb.compressionLevel = 1; } catch (e) {}
         rfb.addEventListener("connect", function () { guiRetries = 0; statusCb(null); });
         rfb.addEventListener("disconnect", function () {
           rfb = null;
-          // Auto-retry until the guest's X server (Xvnc) is up — the desktop appears ~20-40s after
-          // the # prompt, and a "Desktop" boot opens the GUI tab before it's ready. Capped so a
-          // guest that never starts a desktop eventually stops trying.
-          if (guiRetries++ < 45) { statusCb("Connecting to the Linux desktop… (~" + (guiRetries * 4) + "s)"); setTimeout(function () { connectGui(guiHost, statusCb); }, 4000); }
+          // Auto-retry until the guest's X server (Xvnc) is up. FAST cadence for the first ~10s
+          // (Xvnc usually appears within moments of a tap once the guest is warm — 4s ticks made
+          // every connect feel slow), then back off to 4s for the long cold-boot tail.
+          if (guiRetries++ < 60) {
+            var wait = guiRetries <= 8 ? 1200 : 4000;
+            statusCb("Connecting to the Linux desktop…" + (guiRetries > 8 ? " (~" + (guiRetries * 4) + "s)" : ""));
+            setTimeout(function () { connectGui(guiHost, statusCb); }, wait);
+          }
           else { statusCb("Desktop didn't come up. Tap 🖥️ GUI to retry."); }
         });
       } catch (e) { rfb = null; statusCb("VNC error: " + ((e && e.message) || e)); return null; }
