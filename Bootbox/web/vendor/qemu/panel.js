@@ -76,6 +76,7 @@
     ["ls /", "ls -la /"],
     ["ip addr", "ip -o addr show eth0 2>/dev/null | grep -o 'inet [0-9.]*' || ifconfig eth0"],
     ["🌐 internet", "wget -T 12 -qO- http://example.com 2>&1 | head -c 400; echo"],
+    ["🍷 Wine test", "cd /root && echo '🍷 Fetching a Windows test app (Minesweeper) and launching it via Wine…' && wget -T 90 -q https://github.com/yu314-coder/Bootbox/releases/download/linux64-wine-v1/wine-test-minesweeper.exe -O winetest.exe && echo 'Launching. Wine is SLOW on the emulated CPU — give it 1-3 min, then open the 🖥️ GUI tab to look for the Minesweeper window. If nothing appears after a few minutes, Wine deadlocked (a known QEMU-Wasm limitation).' && (DISPLAY=:0 WINEPREFIX=/root/.wine WINEDEBUG=-all WINEDLLOVERRIDES='explorer.exe,services.exe=d' wine winetest.exe >/tmp/wine.log 2>&1 &)"],
     ["uv pip", "uv pip install --help 2>&1 | head -3"],
     ["memory", "free -m"],
     ["procs", "ps"]

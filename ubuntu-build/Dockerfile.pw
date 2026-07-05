@@ -94,6 +94,22 @@ RUN set -eux; \
     fc-cache -f 2>/dev/null || true; \
     rm -rf /usr/share/man /usr/share/doc /usr/share/gtk-doc /usr/share/locale /usr/share/i18n /usr/share/info /var/cache/apk/*; \
     echo "SLIM-OK pkgs=$(apk info 2>/dev/null | wc -l) usr=$(du -sm /usr 2>/dev/null | cut -f1)MB"
+# 5c) PRE-INITIALIZE the Wine prefix at BUILD time (native-ish colima CPU) so the guest skips the slow,
+#     deadlock-prone first-run wineboot on the emulated wasm CPU (which fails with kernel32.dll c0000135).
+#     Then DELETE the 328MB wineboot crash-dump (C:\windows\core is a single file) and DEDUP the prefix's
+#     system32 PE DLLs into symlinks to the shared /usr/lib/wine (513MB→84MB prefix, wine still works).
+#     NOTE: wine .exe still hit a device-service deadlock (RtlpWaitForCriticalSection) under wasm — the
+#     app runs wine with WINEDLLOVERRIDES="explorer.exe,services.exe=d" (see the 🍷 Wine test button) to
+#     skip the deadlocking services; wine on QEMU-Wasm is slow/experimental regardless.
+RUN printf 'export WINEPREFIX=/root/.wine\nexport WINEARCH=win64\nexport WINEDEBUG=-all\n' > /etc/profile.d/wine.sh
+ENV WINEPREFIX=/root/.wine WINEARCH=win64 WINEDEBUG=-all
+RUN set -eux; \
+    timeout 900 wineboot --init 2>&1 | tail -6 || true; \
+    (timeout 120 wineserver -w 2>/dev/null || true); \
+    rm -f /root/.wine/drive_c/windows/core; \
+    for f in /root/.wine/drive_c/windows/system32/*.dll; do b=$(basename "$f"); s=/usr/lib/wine/x86_64-windows/"$b"; [ -f "$s" ] && ln -sf "$s" "$f"; done; \
+    test -f /root/.wine/drive_c/windows/system32/kernel32.dll; \
+    echo "WINE-PREFIX-OK prefix=$(du -sh /root/.wine | cut -f1)"
 # Start a BARE X (Xvnc + twm) in the background on boot, then drop to the interactive serial shell.
 # The plain guest's GUI stays blank until a program is launched; the "Desktop" guest's full chrome
 # (wallpaper + terminal + tint2 taskbar) is started on demand by start-desktop (the app runs it).
