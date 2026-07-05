@@ -172,6 +172,52 @@
     };
     try { guiEl.style.position = "relative"; guiEl.appendChild(reBtn); } catch (e) {}
 
+    // 🖥️ display HUD (build 68): answers "is the display ON?" at a glance — a CONNECTED viewer
+    // showing an EMPTY desktop is pitch black and looks identical to a dead one, which made a
+    // slow-loading wine app indistinguishable from a broken GUI. Shows: OFF / CONNECTING / ON,
+    // the screen size, and a "screen changed Ns ago" heartbeat (5-pixel signature sampled every
+    // 2s — if wine draws anything, the age resets, so "ON + changing" = wine IS rendering).
+    var hud = document.createElement("div");
+    hud.style.cssText = "position:absolute;top:6px;left:6px;right:46px;z-index:35;padding:3px 8px;border-radius:6px;" +
+      "background:rgba(12,20,36,.82);color:#9fb3d1;font:600 10px/1.45 'Cascadia Mono',monospace;cursor:pointer;";
+    hud.textContent = "🖥️ display: OFF";
+    hud.title = "Tap to connect the desktop viewer";
+    hud.onclick = function () { try { if (typeof api.onGuiOpen === "function") api.onGuiOpen(guiEl); } catch (e) {} };
+    try { guiEl.appendChild(hud); } catch (e) {}
+    var hudSig = null, hudChangeT = 0;
+    setInterval(function () {
+      if (guiEl.style.display === "none") return;   // pane hidden — skip the work
+      var st = (window.__guiState ? window.__guiState() : "no-rfb");
+      if (st === "no-rfb") {
+        hud.style.color = "#e0a06a";
+        hud.textContent = "🖥️ display: OFF — run a GUI app (or tap here) to connect";
+        return;
+      }
+      if (st.indexOf("connected") !== 0) {
+        hud.style.color = "#e6d06a";
+        hud.textContent = "🖥️ display: CONNECTING… (" + st + ")";
+        return;
+      }
+      var cv = guiEl.querySelector("canvas"), dim = cv && cv.width ? (cv.width + "×" + cv.height) : "no frame yet";
+      var sig = null;
+      try {
+        if (cv && cv.width) {
+          var cx = cv.getContext("2d"), s = 0;
+          for (var i = 1; i <= 5; i++) {
+            var d = cx.getImageData((cv.width * i / 6) | 0, (cv.height * i / 6) | 0, 1, 1).data;
+            s = (s * 31 + d[0] * 3 + d[1] * 5 + d[2] * 7) >>> 0;
+          }
+          sig = s;
+        }
+      } catch (e) {}
+      var now = Date.now();
+      if (sig !== null && sig !== hudSig) { hudSig = sig; hudChangeT = now; }
+      var age = hudChangeT ? Math.round((now - hudChangeT) / 1000) : -1;
+      hud.style.color = "#8fd18f";
+      hud.textContent = "🖥️ display: ON · " + dim + (age >= 0 ? " · screen changed " + age + "s ago" : "") +
+        " — black = empty desktop; wine windows can take minutes on first run (📜 Wine log)";
+    }, 2000);
+
     function showTab(which) {
       consoleEl.style.display = which === "console" ? "flex" : "none";
       guiEl.style.display = which === "gui" ? "block" : "none";
@@ -179,6 +225,16 @@
       panel.classList.toggle("gui-active", which === "gui" || which === "files");   // widen the pane for gui + files
       Array.prototype.forEach.call(tabBtns, function (t) { t.classList.toggle("on", t.getAttribute("data-tab") === which); });
       if (which === "gui" && typeof api.onGuiOpen === "function") { try { api.onGuiOpen(guiEl); } catch (e) { setGuiStatus("GUI error: " + (e && e.message)); } }
+      // Rescale poke (build 68): the intent pre-connect (build 67) can attach noVNC while this
+      // pane is display:none (0×0) — the canvas then scales to 0 and the pane stays BLACK even
+      // though the session is live. On show, force a fresh scale computation with real dimensions.
+      if (which === "gui") setTimeout(function () {
+        try {
+          var r = window.__rfb;
+          if (r) { r.scaleViewport = false; r.scaleViewport = true; }
+          window.dispatchEvent(new Event("resize"));
+        } catch (e) {}
+      }, 80);
       if (which === "files") loadFiles(curDir || "/");
     }
     Array.prototype.forEach.call(tabBtns, function (t) { t.onclick = function () { showTab(t.getAttribute("data-tab")); }; });

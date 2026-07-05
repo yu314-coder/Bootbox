@@ -252,15 +252,28 @@
       return null;
     }
     try { self.__guiReconnect = forceReconnectGui; self.__guiState = guiState; } catch (e) {}
-    // Watchdog: a websocket can die silently (no 'disconnect' event) — noVNC then looks
-    // connected while input goes nowhere. If the underlying socket is CLOSING/CLOSED while
-    // the RFB still says "connected", force a fresh session.
+    // Watchdogs (12s tick):
+    // 1. Silent socket death: the websocket is CLOSING/CLOSED while noVNC still says
+    //    "connected" — frames stop or input goes nowhere. Force a fresh session.
+    // 2. STUCK CONNECTING (the build-67 black-GUI bug): the intent pre-connect can fire
+    //    before Xvnc is up — the /vnc websocket ACCEPTS but the guest-side dial to :5900
+    //    hangs, so noVNC sits in "connecting" forever with no disconnect event, and since
+    //    connectGui is idempotent every later tap returns the same stuck object → the pane
+    //    stays black for good. Tear down any RFB that isn't connected within 20s and retry
+    //    fresh — by then Xvnc is usually up.
+    let rfbBornAt = 0;
     setInterval(function () {
       try {
-        if (!rfb || rfb._rfbConnectionState !== "connected") return;
+        if (!rfb) return;
+        const st = rfb._rfbConnectionState;
         const ws = rfb._sock && rfb._sock._websocket;
-        if (ws && ws.readyState >= 2) {
-          console.log("[gui] watchdog: socket dead under a connected RFB — reconnecting");
+        if (st === "connected") {
+          if (ws && ws.readyState >= 2) {
+            console.log("[gui] watchdog: socket dead under a connected RFB — reconnecting");
+            forceReconnectGui();
+          }
+        } else if (rfbBornAt && Date.now() - rfbBornAt > 20000) {
+          console.log("[gui] watchdog: stuck in '" + st + "' for >20s — reconnecting fresh");
           forceReconnectGui();
         }
       } catch (e) {}
@@ -283,6 +296,7 @@
       }
       try {
         rfb = new RFB(guiHost, opts.vnc, { shared: true });
+        rfbBornAt = Date.now();   // stuck-connecting watchdog baseline
         try { self.__rfb = rfb; } catch (e) {}
         rfb.scaleViewport = true;
         rfb.resizeSession = false;
