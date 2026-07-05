@@ -351,10 +351,17 @@
     hooks = hooks || {};
     const DEF = { ram: 256, cores: 2, bootOrder: "cd-hd", vtx: true, htt: false, secureBoot: false,
       bootMode: "UEFI", fastBoot: true, sataMode: "AHCI", usbLegacy: true, numlock: true, memRemap: false,
-      netInternet: true, resumeState: true, nx: true, tpm: false, txt: false };
+      netInternet: true, resumeState: true, nx: true, tpm: false, txt: false, bgRun: "Keep running" };
     let s = Object.assign({}, DEF, readCfg());
     // Reflect the emulator's actual internet + resume state (it stores these in its own config).
     try { const ec = JSON.parse(VFS.read("/Apps/.emulator.json") || "{}"); s.netInternet = (ec.netRelay !== "off"); s.resumeState = (ec.resumeState !== false); } catch (e) {}
+    // Reflect the real background-grace setting (lives in native UserDefaults, not the JS config).
+    const BG_SEC = { "Keep running": 86400, "10 min": 600, "1 min": 60, "Off": 0 };
+    try { if (window.Bridge) Bridge.call("system", "getBackgroundGrace").then(function (g) {
+      var sec = (typeof g === "number") ? g : (g && g.result); var lbl = "Keep running";
+      Object.keys(BG_SEC).forEach(function (k) { if (BG_SEC[k] === sec) lbl = k; });
+      if (sec != null) { s.bgRun = lbl; if (typeof paint === "function") paint(); }
+    }).catch(function () {}); } catch (e) {}
     let tab = 0, foc = 0;
     const TABS = ["Main", "Advanced", "Boot", "Security", "Save & Exit"];
     const now = new Date(), pad = n => String(n).padStart(2, "0");
@@ -396,6 +403,9 @@
         { t: "toggle", label: "USB Legacy Support", key: "usbLegacy", help: "Enable USB keyboard/mouse during early boot." },
         { t: "sep", label: "Network Configuration" },
         { t: "toggle", label: "Guest Internet", key: "netInternet", help: "Functional. Bridges the guest's NIC to the WebSocket relay so it reaches the real internet (the guest still needs its own DHCP client). Turn off for a fully offline VM." },
+        { t: "sep", label: "Power & Background" },
+        { t: "select", label: "Run in Background", key: "bgRun", opts: ["Keep running", "10 min", "1 min", "Off"],
+          help: "Functional. Keeps the guest COMPUTING after you switch to another app, so long jobs (builds, downloads, pip, compute) finish in the background instead of freezing. 'Keep running' = never suspend — best for background work; idle is cheap now (tickless kernel), but sustained load will drain the battery. '10 min' / '1 min' = hold that long, then let iOS suspend to save power. 'Off' = suspend immediately on switch-away." },
       ];
       if (tab === 2) return [
         { t: "select", label: "Boot Mode", key: "bootMode", opts: ["UEFI", "Legacy"], help: "Firmware boot mode. Legacy = CSM/BIOS compatibility." },
@@ -537,7 +547,9 @@
       writeCfg({ ram: s.ram, bootOrder: s.bootOrder, vtx: s.vtx, htt: s.htt, secureBoot: s.secureBoot,
         bootMode: s.bootMode, fastBoot: s.fastBoot, sataMode: s.sataMode, usbLegacy: s.usbLegacy,
         numlock: s.numlock, memRemap: s.memRemap, netInternet: s.netInternet,
-        resumeState: s.resumeState, nx: s.nx, tpm: s.tpm, txt: s.txt });
+        resumeState: s.resumeState, nx: s.nx, tpm: s.tpm, txt: s.txt, bgRun: s.bgRun });
+      // Apply the background-execution choice to the native keep-alive (UserDefaults + re-arm).
+      try { if (window.Bridge && BG_SEC[s.bgRun] != null) Bridge.call("system", "setBackgroundGrace", { seconds: BG_SEC[s.bgRun] }); } catch (e) {}
       // Mirror the internet + resume toggles into the emulator's own config (it reads
       // netRelay + resumeState there), preserving a custom wss:// relay URL if one was set.
       try {

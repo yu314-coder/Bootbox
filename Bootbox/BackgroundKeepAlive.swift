@@ -22,10 +22,16 @@ final class BackgroundKeepAlive {
     private var releaseTimer: Timer?
     private var active = false        // is the audio session currently held?
 
+    /// Seconds to keep the guest running after the app is backgrounded.
+    ///   0            → suspend immediately (max battery save)
+    ///   1…86399      → hold the guest for that long, then let iOS suspend
+    ///   >= 86400     → KEEP RUNNING (never release the audio session) — real background processing
+    /// Default is keep-running: idle is now ~3–6% host CPU (tickless kernels + futex-sleep engine), so
+    /// holding a backgrounded guest is cheap, and it lets long jobs (builds, downloads, compute) finish
+    /// while you use another app. Lower it in UEFI Setup → Advanced if you'd rather save battery.
+    static let keepRunning: TimeInterval = 86_400
     private var graceSeconds: TimeInterval {
-        let d = UserDefaults.standard
-        // Not-set → default 60. Explicit 0 → immediate suspend.
-        return d.object(forKey: "BootboxBackgroundGraceSeconds") as? TimeInterval ?? 60
+        UserDefaults.standard.object(forKey: "BootboxBackgroundGraceSeconds") as? TimeInterval ?? BackgroundKeepAlive.keepRunning
     }
 
     private init() {}
@@ -83,13 +89,24 @@ final class BackgroundKeepAlive {
     // MARK: - app lifecycle
 
     @objc private func didEnterBackground() {
-        releaseTimer?.invalidate()
+        releaseTimer?.invalidate(); releaseTimer = nil
         let grace = graceSeconds
-        if grace <= 0 { releaseSession(); return }   // max power-save: let iOS suspend right away
+        if grace <= 0 { releaseSession(); return }                    // max power-save: suspend right away
+        if grace >= BackgroundKeepAlive.keepRunning { return }        // keep running: hold the session, no release
+        if !active { engageSession() }                               // (re-)arm the session for the grace window
         // Fire while still awake (the audio session holds us), then drop it so iOS suspends us.
         let t = Timer(timeInterval: grace, repeats: false) { [weak self] _ in self?.releaseSession() }
         RunLoop.main.add(t, forMode: .common)
         releaseTimer = t
+    }
+
+    /// The background-grace setting changed (from UEFI Setup). If we're currently backgrounded, re-apply
+    /// it now (e.g. switch from a finite grace to keep-running, or vice-versa) instead of waiting.
+    func reschedule() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self = self, self.started else { return }
+            if UIApplication.shared.applicationState != .active { self.didEnterBackground() }
+        }
     }
 
     @objc private func willEnterForeground() {
