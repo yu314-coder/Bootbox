@@ -81,7 +81,12 @@
     // full diagnostic matrix (cx16 probe → esync → plain), logs to /root/winetest-*.log, and on
     // a PASS leaves winemine running — check the 🖥️ GUI tab. Watch progress in THIS console.
     ["🍷 Wine test", "winetest"],
+    ["📜 Wine log", "tail -n 40 -f /root/winetest-esync.log"],   // live log while wine loads (^C stops)
     ["⚛️ cx16 probe", "winetest cx16"],
+    // Input-freeze discriminator: if the yellow probe xterm responds to taps while the wine window
+    // doesn't, wine holds an X grab (wine-side); if NEITHER responds, the VNC input path is stuck —
+    // use the 🔄 button on the GUI pane. Either way the answer is one tap away.
+    ["🩺 input probe", "(DISPLAY=:0 xterm -geometry 40x12+30+30 -bg yellow -fg black -fn fixed -e sh -c 'echo TAP HERE; echo; echo If this window responds but wine does not: wine holds a grab.; echo If neither responds: tap the blue reload button on the GUI tab.; exec sh' >/dev/null 2>&1 &); echo 'Yellow probe window launched — switch to the 🖥️ GUI tab and tap it.'", "gui"],
     ["uv pip", "uv pip install --help 2>&1 | head -3"],
     ["memory", "free -m"],
     ["procs", "ps"]
@@ -150,6 +155,22 @@
     var fvname = panel.querySelector(".q64-fvname");
     var fcloseBtn = panel.querySelector(".q64-fclose");
     var tabBtns = panel.querySelectorAll(".q64-tab");
+
+    // 🔄 desktop-reconnect button (build 66): fixes the "display alive but input dead" state —
+    // the minesweeper clock keeps ticking (frames flow) while taps go nowhere. A fresh RFB
+    // session re-establishes the input direction. Lives ON the GUI pane so it's reachable
+    // exactly when the desktop itself stops responding.
+    var reBtn = document.createElement("button");
+    reBtn.textContent = "🔄";
+    reBtn.title = "Reconnect the desktop viewer (fixes frozen input)";
+    reBtn.style.cssText = "position:absolute;top:6px;right:6px;z-index:40;opacity:.8;padding:4px 9px;" +
+      "border-radius:6px;border:1px solid #2f6bdb;background:#16263f;color:#dfe8f5;font-size:14px;";
+    reBtn.onclick = function (ev) {
+      ev.stopPropagation();
+      if (window.__guiReconnect) { setGuiStatus("Reconnecting the desktop…"); window.__guiReconnect(); }
+      else setGuiStatus("Viewer not started yet — boot the guest first.");
+    };
+    try { guiEl.style.position = "relative"; guiEl.appendChild(reBtn); } catch (e) {}
 
     function showTab(which) {
       consoleEl.style.display = which === "console" ? "flex" : "none";
@@ -452,7 +473,12 @@
     // Focus-follows-tap: the on-screen keyboard goes where you last touched. Capture phase so the
     // noVNC canvas (added to guiEl after connect) and the xterm both count.
     termHost.addEventListener("pointerdown", function () { kbdTarget = "term"; }, true);
-    guiEl.addEventListener("pointerdown", function () { kbdTarget = "gui"; }, true);
+    guiEl.addEventListener("pointerdown", function () {
+      kbdTarget = "gui";
+      // Tap logger: every GUI tap records the RFB/socket state in the app console, so an
+      // input-dead report comes with the connection state attached (build 66).
+      try { console.log("[gui] tap rfb=" + (window.__guiState ? window.__guiState() : "?")); } catch (e) {}
+    }, true);
 
     return api;
   }

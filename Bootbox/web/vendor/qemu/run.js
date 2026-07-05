@@ -233,9 +233,41 @@
     // vn.Dial's it and bridges RFB over this WebSocket. opts.vnc = "ws://127.0.0.1:8889/vnc".
     // Idempotent (no-op if already connected) and reconnects after a disconnect (the panel re-calls
     // this on each GUI-tab open). The LEFT terminal + internet are untouched.
-    let rfb = null, guiRetries = 0;
+    let rfb = null, guiRetries = 0, lastGuiHost = null, lastStatusCb = null;
+    // Introspection + recovery for the "display alive but input dead" failure (seen on-device
+    // after a heavy wine load: minesweeper's clock kept ticking while taps went nowhere). The 🔄
+    // button on the GUI pane calls __guiReconnect for a fresh RFB session; __guiState feeds the
+    // tap logger so the app console shows the connection state on every GUI tap.
+    function guiState() {
+      try {
+        if (!rfb) return "no-rfb";
+        const ws = rfb._sock && rfb._sock._websocket;
+        return (rfb._rfbConnectionState || "?") + "/ws=" + (ws ? ws.readyState : "?");
+      } catch (e) { return "state-err"; }
+    }
+    function forceReconnectGui() {
+      try { if (rfb) rfb.disconnect(); } catch (e) {}
+      rfb = null; guiRetries = 0;
+      if (lastGuiHost) return connectGui(lastGuiHost, lastStatusCb);
+      return null;
+    }
+    try { self.__guiReconnect = forceReconnectGui; self.__guiState = guiState; } catch (e) {}
+    // Watchdog: a websocket can die silently (no 'disconnect' event) — noVNC then looks
+    // connected while input goes nowhere. If the underlying socket is CLOSING/CLOSED while
+    // the RFB still says "connected", force a fresh session.
+    setInterval(function () {
+      try {
+        if (!rfb || rfb._rfbConnectionState !== "connected") return;
+        const ws = rfb._sock && rfb._sock._websocket;
+        if (ws && ws.readyState >= 2) {
+          console.log("[gui] watchdog: socket dead under a connected RFB — reconnecting");
+          forceReconnectGui();
+        }
+      } catch (e) {}
+    }, 12000);
     async function connectGui(guiHost, statusCb) {
       statusCb = statusCb || function () {};
+      lastGuiHost = guiHost; lastStatusCb = statusCb;
       if (rfb) return rfb;
       if (!opts.vnc) { statusCb("No VNC endpoint configured for this guest."); return null; }
       statusCb("Connecting to the Linux desktop…");
