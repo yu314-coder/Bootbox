@@ -77,7 +77,6 @@
     ["ip addr", "ip -o addr show eth0 2>/dev/null | grep -o 'inet [0-9.]*' || ifconfig eth0"],
     ["🌐 internet", "wget -T 12 -qO- http://example.com 2>&1 | head -c 400; echo"],
     ["🖥️ GUI test", "(DISPLAY=:0 xterm -geometry 72x22 -bg white -fg black -fn fixed -e sh -c 'echo BOOTBOX GUI WORKS; echo; echo If you can read this white window, the graphical desktop is working.; exec sh' >/dev/null 2>&1 &); echo 'Launched a test window on the X desktop — switching to the 🖥️ GUI tab. A white terminal window should appear within a few seconds. If it does, the GUI works; if the pane stays blank, the X server has a problem.'", "gui"],
-    ["🍷 Wine test", "cd /root && echo '🍷 Fetching a Windows test app (Minesweeper) and launching it via Wine…' && wget -T 90 -q https://github.com/yu314-coder/Bootbox/releases/download/linux64-wine-v1/wine-test-minesweeper.exe -O winetest.exe && echo 'Launching. Wine is SLOW on the emulated CPU — give it 1-3 min, then open the 🖥️ GUI tab to look for the Minesweeper window. If nothing appears after a few minutes, Wine deadlocked (a known QEMU-Wasm limitation).' && (DISPLAY=:0 WINEPREFIX=/root/.wine WINEDEBUG=-all WINEDLLOVERRIDES='explorer.exe,services.exe=d' wine winetest.exe >/tmp/wine.log 2>&1 &)", "gui"],
     ["uv pip", "uv pip install --help 2>&1 | head -3"],
     ["memory", "free -m"],
     ["procs", "ps"]

@@ -118,15 +118,14 @@ finishing boot; once settled a listing is **<0.5 s**.
 Classic Windows (98/2000) boots natively in **v86**, and 32-bit `.exe` run in **BoxedWine**
 (import an `.exe` → Compatibility Center → 🍷 Run with Wine → the window renders via noVNC).
 
-Wine 9.0 is also present inside the 64-bit Linux guest, **but it is experimental/slow there.**
-The guest ships an initialized Wine prefix (so you don't hit the `kernel32.dll` c0000135 error),
-and the console panel has a **🍷 Wine test** button that downloads a small graphical Windows app
-(Minesweeper) and launches it with `WINEDLLOVERRIDES="explorer.exe,services.exe=d"` — which
-disables the device services (`wineusb`/`winebus`/`Winedevice2`) that otherwise deadlock on
-`RtlpWaitForCriticalSection` under the QEMU-Wasm engine's threading. Even when it works, Wine is
-very slow on the emulated CPU (minutes to launch), and heavy apps (e.g. Nuitka/PyInstaller-packed
-Python GUIs using WebView2) won't run. **For real Windows software, prefer v86 (98/2000) or
-BoxedWine; for Python tools, run them natively in the Linux guest.**
+Wine 9.0 is installed inside the 64-bit Linux guest, **but it does not work there** (confirmed
+on-device): even with an initialized prefix and the device services disabled
+(`WINEDLLOVERRIDES="explorer.exe,services.exe=d"`), Wine's multi-process model deadlocks on
+`RtlpWaitForCriticalSection` (the loader lock) under the QEMU-Wasm engine's threading — a
+fundamental wasm-TCG limitation, not a config issue. (The GUI pipeline itself is fine — an X app
+like `xterm` renders correctly via Xvnc→noVNC; it's Wine specifically that hangs.) **For Windows
+software, use v86 (98/2000) or BoxedWine (32-bit `.exe`); for Python tools, run them natively in
+the Linux guest.**
 
 ### Your files, in the Files app
 An **iSH-style File Provider** exposes the Bootbox folder in the iOS Files app — drop
