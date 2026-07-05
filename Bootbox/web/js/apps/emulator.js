@@ -53,8 +53,10 @@
   // small). LocalServer.swift resolves these same names. BUMP the size tag when re-uploading an image.
   const ROOTFS_REMOTE = {
     "vendor/qemu-aload/": { files: [
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux64-v1/qemu64-rootfs.data.gz",
-        name: "qemu64-rootfs-718508644.data.gz", mb: 260 },
+      // wine v2 (build 62): wine-staging 11.5 + esync + baked prefix + winetest/cx16test diagnostics.
+      // Pairs with the bundled cx16lock engine (lock-based cmpxchg16b instead of stop-the-world).
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux64-wine-v2/qemu64-wine2-rootfs.data.gz",
+        name: "qemu64-wine2-rootfs-943299652.data.gz", mb: 310 },
     ] },
     "vendor/qemu-aarch64/": { files: [
       { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-arm64-v1/qemu-aarch64-engine.wasm.gz",

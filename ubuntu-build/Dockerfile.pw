@@ -1,6 +1,15 @@
 # Fast-pip variant of the Python/Wine Alpine guest.
 # Builds ON TOP of the already-built alpine-loaded:latest (python3.12 + pip + wine),
 # so only these 3 cheap layers are new.
+
+# -- side stage: cx16 engine probe (see cx16test.c — measures cmpxchg16b stop-the-world cost) --
+FROM alpine:3.20 AS cxbuild
+RUN apk add --no-cache gcc musl-dev binutils
+COPY cx16test.c /tmp/cx16test.c
+RUN gcc -O2 -mcx16 -static -pthread -o /cx16test /tmp/cx16test.c && \
+    n=$(objdump -d /cx16test | grep -c cmpxchg16b) && test "$n" -ge 2 && \
+    echo "CX16TEST-OK ($n cmpxchg16b sites, static $(du -h /cx16test | cut -f1))"
+
 FROM alpine-loaded:latest
 
 # 1) uv = a single static Rust binary that replaces pip. No Python import tree, so its
@@ -94,10 +103,66 @@ RUN set -eux; \
     fc-cache -f 2>/dev/null || true; \
     rm -rf /usr/share/man /usr/share/doc /usr/share/gtk-doc /usr/share/locale /usr/share/i18n /usr/share/info /var/cache/apk/*; \
     echo "SLIM-OK pkgs=$(apk info 2>/dev/null | wc -l) usr=$(du -sm /usr 2>/dev/null | cut -f1)MB"
-# NOTE: an initialized Wine prefix was tried here (build 59) so `.exe` could run, but Wine's device
-# services deadlock on RtlpWaitForCriticalSection under the QEMU-Wasm engine's threading even with
-# services.exe disabled — confirmed dead on-device — so the prefix was reverted (it was +90MB of dead
-# weight). Wine stays installed but unusable in this guest; use v86/BoxedWine for Windows .exe.
+# 6) WINE v2 (build 62): the v1 attempt (wine 9.0, Alpine 3.20) deadlocked on-device on
+#    RtlpWaitForCriticalSection even with services.exe disabled. v2 attacks it two ways:
+#    (a) wine-staging 11.5 from Alpine edge/testing — two major loader rewrites newer AND includes
+#        esync (WINEESYNC=1): sync objects become eventfds, bypassing the wineserver round-trips
+#        that v1 died in. Kernel 6.1 has EVENTFD=y, so esync works TODAY (ntsync needs 6.14+).
+#    (b) a baked cx16test probe (see cxbuild stage): qemu64 advertises CX16, wine's x64 SLIST paths
+#        execute `lock cmpxchg16b` unconditionally, and wasm32 TCG must emulate it stop-the-world;
+#        pure-Linux code (xterm/python — all working) never touches 16-byte atomics. If the probe
+#        shows a ~1000x penalty on-device, the wine fix is ENGINE-side, not wine-side.
+#    xwininfo = real success detection for the winetest script (window in the X tree, not just
+#    "process alive"). apk -X mixes edge repos in only for this step; the python smoke test below
+#    guards against edge-lib fallout (musl/openssl upgrades are soname-stable, but verify).
+RUN set -eux; \
+    apk del wine 2>/dev/null || true; \
+    apk add --no-cache \
+      -X https://dl-cdn.alpinelinux.org/alpine/edge/main \
+      -X https://dl-cdn.alpinelinux.org/alpine/edge/community \
+      -X https://dl-cdn.alpinelinux.org/alpine/edge/testing \
+      wine-staging xwininfo 2>&1 | tail -3; \
+    wine --version; \
+    du -sm /usr/lib/wine/* | sort -rn | head -4; \
+    python3 -c "import requests, flask; print('python-ok')"; \
+    /usr/local/bin/uv --version || uv --version; \
+    echo "WINE-STAGING-OK $(wine --version) wine=$(du -sm /usr/lib/wine | cut -f1)MB"
+# 6a) Bake the prefix at BUILD time (the v1 lesson: first-run wineboot on the emulated CPU fails
+#     with kernel32.dll c0000135). Same recipe as v1: wineboot --init under colima, delete the
+#     crash-dump C:\windows\core if it appears, dedup prefix PE DLLs into symlinks to the shared
+#     /usr/lib/wine copies (system32 AND syswow64, if the new-WoW64 build ships i386 PEs).
+ENV WINEPREFIX=/root/.wine WINEARCH=win64
+RUN printf 'export WINEPREFIX=/root/.wine\nexport WINEARCH=win64\n' > /etc/profile.d/wine.sh
+RUN set -eux; \
+    timeout 900 wineboot --init 2>&1 | tail -6 || true; \
+    (timeout 120 wineserver -w 2>/dev/null || true); \
+    rm -f /root/.wine/drive_c/windows/core; \
+    for d in system32 syswow64; do \
+      for f in /root/.wine/drive_c/windows/$d/*.dll; do \
+        [ -f "$f" ] || continue; b=$(basename "$f"); \
+        for src in /usr/lib/wine/x86_64-windows /usr/lib/wine/i386-windows; do \
+          if [ -f "$src/$b" ] && [ "$(du -k "$f" | cut -f1)" = "$(du -k "$src/$b" | cut -f1)" ]; then ln -sf "$src/$b" "$f"; break; fi; \
+        done; \
+      done; \
+    done; \
+    test -f /root/.wine/drive_c/windows/system32/kernel32.dll; \
+    echo "WINE-PREFIX-OK prefix=$(du -sh /root/.wine | cut -f1)"
+# 6b) Trim wine-staging's heavy optional runtime deps — winemine/user exes don't need media
+#     (gstreamer), vulkan, scanners (sane), audio (no audio device in the guest) or OpenCL.
+#     wine dlopens these lazily; missing libs = that feature off, core win32 unaffected.
+RUN set -eux; \
+    rm -rf /usr/lib/libgstreamer* /usr/lib/gstreamer-1.0 /usr/lib/libgst* \
+           /usr/lib/libvulkan* /usr/share/vulkan \
+           /usr/lib/sane /usr/lib/libsane* /etc/sane.d \
+           /usr/lib/libpulse* /usr/lib/pulseaudio /usr/lib/alsa-lib /usr/lib/libasound* \
+           /usr/lib/libOpenCL* /etc/OpenCL /usr/lib/libMagick* ; \
+    wine --version; \
+    python3 -c "import requests; print('python-still-ok')"; \
+    echo "WINE-TRIM-OK usr=$(du -sm /usr 2>/dev/null | cut -f1)MB"
+# 6c) The diagnostic matrix (winetest) + the engine probe (cx16test).
+COPY --from=cxbuild /cx16test /usr/local/bin/cx16test
+COPY winetest.sh /usr/local/bin/winetest
+RUN chmod +x /usr/local/bin/winetest /usr/local/bin/cx16test
 # Start a BARE X (Xvnc + twm) in the background on boot, then drop to the interactive serial shell.
 # The plain guest's GUI stays blank until a program is launched; the "Desktop" guest's full chrome
 # (wallpaper + terminal + tint2 taskbar) is started on demand by start-desktop (the app runs it).

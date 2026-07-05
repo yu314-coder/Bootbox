@@ -77,6 +77,11 @@
     ["ip addr", "ip -o addr show eth0 2>/dev/null | grep -o 'inet [0-9.]*' || ifconfig eth0"],
     ["🌐 internet", "wget -T 12 -qO- http://example.com 2>&1 | head -c 400; echo"],
     ["🖥️ GUI test", "(DISPLAY=:0 xterm -geometry 72x22 -bg white -fg black -fn fixed -e sh -c 'echo BOOTBOX GUI WORKS; echo; echo If you can read this white window, the graphical desktop is working.; exec sh' >/dev/null 2>&1 &); echo 'Launched a test window on the X desktop — switching to the 🖥️ GUI tab. A white terminal window should appear within a few seconds. If it does, the GUI works; if the pane stays blank, the X server has a problem.'", "gui"],
+    // Wine v2 (build 62): wine-staging 11.5 + esync + the cx16lock engine. "winetest" runs the
+    // full diagnostic matrix (cx16 probe → esync → plain), logs to /root/winetest-*.log, and on
+    // a PASS leaves winemine running — check the 🖥️ GUI tab. Watch progress in THIS console.
+    ["🍷 Wine test", "winetest"],
+    ["⚛️ cx16 probe", "winetest cx16"],
     ["uv pip", "uv pip install --help 2>&1 | head -3"],
     ["memory", "free -m"],
     ["procs", "ps"]

@@ -36,7 +36,7 @@ Everything runs on-device. No servers, no streaming, no jailbreak.
 
 | System | Arch | Cores | Highlights | Download |
 |---|---|---|---|---|
-| **64-bit Linux + Python & Wine** | x86-64 | **1–8 (default 2)** | Alpine · Python 3.12 + pip · real internet · file browser · `mc` · Wine present (limited — see Windows-programs note) | ~220 MB, once |
+| **64-bit Linux + Python & Wine** | x86-64 | **1–8 (default 2)** | Alpine · Python 3.12 + pip · real internet · file browser · `mc` · **wine-staging 11.5 + esync** (experimental — see Windows-programs note) | ~310 MB, once |
 | **64-bit Linux — Desktop** | x86-64 | 1 | Full-screen twm desktop + taskbar + terminal + `links` browser + `mc` | ~129 MB, once |
 | **64-bit Linux — ARM64** | aarch64 | 2 | *Genuine* ARM64 Alpine (`uname -m` = aarch64) · Python · internet · up to 1.5 GB RAM | ~61 MB, once |
 | **Windows 98 SE** | i686 (v86) | 1 | Boots to the desktop | ~89 MB, once |
@@ -118,14 +118,23 @@ finishing boot; once settled a listing is **<0.5 s**.
 Classic Windows (98/2000) boots natively in **v86**, and 32-bit `.exe` run in **BoxedWine**
 (import an `.exe` → Compatibility Center → 🍷 Run with Wine → the window renders via noVNC).
 
-Wine 9.0 is installed inside the 64-bit Linux guest, **but it does not work there** (confirmed
-on-device): even with an initialized prefix and the device services disabled
-(`WINEDLLOVERRIDES="explorer.exe,services.exe=d"`), Wine's multi-process model deadlocks on
-`RtlpWaitForCriticalSection` (the loader lock) under the QEMU-Wasm engine's threading — a
-fundamental wasm-TCG limitation, not a config issue. (The GUI pipeline itself is fine — an X app
-like `xterm` renders correctly via Xvnc→noVNC; it's Wine specifically that hangs.) **For Windows
-software, use v86 (98/2000) or BoxedWine (32-bit `.exe`); for Python tools, run them natively in
-the Linux guest.**
+**Wine in the 64-bit guest (experimental, v2):** the first attempt (Wine 9.0) deadlocked on-device
+on `RtlpWaitForCriticalSection` — the loader lock — even with the device services disabled. Two
+root causes were identified and both are attacked in the current build:
+
+1. **Engine:** `qemu64` advertises CX16, so Windows/Wine x64 code uses `lock cmpxchg16b` for its
+   lock-free SLISTs (loader queues, heap lookasides). wasm32 has no 128-bit atomics, so each one
+   freezes **all** vCPUs (a stop-the-world exclusive section). A lock-based 16-byte CAS engine fix
+   is in development (`⚛️ cx16 probe` in the console measures the current cost).
+2. **Wine:** upgraded to **wine-staging 11.5** (two major loader rewrites past 9.0) with **esync**
+   (`WINEESYNC=1`) — sync objects become kernel eventfds, bypassing the wineserver round-trips the
+   old deadlock lived in.
+
+Use the **🍷 Wine test** console button: it runs the cx16 probe, then `winemine` under esync, then
+plain — with full `WINEDEBUG` logs in `/root/winetest-*.log`. A pass leaves the window visible in
+the 🖥️ GUI tab. (The GUI pipeline itself was never the problem — X apps render fine via Xvnc→noVNC.)
+For production Windows software today, still prefer **v86 (98/2000)** or **BoxedWine (32-bit
+`.exe`)**; for Python tools, run them natively in the Linux guest.
 
 ### Your files, in the Files app
 An **iSH-style File Provider** exposes the Bootbox folder in the iOS Files app — drop
