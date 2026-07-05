@@ -18,9 +18,20 @@ final class BinaryBridge {
             // must not block on the bridge's short request/reply timeout.
             guard let urlStr = payload["url"] as? String, let url = URL(string: urlStr),
                   let name = payload["name"] as? String else { return respond(false, "bad args") }
+            // Optional exact byte size (from ROOTFS_REMOTE). With it, "cached" means
+            // exists AND matches — a poisoned/truncated file (e.g. a GitHub error body
+            // saved by a pre-build-64 Downloader) is deleted and re-downloaded instead
+            // of bricking the guest with "TypeError: Load failed" forever.
+            let expected = (payload["size"] as? NSNumber)?.int64Value ?? 0
             let dest = Self.importsDir().appendingPathComponent(name)
-            if FileManager.default.fileExists(atPath: dest.path) { return respond(true, ["cached": true, "name": name]) }
-            downloader.start(url: url, name: name, dest: dest)
+            if FileManager.default.fileExists(atPath: dest.path) {
+                let got = (try? FileManager.default.attributesOfItem(atPath: dest.path))?[.size] as? Int64
+                if expected <= 0 || got == expected {
+                    return respond(true, ["cached": true, "name": name])
+                }
+                try? FileManager.default.removeItem(at: dest)   // wrong size → re-download
+            }
+            downloader.start(url: url, name: name, dest: dest, expectedSize: expected)
             respond(true, ["started": true, "name": name])
         case "gunzip":
             // Expand a downloaded `.img.gz` (e.g. the GUI Arch image) into a raw

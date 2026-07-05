@@ -52,21 +52,24 @@
   // the aarch64 guest downloads BOTH its engine wasm AND rootfs (neither is bundled — keeps the app
   // small). LocalServer.swift resolves these same names. BUMP the size tag when re-uploading an image.
   const ROOTFS_REMOTE = {
+    // `size` = the exact release-asset byte count: the native side re-downloads on any
+    // mismatch (build 64 — heals caches poisoned by a saved GitHub error body, the
+    // on-device "TypeError: Load failed" bug) and rejects truncated transfers.
     "vendor/qemu-aload/": { files: [
       // wine v2 (build 62): wine-staging 11.5 + esync + baked prefix + winetest/cx16test diagnostics.
       // Pairs with the bundled cx16lock engine (lock-based cmpxchg16b instead of stop-the-world).
       { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux64-wine-v2/qemu64-wine2-rootfs.data.gz",
-        name: "qemu64-wine2-rootfs-943299652.data.gz", mb: 310 },
+        name: "qemu64-wine2-rootfs-943299652.data.gz", mb: 310, size: 308877983 },
     ] },
     "vendor/qemu-aarch64/": { files: [
       { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-arm64-v1/qemu-aarch64-engine.wasm.gz",
-        name: "qemu-aarch64-engine-16240484.wasm.gz", mb: 4 },
+        name: "qemu-aarch64-engine-16240484.wasm.gz", mb: 4, size: 4142861 },
       { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-arm64-v1/qemu-aarch64-rootfs.data.gz",
-        name: "qemu-aarch64-rootfs-265519785.data.gz", mb: 57 },
+        name: "qemu-aarch64-rootfs-265519785.data.gz", mb: 57, size: 60000998 },
     ] },
     "vendor/qemu-desktop/": { files: [   // x86_64 engine shared from qemu-aload; only the rootfs downloads
       { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v1/qemu-desktop-rootfs.data.gz",
-        name: "qemu-desktop-rootfs-375997966.data.gz", mb: 129 },
+        name: "qemu-desktop-rootfs-375997966.data.gz", mb: 129, size: 135976350 },
     ] },
   };
   // Ensure the guest's rootfs is present before booting: trigger the native download (BinaryBridge
@@ -78,7 +81,7 @@
     if (!window.Bridge || typeof Bridge.call !== "function") return;
     for (const f of cfg.files) {                     // download each part (aarch64 = engine + rootfs)
       let r;
-      try { r = await Bridge.call("binary", "download", { url: f.url, name: f.name }); }
+      try { r = await Bridge.call("binary", "download", { url: f.url, name: f.name, size: f.size || 0 }); }
       catch (e) { throw new Error("couldn't start the image download — " + ((e && e.message) || e)); }
       if (r && r.cached) continue;                   // already downloaded on a previous boot
       try { if (setState) setState("Downloading…"); } catch (e) {}
