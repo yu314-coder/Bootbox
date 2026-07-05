@@ -76,7 +76,8 @@
     ["ls /", "ls -la /"],
     ["ip addr", "ip -o addr show eth0 2>/dev/null | grep -o 'inet [0-9.]*' || ifconfig eth0"],
     ["🌐 internet", "wget -T 12 -qO- http://example.com 2>&1 | head -c 400; echo"],
-    ["🍷 Wine test", "cd /root && echo '🍷 Fetching a Windows test app (Minesweeper) and launching it via Wine…' && wget -T 90 -q https://github.com/yu314-coder/Bootbox/releases/download/linux64-wine-v1/wine-test-minesweeper.exe -O winetest.exe && echo 'Launching. Wine is SLOW on the emulated CPU — give it 1-3 min, then open the 🖥️ GUI tab to look for the Minesweeper window. If nothing appears after a few minutes, Wine deadlocked (a known QEMU-Wasm limitation).' && (DISPLAY=:0 WINEPREFIX=/root/.wine WINEDEBUG=-all WINEDLLOVERRIDES='explorer.exe,services.exe=d' wine winetest.exe >/tmp/wine.log 2>&1 &)"],
+    ["🖥️ GUI test", "(DISPLAY=:0 xterm -geometry 72x22 -bg white -fg black -fn fixed -e sh -c 'echo BOOTBOX GUI WORKS; echo; echo If you can read this white window, the graphical desktop is working.; exec sh' >/dev/null 2>&1 &); echo 'Launched a test window on the X desktop — switching to the 🖥️ GUI tab. A white terminal window should appear within a few seconds. If it does, the GUI works; if the pane stays blank, the X server has a problem.'", "gui"],
+    ["🍷 Wine test", "cd /root && echo '🍷 Fetching a Windows test app (Minesweeper) and launching it via Wine…' && wget -T 90 -q https://github.com/yu314-coder/Bootbox/releases/download/linux64-wine-v1/wine-test-minesweeper.exe -O winetest.exe && echo 'Launching. Wine is SLOW on the emulated CPU — give it 1-3 min, then open the 🖥️ GUI tab to look for the Minesweeper window. If nothing appears after a few minutes, Wine deadlocked (a known QEMU-Wasm limitation).' && (DISPLAY=:0 WINEPREFIX=/root/.wine WINEDEBUG=-all WINEDLLOVERRIDES='explorer.exe,services.exe=d' wine winetest.exe >/tmp/wine.log 2>&1 &)", "gui"],
     ["uv pip", "uv pip install --help 2>&1 | head -3"],
     ["memory", "free -m"],
     ["procs", "ps"]
@@ -399,7 +400,8 @@
     QUICK.forEach(function (pair) {
       var b = document.createElement("button");
       b.className = "q64-qb"; b.textContent = pair[0]; b.title = pair[1];
-      b.onclick = function () { runCmd(pair[1]); };
+      // pair[2] === "gui": after running, auto-open the 🖥️ GUI tab so you immediately watch for the window.
+      b.onclick = function () { runCmd(pair[1]); if (pair[2] === "gui") setTimeout(function () { try { showTab("gui"); } catch (e) {} }, 3500); };
       grid.appendChild(b);
     });
     runBtn.onclick = function () { runCmd(inp.value); inp.value = ""; };
@@ -429,12 +431,13 @@
 
     // ---- apply the boot mode ----
     if (mode === "console" || mode === "desktop") {
-      // The LEFT terminal is the console → hide the redundant Console tab. The 📁 Files tab STAYS in
-      // console mode: it's the point-and-tap file manager for the guest FS (browse, download to the
-      // iPad, upload from the Files app) — much easier than shell commands for managing files.
+      // Keep the 🐧 Console tab visible in console mode so you can always return to the command box +
+      // quick buttons (incl. the Wine/GUI tests) after visiting the GUI or Files tab — before, it was
+      // hidden and tapping GUI/Files stranded you with no way back. Only DESKTOP (no console pane) hides
+      // both the Console and Files tabs.
       var cTab = panel.querySelector('.q64-tab[data-tab="console"]');
       var fTab = panel.querySelector('.q64-tab[data-tab="files"]');
-      if (cTab) cTab.style.display = "none";
+      if (cTab && mode === "desktop") cTab.style.display = "none";
       if (fTab && mode === "desktop") fTab.style.display = "none";   // desktop = GUI-only surface
       panel.classList.add("gui-active");          // keep the pane wide
     }
