@@ -123,9 +123,11 @@ on `RtlpWaitForCriticalSection` — the loader lock — even with the device ser
 root causes were identified and both are attacked in the current build:
 
 1. **Engine:** `qemu64` advertises CX16, so Windows/Wine x64 code uses `lock cmpxchg16b` for its
-   lock-free SLISTs (loader queues, heap lookasides). wasm32 has no 128-bit atomics, so each one
-   freezes **all** vCPUs (a stop-the-world exclusive section). A lock-based 16-byte CAS engine fix
-   is in development (`⚛️ cx16 probe` in the console measures the current cost).
+   lock-free SLISTs (loader queues, heap lookasides) — and the Linux kernel's SLUB allocator uses
+   it on every alloc/free. wasm32 has no 128-bit atomics, so each one used to freeze **all** vCPUs
+   (a stop-the-world exclusive section). The engine now emulates 16-byte CAS behind a host spinlock
+   (with hardware-faithful CAS-read semantics), speeding up *every* x64 guest, not just Wine
+   (`⚛️ cx16 probe` in the console measures it).
 2. **Wine:** upgraded to **wine-staging 11.5** (two major loader rewrites past 9.0) with **esync**
    (`WINEESYNC=1`) — sync objects become kernel eventfds, bypassing the wineserver round-trips the
    old deadlock lived in.
