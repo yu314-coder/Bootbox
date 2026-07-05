@@ -115,6 +115,21 @@
       }, { passive: false });
     })();
 
+    // --- Native trackpad / mouse scroll bridge. The WebView's scrollView is disabled (so touch reaches
+    // the emulator), which means the Magic Keyboard trackpad's indirect two-finger scroll never becomes a
+    // DOM 'wheel' event — the terminal couldn't scroll with a trackpad. HostView adds a UIPanGestureRecognizer
+    // (indirect scroll only) that calls this with a pixel delta; we scroll the scrollback here. Skip
+    // full-screen (alt-buffer) TUIs — they own the screen and use arrow keys, not scrollback.
+    self.__trackpadScroll = function (dyPx) {
+      try {
+        if (xterm.buffer && xterm.buffer.active && xterm.buffer.active.type === "alternate") return;
+        var ds = xterm._core && xterm._core._renderService && xterm._core._renderService.dimensions;
+        var ch = (ds && (ds.actualCellHeight || (ds.css && ds.css.cell && ds.css.cell.height))) || 17;
+        var rows = Math.round(dyPx / ch) || (dyPx > 0 ? 1 : -1);
+        xterm.scrollLines(rows);
+      } catch (e) {}
+    };
+
     // --- Fit the terminal to its container. Without this xterm is a fixed 80x24 grid that only
     // fills the top-left of the pane; the rest is dead space where taps/drag do nothing (the exact
     // "can only type in the top-left, can't drag" report). We size the grid to the actual pane and

@@ -32,3 +32,5 @@ Bootbox/web/vendor/qemu-dbg/
 
 # OS noise
 .DS_Store
+Bootbox/web/xterm-scroll-test.html
+Bootbox/web/live-*.html

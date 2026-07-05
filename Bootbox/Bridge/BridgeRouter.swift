@@ -8,8 +8,10 @@ import UIKit
 ///   window.webkit.messageHandlers.host.postMessage({ id, bridge, action, payload })
 /// Reply (host -> guest):  window.__hostReply(id, ok, result)
 /// Event (host -> guest):  window.__hostEvent(name, payload)
-final class BridgeRouter: NSObject, WKScriptMessageHandler {
+final class BridgeRouter: NSObject, WKScriptMessageHandler, UIGestureRecognizerDelegate {
     weak var webView: WKWebView?
+    // Let our trackpad-scroll pan run alongside the WebView's own recognizers (don't steal touches).
+    func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 
     private lazy var files = FilesBridge()
     private lazy var clipboard = ClipboardBridge()
@@ -25,6 +27,27 @@ final class BridgeRouter: NSObject, WKScriptMessageHandler {
         super.init()
         NotificationCenter.default.addObserver(self, selector: #selector(onHostEvent(_:)),
                                                name: HostEvents.notification, object: nil)
+    }
+
+    // Trackpad / mouse two-finger scroll → forward to the active guest terminal. The WebView's scrollView
+    // is disabled (so touch reaches the emulator), which drops the Magic Keyboard trackpad's INDIRECT
+    // scroll gesture — it never becomes a DOM 'wheel' event, so the terminal couldn't scroll with a
+    // trackpad. This recognizer (added in HostView, maximumNumberOfTouches=0) fires ONLY for indirect
+    // scroll (trackpad/mouse), never touchscreen, so it doesn't disturb the emulator's touch input.
+    private var scrollLast: CGFloat = 0
+    @objc func handleTrackpadScroll(_ g: UIPanGestureRecognizer) {
+        switch g.state {
+        case .began:
+            scrollLast = 0
+        case .changed:
+            let y = g.translation(in: g.view).y
+            let dy = y - scrollLast
+            scrollLast = y
+            // natural scrolling: two fingers down (dy>0) → reveal older output (scroll toward history)
+            webView?.evaluateJavaScript("window.__trackpadScroll&&window.__trackpadScroll(\(-dy))", completionHandler: nil)
+        default:
+            scrollLast = 0
+        }
     }
 
     func userContentController(_ uc: WKUserContentController, didReceive message: WKScriptMessage) {

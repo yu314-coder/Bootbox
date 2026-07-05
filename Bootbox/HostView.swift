@@ -141,6 +141,17 @@ struct WebHostView: UIViewControllerRepresentable {
         webView.allowsBackForwardNavigationGestures = false
         context.coordinator.webView = webView
 
+        // Trackpad / mouse two-finger scroll → guest terminal. scrollView.isScrollEnabled is off (so touch
+        // reaches the emulator), which otherwise drops the Magic Keyboard's indirect scroll. maximumNumberOfTouches
+        // = 0 makes this fire ONLY for indirect scroll (trackpad/mouse), never touchscreen — so touch input is
+        // untouched. The handler bridges the delta to window.__trackpadScroll (run.js → xterm scrollback).
+        let scrollPan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(BridgeRouter.handleTrackpadScroll(_:)))
+        scrollPan.maximumNumberOfTouches = 0
+        scrollPan.cancelsTouchesInView = false
+        scrollPan.delegate = context.coordinator
+        if #available(iOS 13.4, *) { scrollPan.allowedScrollTypesMask = .all }
+        webView.addGestureRecognizer(scrollPan)
+
         let dropper = WebDropDelegate(); WebDropDelegate.retained = dropper
         webView.addInteraction(UIDropInteraction(delegate: dropper))
 
