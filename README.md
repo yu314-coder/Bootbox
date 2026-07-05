@@ -36,7 +36,7 @@ Everything runs on-device. No servers, no streaming, no jailbreak.
 
 | System | Arch | Cores | Highlights | Download |
 |---|---|---|---|---|
-| **64-bit Linux + Python & Wine** | x86-64 | **1–8 (default 2)** | Alpine · Python 3.12 + pip · Wine 9.0 (32 **and** 64-bit `.exe`) · real internet · file browser · `mc` | ~220 MB, once |
+| **64-bit Linux + Python & Wine** | x86-64 | **1–8 (default 2)** | Alpine · Python 3.12 + pip · real internet · file browser · `mc` · Wine present (limited — see Windows-programs note) | ~220 MB, once |
 | **64-bit Linux — Desktop** | x86-64 | 1 | Full-screen twm desktop + taskbar + terminal + `links` browser + `mc` | ~129 MB, once |
 | **64-bit Linux — ARM64** | aarch64 | 2 | *Genuine* ARM64 Alpine (`uname -m` = aarch64) · Python · internet · up to 1.5 GB RAM | ~61 MB, once |
 | **Windows 98 SE** | i686 (v86) | 1 | Boots to the desktop | ~89 MB, once |
@@ -115,9 +115,16 @@ are shown. The first listing right after boot is slow only because the emulated 
 finishing boot; once settled a listing is **<0.5 s**.
 
 ### Windows programs
-The console guest includes **Wine 9.0 with both 32-bit and 64-bit support** — run
-`wine program.exe` in the terminal and the window appears in the GUI pane (noVNC → Xvnc).
-Classic Windows (98/2000) boots natively in v86.
+Classic Windows (98/2000) boots natively in **v86**, and 32-bit `.exe` run in **BoxedWine**
+(import an `.exe` → Compatibility Center → 🍷 Run with Wine → the window renders via noVNC).
+
+Wine 9.0 is also present inside the 64-bit Linux guest, **but it is not practical there**:
+under the QEMU-Wasm engine's threading model, Wine's device services (`wineusb`, `winebus`,
+`Winedevice2`) deadlock on `RtlpWaitForCriticalSection` during startup, so most `.exe` hang.
+(This is separate from the "prefix not initialized" `kernel32.dll` error — that part is
+avoidable, but the service deadlock is a fundamental wasm-TCG limitation.) Heavy GUI apps —
+e.g. PyInstaller-packed Python/Qt apps — are beyond emulated Wine regardless. **For Windows
+software, prefer v86 (98/2000) or BoxedWine.**
 
 ### Your files, in the Files app
 An **iSH-style File Provider** exposes the Bootbox folder in the iOS Files app — drop
