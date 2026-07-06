@@ -176,7 +176,7 @@ Module['FS_createPath']("/", "pack", true, true);
     }
 
     }
-    loadPackage({"files": [{"filename": "/pack/bios-256k.bin", "start": 0, "end": 262144}, {"filename": "/pack/bzImage", "start": 262144, "end": 3613056}, {"filename": "/pack/efi-virtio.rom", "start": 3613056, "end": 3773824}, {"filename": "/pack/kvmvapic.bin", "start": 3773824, "end": 3783040}, {"filename": "/pack/linuxboot_dma.bin", "start": 3783040, "end": 3784576}, {"filename": "/pack/rootfs.bin", "start": 3784576, "end": 333631360}, {"filename": "/pack/vgabios-stdvga.bin", "start": 333631360, "end": 333670784}, {"filename": "/pack/vm.state", "start": 333670784, "end": 375997966}], "remote_package_size": 375997966});
+    loadPackage({"files": [{"filename": "/pack/bios-256k.bin", "start": 0, "end": 262144}, {"filename": "/pack/bzImage", "start": 262144, "end": 3883616}, {"filename": "/pack/efi-virtio.rom", "start": 3883616, "end": 4044384}, {"filename": "/pack/kvmvapic.bin", "start": 4044384, "end": 4053600}, {"filename": "/pack/linuxboot_dma.bin", "start": 4053600, "end": 4055136}, {"filename": "/pack/rootfs.bin", "start": 4055136, "end": 652845152}, {"filename": "/pack/vgabios-stdvga.bin", "start": 652845152, "end": 652884576}, {"filename": "/pack/vm.state", "start": 652884576, "end": 698119289}], "remote_package_size": 698119289});
 
   })();
 

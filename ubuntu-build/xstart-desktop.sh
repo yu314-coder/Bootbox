@@ -30,9 +30,12 @@ Color {
 Button3 = : root : f.menu "apps"
 menu "apps" {
   "Bootbox Linux Desktop"  f.title
-  "Web browser (links)"    !"xterm -fn fixed -bg black -fg white -geometry 96x30 -title Browser -e links http://example.com &"
+  "Web browser (Dillo)"    !"dillo http://example.com >/tmp/dillo.log 2>&1 &"
+  "Web text (links)"       !"xterm -fn fixed -bg black -fg white -geometry 96x30 -title Browser -e links http://example.com &"
+  "Files (PCManFM, slow 1st open)" !"pcmanfm >/tmp/pcmanfm.log 2>&1 &"
+  "Files (mc, terminal)"   !"xterm -fn fixed -bg black -fg white -e mc &"
+  "Claude Code"            !"xterm -fn fixed -bg rgb:0d/15/26 -fg rgb:9f/e8/b8 -geometry 100x30 -title Claude -e sh -lc claude &"
   "Terminal"               !"xterm -fn fixed -bg black -fg green -sb &"
-  "Files (mc)"             !"xterm -fn fixed -bg black -fg white -e mc &"
   "Python REPL"            !"xterm -fn fixed -bg black -fg white -e python3 &"
   ""                       f.nop
   "Restart desktop"        f.restart
@@ -46,7 +49,8 @@ TWMRC
     n=0; while [ "$n" -lt 80 ] && [ ! -e /tmp/.X11-unix/X0 ]; do sleep 0.25; n=$((n+1)); done
     export DISPLAY=:0
     export HOME=/root
-    xsetroot -solid '#1f3350' 2>/dev/null
+    # Wallpaper (v2): the generated gradient; solid-color fallback if xwallpaper is missing.
+    xwallpaper --zoom /usr/share/bootbox-wallpaper.png 2>/dev/null || xsetroot -solid '#1f3350' 2>/dev/null
     # A terminal + the mc file manager, pre-opened (tap the tint2 taskbar to switch).
     xterm -fn fixed -bg black -fg green -geometry 78x22+30+24 -title "Terminal" -sb >/tmp/xterm.log 2>&1 &
     xterm -fn fixed -bg black -fg white -geometry 78x22+360+300 -title "Files (mc)" -e mc >/tmp/mc.log 2>&1 &

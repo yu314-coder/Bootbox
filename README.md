@@ -37,7 +37,7 @@ Everything runs on-device. No servers, no streaming, no jailbreak.
 | System | Arch | Cores | Highlights | Download |
 |---|---|---|---|---|
 | **64-bit Linux + Python & Wine** | x86-64 | **1–8 (default 2)** | Alpine · Python 3.12 + pip · real internet · file browser · `mc` · **wine-staging 11.5, esync on by default, warm prefix** | ~310 MB, once |
-| **64-bit Linux — Desktop** | x86-64 | 1 | Full-screen twm desktop + taskbar + terminal + `links` browser + `mc` | ~129 MB, once |
+| **64-bit Linux — Desktop** | x86-64 | 1 | Full-screen desktop · **Dillo browser** · **PCManFM file manager** · **Claude Code CLI** · terminal + `mc` + `links` · wallpaper | ~240 MB, once |
 | **64-bit Linux — ARM64** | aarch64 | 2 | *Genuine* ARM64 Alpine (`uname -m` = aarch64) · Python · internet · up to 1.5 GB RAM | ~61 MB, once |
 | **Windows 98 SE** | i686 (v86) | 1 | Boots to the desktop | ~89 MB, once |
 | **Windows 2000 Pro** | i686 (v86) | 1 | Working internet (NT NDIS via the relay) | ~340 MB, once |

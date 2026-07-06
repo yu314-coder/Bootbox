@@ -71,8 +71,11 @@
         name: "qemu-aarch64-rootfs-265519785.data.gz", mb: 57, size: 60000998 },
     ] },
     "vendor/qemu-desktop/": { files: [   // x86_64 engine shared from qemu-aload; only the rootfs downloads
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v1/qemu-desktop-rootfs.data.gz",
-        name: "qemu-desktop-rootfs-375997966.data.gz", mb: 129, size: 135976350 },
+      // desktop v2 (build 73): Dillo browser + PCManFM (GTK caches pre-warmed at build) + Claude
+      // Code CLI 2.1.197 + generated wallpaper. Mac-verified: X survives both GUI apps (the old
+      // pre-cx16-fix freeze is gone); binaries + wallpaper present in-guest.
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v2/qemu-desktop2-rootfs.data.gz",
+        name: "qemu-desktop2-rootfs-698119289.data.gz", mb: 240, size: 238721067 },
     ] },
   };
   // Ensure the guest's rootfs is present before booting: trigger the native download (BinaryBridge

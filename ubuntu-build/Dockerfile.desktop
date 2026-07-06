@@ -1,11 +1,19 @@
 # Bootbox DESKTOP guest (x86_64) — a lightweight graphical desktop. NO Wine (that stays in the console
-# guest). Web browser = `links`: heavy graphical browsers (BadWolf/WebKitGTK, dillo) were TESTED and
-# they FLOOD the single-threaded Xvnc under the TCG CPU until the GUI freezes (unusable, proven), so
-# instead we ship `links` — a TEXT browser in a terminal (`links URL`, never touches X → safe). It
-# fetches + renders real pages as text and (unlike the heavy ones) does NOT freeze the GUI. (links -g
-# graphics mode was tested too — it stays light/doesn't freeze X, but never maps a window, so text only.)
-# Plus twm/tint2 + terminal + mc (Midnight Commander) file manager. Python + pip preloaded. Far
-# smaller than the Wine image → no OOM.
+# guest). v2 (build 73): graphical browser (Dillo) + file manager (PCManFM) + Claude Code CLI + a real
+# wallpaper. HISTORY: dillo/BadWolf "flooded the single-threaded Xvnc until the GUI froze" — but that
+# was tested BEFORE the cx16 engine fix, when every guest allocation took a stop-the-world exclusive
+# section (kernel SLUB uses lock cmpxchg16b). With the spinlock engine those light GUI apps get
+# RE-TESTED in the Mac harness before shipping. `links` (text, terminal) stays as fallback.
+# Plus twm/tint2 + terminal + mc. Python + pip preloaded.
+
+# -- side stage: generated wallpaper (radial gradient + label), no runtime imagemagick needed --
+FROM alpine:3.20 AS wall
+RUN apk add --no-cache imagemagick ttf-dejavu >/dev/null 2>&1 && \
+    magick -size 1024x768 radial-gradient:'#27466f'-'#0a1220' /w1.png && \
+    magick /w1.png -font /usr/share/fonts/dejavu/DejaVuSans-Bold.ttf -pointsize 26 \
+      -fill '#40639b' -gravity southeast -annotate +30+22 'BOOTBOX' /wallpaper.png && \
+    ls -la /wallpaper.png
+
 FROM alpine:3.20
 
 # 1) Python 3 + FAST pip (uv) + stdlib bytecode (so python startup is fast under the TCG CPU).
@@ -37,6 +45,33 @@ RUN set -eux; \
 RUN set -eux; \
     apk add --no-cache tigervnc twm tint2 xsetroot xterm font-misc-misc ttf-dejavu mc links; \
     echo "DESKTOP-LAYER $(apk info 2>/dev/null | wc -l) pkgs mc=$(command -v mc)"
+
+# 3b) v2 (build 73): graphical browser + file manager + Claude Code CLI + wallpaper tools.
+#     dillo = FLTK (light, CSS, no JS) · pcmanfm = the standard light GTK file manager ·
+#     claude = @anthropic-ai/claude-code on node 20 (apk ripgrep so the musl guest never needs
+#     the bundled glibc rg; git for repo work). npm cache cleaned (would bloat the rootfs).
+RUN set -eux; \
+    apk add --no-cache dillo pcmanfm xwallpaper nodejs npm ripgrep git 2>&1 | tail -1; \
+    npm install -g @anthropic-ai/claude-code 2>&1 | tail -2; \
+    npm cache clean --force 2>&1 | tail -1 || true; \
+    claude --version; \
+    echo "DESKTOP-V2-OK dillo=$(command -v dillo) pcmanfm=$(command -v pcmanfm) claude=$(claude --version 2>/dev/null | head -c 40) nm=$(du -sm /usr/lib/node_modules 2>/dev/null | cut -f1)MB"
+COPY --from=wall /wallpaper.png /usr/share/bootbox-wallpaper.png
+
+# 3c) First-run warm-up (the wine lesson applied to the desktop): GTK's first start builds icon
+#     and mime caches — minutes on the emulated CPU that make PCManFM look hung. Run both GUI
+#     apps once against a throwaway X here at native speed; also refresh the shared caches
+#     explicitly so the artifacts are deterministic.
+RUN set -eux; \
+    apk add --no-cache xvfb 2>&1 | tail -1; \
+    gtk-update-icon-cache -f /usr/share/icons/hicolor 2>/dev/null || true; \
+    update-mime-database /usr/share/mime 2>/dev/null || true; \
+    (Xvfb :9 -screen 0 640x480x16 >/tmp/xvfb.log 2>&1 &); sleep 3; \
+    (DISPLAY=:9 timeout 60 pcmanfm >/tmp/warm-pc.log 2>&1 &); sleep 20; \
+    (DISPLAY=:9 timeout 40 dillo about:blank >/tmp/warm-d.log 2>&1 &); sleep 12; \
+    pkill pcmanfm 2>/dev/null || true; pkill dillo 2>/dev/null || true; pkill Xvfb || true; \
+    apk del xvfb 2>&1 | tail -1; \
+    echo "DESKTOP-WARM-OK"
 
 # 4) Slim (docs/man/locale/extra fonts) — keeps the download small.
 RUN set -eux; \
