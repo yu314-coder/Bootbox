@@ -40,8 +40,15 @@
       ".q64-out{flex:1;margin:0;padding:9px;overflow:auto;white-space:pre-wrap;word-break:break-word;font-size:13px;line-height:1.45;color:#b7f5cf;background:#0b0f17}" +
       ".q64-out .cmd{color:#ffd479;font-weight:700}" +
       ".q64-grid{display:grid;grid-template-columns:1fr 1fr;gap:5px;padding:7px;border-bottom:1px solid #20283a}" +
-      ".q64-qb{height:32px;border-radius:6px;border:1px solid #2a3550;background:#172033;color:#cdd6e6;font:600 11px/1 'Cascadia Mono',monospace;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 6px}" +
-      ".q64-qb:active{background:#22304d}" +
+      ".q64-qb{height:32px;border-radius:6px;border:1px solid #2a3550;background:#172033;color:#cdd6e6;font:600 11px/1 'Cascadia Mono',monospace;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 6px;transition:background .12s,opacity .15s}" +
+      ".q64-qb:active{background:#2c3d61;transform:scale(.97)}" +
+      /* busy-state (build 72): while a command runs, the pressed button pulses and the rest lock —
+         before, taps during a run were SILENTLY swallowed and buttons looked broken. */
+      ".q64-qb.running{background:#1d3a2b;border-color:#2f7d4f;color:#9fe8b8}" +
+      ".q64-qb.running::after{content:'…';animation:q64pulse 1s infinite}" +
+      "@keyframes q64pulse{0%,100%{opacity:.3}50%{opacity:1}}" +
+      ".q64-grid.locked .q64-qb:not(.running){opacity:.4;pointer-events:none}" +
+      ".q64-hdr{grid-column:1/-1;font:700 9px/1 'Cascadia Mono',monospace;letter-spacing:1.5px;color:#5f7397;text-transform:uppercase;padding:5px 2px 1px}" +
       ".q64-inp{display:flex;gap:6px;padding:8px;border-bottom:1px solid #20283a;background:#121a28}" +
       ".q64-inp input{flex:1;min-width:0;height:40px;border-radius:7px;border:1px solid #2a3550;background:#0b0f17;color:#e6edf7;font:600 14px/1 'Cascadia Mono',monospace;padding:0 10px}" +
       ".q64-inp button{flex:0 0 auto;height:40px;padding:0 16px;border-radius:7px;border:0;background:#0067c0;color:#fff;font-weight:700;font-size:14px;cursor:pointer}" +
@@ -70,23 +77,26 @@
   }
 
   // Commands chosen to work on the Alpine/BusyBox guest (and any minimal Linux).
+  // Entries: [label, command, "gui"?] — or ["@ section"] group headers (build 72).
   var QUICK = [
+    ["@ wine & gui"],
+    // Wine (build 62-71): wine-staging 11.5, esync+quiet defaults, warm prefix, cx16 engine.
+    // "🍷" runs the streaming diagnostic matrix (cx16 → cmd → winemine), pushed via /share.
+    ["🍷 Wine test", "__wt4__"],
+    // Bounded tail (build 72): 45s of live log then the pty frees itself — the old `tail -f`
+    // held the console hostage until ^C and made every other button look dead.
+    ["📜 Wine log", "timeout 45 tail -n 40 -f /root/winetest-cmd.log /root/winetest-esync.log 2>/dev/null; echo '[log view ended — tap 📜 again for more]'"],
+    ["🖥️ GUI test", "(DISPLAY=:0 xterm -geometry 72x22 -bg white -fg black -fn fixed -e sh -c 'echo BOOTBOX GUI WORKS; echo; echo If you can read this white window, the graphical desktop is working.; exec sh' >/dev/null 2>&1 &); echo 'Launched a test window on the X desktop — switching to the 🖥️ GUI tab. A white terminal window should appear within a few seconds.'", "gui"],
+    // Input-freeze discriminator: yellow window responds but wine does not → wine holds an X grab;
+    // NEITHER responds → the VNC input path is stuck (use 🔄 on the GUI pane).
+    ["🩺 input probe", "(DISPLAY=:0 xterm -geometry 40x12+30+30 -bg yellow -fg black -fn fixed -e sh -c 'echo TAP HERE; echo; echo If this window responds but wine does not: wine holds a grab.; echo If neither responds: tap the blue reload button on the GUI tab.; exec sh' >/dev/null 2>&1 &); echo 'Yellow probe window launched — switching to the 🖥️ GUI tab.'", "gui"],
+    ["⚛️ cx16 probe", "winetest cx16"],
+    ["@ system"],
     ["uname", "uname -a"],
     ["os-release", "cat /etc/os-release"],
     ["ls /", "ls -la /"],
     ["ip addr", "ip -o addr show eth0 2>/dev/null | grep -o 'inet [0-9.]*' || ifconfig eth0"],
     ["🌐 internet", "wget -T 12 -qO- http://example.com 2>&1 | head -c 400; echo"],
-    ["🖥️ GUI test", "(DISPLAY=:0 xterm -geometry 72x22 -bg white -fg black -fn fixed -e sh -c 'echo BOOTBOX GUI WORKS; echo; echo If you can read this white window, the graphical desktop is working.; exec sh' >/dev/null 2>&1 &); echo 'Launched a test window on the X desktop — switching to the 🖥️ GUI tab. A white terminal window should appear within a few seconds. If it does, the GUI works; if the pane stays blank, the X server has a problem.'", "gui"],
-    // Wine v2 (build 62): wine-staging 11.5 + esync + the cx16lock engine. "winetest" runs the
-    // full diagnostic matrix (cx16 probe → esync → plain), logs to /root/winetest-*.log, and on
-    // a PASS leaves winemine running — check the 🖥️ GUI tab. Watch progress in THIS console.
-    ["🍷 Wine test", "__wt4__"],   // streaming v4 — pushed into the guest via /share at press time
-    ["📜 Wine log", "tail -n 30 -f /root/winetest-cmd.log /root/winetest-esync.log 2>/dev/null"],   // both stages, live (^C stops)
-    ["⚛️ cx16 probe", "winetest cx16"],
-    // Input-freeze discriminator: if the yellow probe xterm responds to taps while the wine window
-    // doesn't, wine holds an X grab (wine-side); if NEITHER responds, the VNC input path is stuck —
-    // use the 🔄 button on the GUI pane. Either way the answer is one tap away.
-    ["🩺 input probe", "(DISPLAY=:0 xterm -geometry 40x12+30+30 -bg yellow -fg black -fn fixed -e sh -c 'echo TAP HERE; echo; echo If this window responds but wine does not: wine holds a grab.; echo If neither responds: tap the blue reload button on the GUI tab.; exec sh' >/dev/null 2>&1 &); echo 'Yellow probe window launched — switch to the 🖥️ GUI tab and tap it.'", "gui"],
     ["uv pip", "uv pip install --help 2>&1 | head -3"],
     ["memory", "free -m"],
     ["procs", "ps"]
@@ -182,7 +192,15 @@
       "background:rgba(12,20,36,.82);color:#9fb3d1;font:600 10px/1.45 'Cascadia Mono',monospace;cursor:pointer;";
     hud.textContent = "🖥️ display: OFF";
     hud.title = "Tap to connect the desktop viewer";
-    hud.onclick = function () { try { if (typeof api.onGuiOpen === "function") api.onGuiOpen(guiEl); } catch (e) {} };
+    hud.onclick = function () {
+      // Smart tap (build 72): OFF → connect; stuck CONNECTING → force a FRESH session (the old
+      // handler called the idempotent connectGui, which returned the stuck object = dead button).
+      var st = window.__guiState ? window.__guiState() : "no-rfb";
+      if (st !== "no-rfb" && st.indexOf("connected") !== 0 && window.__guiReconnect) {
+        setGuiStatus("Reconnecting the desktop…"); window.__guiReconnect(); return;
+      }
+      try { if (typeof api.onGuiOpen === "function") api.onGuiOpen(guiEl); } catch (e) {}
+    };
     try { guiEl.appendChild(hud); } catch (e) {}
     var hudSig = null, hudChangeT = 0;
     setInterval(function () {
@@ -317,10 +335,17 @@
       runCmd("winetest" + (arg ? " " + arg : ""));
     }
 
+    // Busy-state UI (build 72): lock the quick grid + Run button while a command is in flight.
+    function setBusyUI(on) {
+      try { grid.classList.toggle("locked", !!on); } catch (e) {}
+      try { runBtn.disabled = !!on; runBtn.textContent = on ? "…" : "Run"; } catch (e) {}
+    }
+
     async function runCmd(cmd) {
       cmd = (cmd || "").trim();
       if (!cmd) return;
       if (!xt) { show(cmd, "Terminal not ready yet — wait for the # prompt."); return; }
+      if (busy) { show(cmd, "Still running the previous command — its output streams in the terminal. Try again when the buttons unlock."); return; }
       // GUI-intent pre-connect (build 67): if the command will draw on the X desktop, start the
       // noVNC connection NOW (in the background) instead of waiting for the first GUI-tab tap —
       // by the time the window exists, the viewer is already live. Keeps the lazy-display power
@@ -329,7 +354,9 @@
         try { if (typeof api.onGuiOpen === "function") api.onGuiOpen(guiEl); } catch (e) {}
       }
       show(cmd, "…running…");
-      var res = await scrape(cmd, 90000);
+      setBusyUI(true);
+      var res;
+      try { res = await scrape(cmd, 90000); } finally { setBusyUI(false); }
       if (res === "__BUSY__") { show(cmd, "Busy with another command — try again in a moment."); return; }
       show(cmd, res == null ? "Terminal not ready." : (res || "(no output)"));
     }
@@ -503,15 +530,25 @@
     fcloseBtn.onclick = function () { fview.style.display = "none"; };
 
     QUICK.forEach(function (pair) {
+      if (pair[0].charAt(0) === "@") {   // "@ section" → full-width group header (build 72)
+        var h = document.createElement("div");
+        h.className = "q64-hdr"; h.textContent = pair[0].slice(1).trim();
+        grid.appendChild(h);
+        return;
+      }
       var b = document.createElement("button");
       b.className = "q64-qb"; b.textContent = pair[0]; b.title = pair[1];
       // pair[2] === "gui": after running, auto-open the 🖥️ GUI tab so you immediately watch for the window.
-      // gui-flagged buttons: runCmd's intent pre-connect starts the viewer at command time, so
-      // switch tabs sooner (1.2s) — the desktop is usually already connecting when we land on it.
-      b.onclick = function () {
-        if (pair[1] === "__wt4__") runWinetest4();
-        else runCmd(pair[1]);
+      // The pressed button pulses (.running) and the others lock until the command completes —
+      // before, taps during a run were silently swallowed and the buttons looked broken.
+      b.onclick = async function () {
         if (pair[2] === "gui") setTimeout(function () { try { showTab("gui"); } catch (e) {} }, 1200);
+        b.classList.add("running");
+        try {
+          if (pair[1] === "__wt4__") await runWinetest4();
+          else await runCmd(pair[1]);
+        } catch (e) {}
+        b.classList.remove("running");
       };
       grid.appendChild(b);
     });
