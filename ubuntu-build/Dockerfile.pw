@@ -181,24 +181,38 @@ COPY --from=cxbuild /cx16test /usr/local/bin/cx16test
 COPY winetest.sh /usr/local/bin/winetest
 RUN chmod +x /usr/local/bin/winetest /usr/local/bin/cx16test
 
-# 7) NATIVE manim (rootfs v4) — the real path for ManimStudio-type work: no wine, no WebView2
-#    wall. Built at IMAGE time (native speed under colima; on-device pip would be minutes AND
-#    not persist across reboots — the guest fs is a fresh unpack each boot). ffmpeg encodes,
-#    cairo+pango render; manimpango/av have no musl wheels so they compile here against the
-#    -dev headers (removed after). numpy resolves <2 via the baked constraints file (the
-#    emulated CPU has no SSE4). Gated by a REAL 3-frame render, not just an import.
+# 7) WINE SPEED PASS (rootfs v5 — manim was unbundled per user direction; wine is the focus).
+#    (a) Global speed defaults: esync on (eventfd sync — the fix that made wine work) and debug
+#        channels OFF for user runs — WINEDEBUG output costs real time on the emulated CPU. The
+#        winetest tooling still turns channels on explicitly. Both via profile.d AND a PATH
+#        wrapper so non-login shells (scripts, the panel pty) get them too.
+#    (b) Registry render tweaks: font smoothing OFF — antialiased glyph blends are pure extra
+#        arithmetic on a software-emulated CPU driving a software X server.
+RUN printf 'export WINEPREFIX=/root/.wine\nexport WINEARCH=win64\nexport WINEESYNC=1\nexport WINEDEBUG=-all\n' > /etc/profile.d/wine.sh && \
+    printf '#!/bin/sh\nexport WINEESYNC="${WINEESYNC:-1}"\nexport WINEDEBUG="${WINEDEBUG:--all}"\nexec /usr/bin/wine "$@"\n' > /usr/local/bin/wine && \
+    chmod +x /usr/local/bin/wine && /usr/local/bin/wine --version && echo "WINE-DEFAULTS-OK"
 RUN set -eux; \
-    apk add --no-cache ffmpeg cairo pango py3-cairo 2>&1 | tail -1; \
-    apk add --no-cache --virtual .manim-build gcc g++ musl-dev python3-dev pkgconf cairo-dev pango-dev ffmpeg-dev 2>&1 | tail -1; \
-    uv pip install manim 2>&1 | tail -3; \
-    apk del .manim-build 2>&1 | tail -1; \
-    uv cache clean 2>&1 | tail -1 || true; \
-    python3 -m compileall -j 0 -q /usr/lib/python3.12/site-packages || true; \
-    cd /tmp; \
-    printf 'from manim import *\nconfig.pixel_width=160\nconfig.pixel_height=90\nconfig.frame_rate=5\nclass S(Scene):\n    def construct(self): self.play(Create(Circle()), run_time=0.4)\nS().render()\nprint("MANIM-RENDER-OK")\n' > /tmp/ms.py; \
-    python3 /tmp/ms.py; \
-    rm -rf /tmp/ms.py /tmp/media; \
-    echo "MANIM-OK $(python3 -c 'import manim; print(manim.__version__)') site=$(du -sm /usr/lib/python3.12/site-packages | cut -f1)MB ffmpeg=$(du -sm /usr/lib/libav* /usr/bin/ffmpeg 2>/dev/null | awk '{s+=$1} END {print s}')MB"
+    timeout 120 wine reg add "HKCU\\Control Panel\\Desktop" /v FontSmoothing /t REG_SZ /d 0 /f; \
+    timeout 120 wine reg add "HKCU\\Control Panel\\Desktop" /v FontSmoothingType /t REG_DWORD /d 0 /f; \
+    (timeout 60 wineserver -w || true); \
+    echo "WINE-REG-OK"
+# 7b) DEEPER first-run warm-up: each of these initializes a different subsystem on first run
+#     (comctl32/comdlg32 for winecfg, riched for notepad, cmd's console host, regedit's views) —
+#     minutes of on-device TCG time paid ONCE here at native speed instead. Windows appearing
+#     is not required for the warmth; the timeouts just bound the step.
+RUN set -eux; \
+    apk add --no-cache xvfb 2>&1 | tail -1; \
+    (Xvfb :9 -screen 0 640x480x16 >/tmp/xvfb.log 2>&1 &); sleep 3; \
+    export DISPLAY=:9 WINEESYNC=1 WINEDEBUG=-all; \
+    timeout 90 wine cmd /c ver || true; \
+    (timeout 90 wine notepad & sleep 25; true); \
+    (timeout 120 wine winecfg & sleep 35; true); \
+    (timeout 90 wine regedit & sleep 25; true); \
+    (timeout 90 wine winemine & sleep 20; true); \
+    (timeout 60 wineserver -k || true); sleep 2; pkill Xvfb || true; \
+    rm -f /root/.wine/drive_c/windows/core; \
+    apk del xvfb 2>&1 | tail -1; \
+    echo "WINE-WARM2-OK prefix=$(du -sh /root/.wine | cut -f1)"
 
 # 8) Faster cold-boot desktop (rootfs v4): Xvnc+twm launch from openrc's `local` service in the
 #    DEFAULT runlevel — parallel with the other boot services — instead of waiting for the
