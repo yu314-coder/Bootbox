@@ -71,11 +71,10 @@
         name: "qemu-aarch64-rootfs-265519785.data.gz", mb: 57, size: 60000998 },
     ] },
     "vendor/qemu-desktop/": { files: [   // x86_64 engine shared from qemu-aload; only the rootfs downloads
-      // desktop v3 (build 74): single-tap app ICONS on the wallpaper (PCManFM --desktop:
-      // Dillo/Files/Claude/Terminal/Python), real `help` command, adwaita icons — on top of v2
-      // (Dillo + PCManFM warm caches + official Claude Code CLI 2.1.197 + wallpaper).
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v3/qemu-desktop3-rootfs.data.gz",
-        name: "qemu-desktop3-rootfs-711048246.data.gz", mb: 240, size: 240061033 },
+      // desktop v5 (build 75): openbox WM + MULTI-CORE (up to 8, was 1) + working help + single
+      // pcmanfm wallpaper + quick-launch icons + Dillo/PCManFM/Claude Code. Mac-verified nproc=2.
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v5/qemu-desktop5-rootfs.data.gz",
+        name: "qemu-desktop5-rootfs-710349814.data.gz", mb: 240, size: 239235670 },
     ] },
   };
   // Ensure the guest's rootfs is present before booting: trigger the native download (BinaryBridge

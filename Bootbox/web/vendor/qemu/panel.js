@@ -53,10 +53,12 @@
       ".q64-inp input{flex:1;min-width:0;height:40px;border-radius:7px;border:1px solid #2a3550;background:#0b0f17;color:#e6edf7;font:600 14px/1 'Cascadia Mono',monospace;padding:0 10px}" +
       ".q64-inp button{flex:0 0 auto;height:40px;padding:0 16px;border-radius:7px;border:0;background:#0067c0;color:#fff;font-weight:700;font-size:14px;cursor:pointer}" +
       ".q64-gui{flex:1;min-height:0;background:#000;position:relative;overflow:hidden;display:none}" +
-      /* cursor match (build 74): noVNC paints the REMOTE cursor as the canvas CSS cursor — under
-         guest lag it trails the iPad pointer, so two mismatched arrows show. Clicks carry exact
-         coordinates anyway, so suppress the remote image: the iPad pointer IS the cursor. */
-      ".q64-gui canvas{display:block;margin:auto;cursor:default !important}" +
+      /* cursor match (build 75): (1) suppress noVNC's REMOTE cursor image — under guest lag it
+         trailed the iPad pointer as a 2nd arrow; clicks carry exact coords, so the iPad pointer
+         IS the cursor. (2) NO margin:auto — it offset the canvas from where noVNC computes
+         pointer coordinates (scaleViewport positions the canvas itself), which was the real
+         "cursor not aligned" bug: taps landed off from where they pointed. */
+      ".q64-gui canvas{cursor:default !important}" +
       ".q64-guimsg{position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:14px;color:#9fb3d1;font:600 12px/1.5 'Cascadia Mono',monospace;pointer-events:none}" +
       /* Files tab — light, iOS-Files style */
       ".q64-files{flex:1;min-height:0;display:none;flex-direction:column;background:#f2f3f7;color:#1c1c1e;font-family:-apple-system,'Segoe UI',Roboto,sans-serif}" +

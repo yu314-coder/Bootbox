@@ -1,65 +1,30 @@
 #!/bin/sh
-# Bootbox DESKTOP guest — a lightweight graphical desktop (no web browser; they freeze Xvnc under TCG).
-#   • twm window manager + right-click app menu (Terminal / Files / Python)
+# Bootbox DESKTOP guest v4 (build 75) — a modern lightweight desktop:
+#   • Openbox window manager (opaque drag + real borders — replaces the ancient twm wireframe)
+#   • PCManFM --desktop = THE wallpaper + single-tap app icons (Dillo/Files/Claude/Terminal/Python)
 #   • tint2 panel (taskbar + clock)
-#   • a Terminal and the mc (Midnight Commander) file manager open on start
-# mc is a TUI inside a terminal, so it never floods X — it works fine under emulation.
+#   • xterm uses DejaVu Sans Mono (Xft) + UTF-8, so Claude Code's TUI renders cleanly
+export LANG=C.UTF-8
+export LC_ALL=C.UTF-8
+export ENV=/etc/ashrc
 if [ ! -e /tmp/.xstarted ]; then
   : > /tmp/.xstarted
-
-  cat > /root/.twmrc <<'TWMRC'
-NoGrabServer
-RestartPreviousState
-DecorateTransients
-TitleFont "fixed"
-MenuFont "fixed"
-IconFont "fixed"
-ResizeFont "fixed"
-BorderWidth 2
-Color {
-  BorderColor "#2f6bdb"
-  DefaultBackground "#16263f"
-  DefaultForeground "#dfe8f5"
-  TitleBackground "#2f6bdb"
-  TitleForeground "#ffffff"
-  MenuBackground "#16263f"
-  MenuForeground "#dfe8f5"
-  MenuTitleBackground "#2f6bdb"
-  MenuTitleForeground "#ffffff"
-}
-Button3 = : root : f.menu "apps"
-menu "apps" {
-  "Bootbox Linux Desktop"  f.title
-  "Web browser (Dillo)"    !"dillo http://example.com >/tmp/dillo.log 2>&1 &"
-  "Web text (links)"       !"xterm -fn fixed -bg black -fg white -geometry 96x30 -title Browser -e links http://example.com &"
-  "Files (PCManFM, slow 1st open)" !"pcmanfm >/tmp/pcmanfm.log 2>&1 &"
-  "Files (mc, terminal)"   !"xterm -fn fixed -bg black -fg white -e mc &"
-  "Claude Code"            !"xterm -fn fixed -bg rgb:0d/15/26 -fg rgb:9f/e8/b8 -geometry 100x30 -title Claude -e sh -lc claude &"
-  "Terminal"               !"xterm -fn fixed -bg black -fg green -sb &"
-  "Python REPL"            !"xterm -fn fixed -bg black -fg white -e python3 &"
-  ""                       f.nop
-  "Restart desktop"        f.restart
-  "Close a window"         f.delete
-}
-TWMRC
-
   (
     Xvnc :0 -geometry 1024x768 -depth 16 -SecurityTypes None -rfbport 5900 -localhost no \
          -desktop bootbox -AlwaysShared >/tmp/xvnc.log 2>&1 &
     n=0; while [ "$n" -lt 80 ] && [ ! -e /tmp/.X11-unix/X0 ]; do sleep 0.25; n=$((n+1)); done
     export DISPLAY=:0
     export HOME=/root
-    # Wallpaper base (fallback layer — pcmanfm --desktop paints over it with wallpaper+icons).
-    xwallpaper --zoom /usr/share/bootbox-wallpaper.png 2>/dev/null || xsetroot -solid '#1f3350' 2>/dev/null
-    # A terminal, pre-opened (the desktop icons cover browser/files/claude/python).
-    xterm -fn fixed -bg black -fg green -geometry 78x22+30+24 -title "Terminal" -sb >/tmp/xterm.log 2>&1 &
+    # Instant pre-paint in the wallpaper's base color so there's no black flash before pcmanfm
+    # paints the real wallpaper + icons (ONE desktop, no more gradient→icons visual jump).
+    xsetroot -solid '#0a1220' 2>/dev/null
+    openbox >/tmp/openbox.log 2>&1 &
     sleep 1
-    twm >/tmp/twm.log 2>&1 &
-    sleep 1
-    # v3: PCManFM desktop mode = the wallpaper AND single-tap app icons on it (dillo/files/
-    # claude/terminal/python .desktop entries in /root/Desktop). tint2 stays as the taskbar.
+    # PCManFM desktop mode IS the wallpaper + the single-tap app icons.
     pcmanfm --desktop >/tmp/pcmanfm-desktop.log 2>&1 &
     tint2 >/tmp/tint2.log 2>&1 &
+    # One terminal open on start (box-drawing font + login shell so `help` works).
+    bxterm -ls -bg rgb:0b/0f/17 -fg rgb:b7/f5/cf -geometry 82x24+40+40 -title "Terminal" >/tmp/xterm.log 2>&1 &
   ) &
 fi
 export DISPLAY=:0

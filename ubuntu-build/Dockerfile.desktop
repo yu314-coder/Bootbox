@@ -43,8 +43,8 @@ RUN set -eux; \
 # 3) Desktop: Xvnc (X+VNC in one) + twm (the only WM that survives the single-threaded Xvnc under TCG)
 #    + tint2 (panel) + xterm + browsers + mc.
 RUN set -eux; \
-    apk add --no-cache tigervnc twm tint2 xsetroot xterm font-misc-misc ttf-dejavu mc links; \
-    echo "DESKTOP-LAYER $(apk info 2>/dev/null | wc -l) pkgs mc=$(command -v mc)"
+    apk add --no-cache tigervnc openbox tint2 xsetroot xterm font-misc-misc ttf-dejavu mc links; \
+    echo "DESKTOP-LAYER $(apk info 2>/dev/null | wc -l) pkgs openbox=$(command -v openbox)"
 
 # 3b) v2 (build 73): graphical browser + file manager + Claude Code CLI + wallpaper tools.
 #     dillo = FLTK (light, CSS, no JS) · pcmanfm = the standard light GTK file manager ·
@@ -75,13 +75,31 @@ RUN set -eux; \
     mkdir -p /root/Desktop /root/.config/pcmanfm/default /root/.config/libfm; \
     printf '[Desktop Entry]\nType=Application\nName=Web (Dillo)\nIcon=web-browser\nExec=dillo http://example.com\n' > "/root/Desktop/dillo.desktop"; \
     printf '[Desktop Entry]\nType=Application\nName=Files\nIcon=system-file-manager\nExec=pcmanfm\n' > "/root/Desktop/files.desktop"; \
-    printf '[Desktop Entry]\nType=Application\nName=Claude Code\nIcon=utilities-terminal\nExec=xterm -fn fixed -bg rgb:0d/15/26 -fg rgb:9f/e8/b8 -geometry 100x30 -title Claude -e sh -lc claude\n' > "/root/Desktop/claude.desktop"; \
-    printf '[Desktop Entry]\nType=Application\nName=Terminal\nIcon=utilities-terminal\nExec=xterm -fn fixed -bg black -fg green -sb\n' > "/root/Desktop/terminal.desktop"; \
-    printf '[Desktop Entry]\nType=Application\nName=Python\nIcon=text-x-script\nExec=xterm -fn fixed -bg black -fg white -e python3\n' > "/root/Desktop/python.desktop"; \
+    printf '[Desktop Entry]\nType=Application\nName=Claude Code\nIcon=utilities-terminal\nExec=bxterm -bg rgb:0d/15/26 -fg rgb:cd/e6/ff -geometry 100x32 -title Claude -e sh -lc claude\n' > "/root/Desktop/claude.desktop"; \
+    printf '[Desktop Entry]\nType=Application\nName=Terminal\nIcon=utilities-terminal\nExec=bxterm -ls -bg rgb:0b/0f/17 -fg rgb:b7/f5/cf\n' > "/root/Desktop/terminal.desktop"; \
+    printf '[Desktop Entry]\nType=Application\nName=Python\nIcon=text-x-script\nExec=bxterm -bg black -fg white -e python3\n' > "/root/Desktop/python.desktop"; \
     chmod +x /root/Desktop/*.desktop; \
     printf '[*]\nwallpaper_mode=stretch\nwallpaper=/usr/share/bootbox-wallpaper.png\ndesktop_bg=#0a1220\ndesktop_fg=#dfe8f5\ndesktop_shadow=#0a1220\nshow_documents=0\nshow_trash=0\nshow_mounts=0\n' > /root/.config/pcmanfm/default/desktop-items-0.conf; \
-    printf '[config]\nsingle_click=1\n' > /root/.config/libfm/libfm.conf; \
+    printf '[config]\nsingle_click=1\nquick_exec=1\n' > /root/.config/libfm/libfm.conf; \
     echo "ICONS-OK $(ls /root/Desktop | tr '\n' ' ')"
+# 3b3) v4 (build 75): fonts, locale, help, and the openbox menu — the round that fixes the
+#      garbled Claude TUI, 'help not found', and the ancient twm look.
+#      · Box-drawing FONT without Xft weight: `bxterm` wrapper picks Terminus (a Unicode BITMAP
+#        font — box-drawing glyphs AND fast under TCG, unlike heavy Xft TrueType which wedged the
+#        single-threaded Xvnc) when Xvnc has loaded it, else falls back to `fixed` — so terminals
+#        can NEVER break. xstart writes /tmp/termfont after probing xlsfonts. (font-misc-misc on
+#        Alpine ships no iso10646 variants, so `-fn fixed` alone has no box-drawing — the v3 bug.)
+#      · help: alias in BOTH /etc/profile (login shells) AND $ENV=/etc/ashrc (every interactive
+#        ash) — the v3 profile-only alias never loaded in the desktop's non-login xterm.
+#      · openbox menu.xml = right-click app launcher (opaque drag + modern borders come free).
+RUN set -eux; \
+    printf '#!/bin/sh\n# `fixed` is the only bitmap font this Xvnc reliably loads (it lacks the freetype/OTB\n# module for Terminus .otb, and this xterm EXITS on a missing -fn rather than falling back —\n# tested). -u8 keeps UTF-8 text correct. Box-drawing glyphs are limited, so Claude Code TUI\n# borders may look plain, but the terminal always opens.\nexec xterm -fn fixed -u8 -sb -sl 4000 "$@"\n' > /usr/local/bin/bxterm; \
+    chmod +x /usr/local/bin/bxterm; \
+    printf 'alias help=/usr/local/bin/bootbox-help\n' > /etc/ashrc; \
+    printf 'export LANG=C.UTF-8\nexport LC_ALL=C.UTF-8\nexport ENV=/etc/ashrc\nalias help=/usr/local/bin/bootbox-help\n' > /etc/profile.d/00bootbox.sh; \
+    mkdir -p /root/.config/openbox; \
+    printf '<?xml version="1.0" encoding="UTF-8"?>\n<openbox_menu xmlns="http://openbox.org/3.4/menu">\n<menu id="root-menu" label="Bootbox">\n<item label="Web (Dillo)"><action name="Execute"><command>dillo http://example.com</command></action></item>\n<item label="Files"><action name="Execute"><command>pcmanfm</command></action></item>\n<item label="Claude Code"><action name="Execute"><command>bxterm -bg rgb:0d/15/26 -fg rgb:cd/e6/ff -geometry 100x32 -title Claude -e sh -lc claude</command></action></item>\n<item label="Terminal"><action name="Execute"><command>bxterm -ls</command></action></item>\n<item label="Python"><action name="Execute"><command>bxterm -e python3</command></action></item>\n<separator/>\n<item label="Reconfigure"><action name="Reconfigure"/></item>\n</menu>\n</openbox_menu>\n' > /root/.config/openbox/menu.xml; \
+    echo "FONTS-HELP-MENU-OK utf8=$(printf '\342\224\214' | wc -c)bytes"
 COPY bootbox-help.sh /usr/local/bin/bootbox-help
 RUN chmod +x /usr/local/bin/bootbox-help && \
     printf 'alias help="/usr/local/bin/bootbox-help"\n' > /etc/profile.d/00bootbox-help.sh && \
