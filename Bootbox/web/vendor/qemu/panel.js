@@ -80,8 +80,8 @@
     // Wine v2 (build 62): wine-staging 11.5 + esync + the cx16lock engine. "winetest" runs the
     // full diagnostic matrix (cx16 probe → esync → plain), logs to /root/winetest-*.log, and on
     // a PASS leaves winemine running — check the 🖥️ GUI tab. Watch progress in THIS console.
-    ["🍷 Wine test", "winetest"],
-    ["📜 Wine log", "tail -n 40 -f /root/winetest-esync.log"],   // live log while wine loads (^C stops)
+    ["🍷 Wine test", "__wt4__"],   // streaming v4 — pushed into the guest via /share at press time
+    ["📜 Wine log", "tail -n 30 -f /root/winetest-cmd.log /root/winetest-esync.log 2>/dev/null"],   // both stages, live (^C stops)
     ["⚛️ cx16 probe", "winetest cx16"],
     // Input-freeze discriminator: if the yellow probe xterm responds to taps while the wine window
     // doesn't, wine holds an X grab (wine-side); if NEITHER responds, the VNC input path is stuck —
@@ -300,6 +300,23 @@
       });
     }
 
+    // 🍷 Wine test v4 (build 69): the STREAMING test script ships as a web asset and is pushed
+    // into the guest through the 9p /share bridge at press time — guest-side script updates
+    // without a rootfs rebuild. Falls back to the baked `winetest` if the bridge isn't up.
+    var wt4Text = null;
+    async function runWinetest4(arg) {
+      try { if (typeof api.onGuiOpen === "function") api.onGuiOpen(guiEl); } catch (e) {}   // pre-connect the viewer now
+      try {
+        if (!wt4Text) wt4Text = await (await fetch("vendor/qemu/winetest4.sh")).text();
+        if (shareFs && shareFs.write && wt4Text && wt4Text.indexOf("stream_wait") >= 0) {
+          shareFs.write("winetest4.sh", new TextEncoder().encode(wt4Text));
+          runCmd("sh /share/winetest4.sh" + (arg ? " " + arg : ""));
+          return;
+        }
+      } catch (e) {}
+      runCmd("winetest" + (arg ? " " + arg : ""));
+    }
+
     async function runCmd(cmd) {
       cmd = (cmd || "").trim();
       if (!cmd) return;
@@ -491,7 +508,11 @@
       // pair[2] === "gui": after running, auto-open the 🖥️ GUI tab so you immediately watch for the window.
       // gui-flagged buttons: runCmd's intent pre-connect starts the viewer at command time, so
       // switch tabs sooner (1.2s) — the desktop is usually already connecting when we land on it.
-      b.onclick = function () { runCmd(pair[1]); if (pair[2] === "gui") setTimeout(function () { try { showTab("gui"); } catch (e) {} }, 1200); };
+      b.onclick = function () {
+        if (pair[1] === "__wt4__") runWinetest4();
+        else runCmd(pair[1]);
+        if (pair[2] === "gui") setTimeout(function () { try { showTab("gui"); } catch (e) {} }, 1200);
+      };
       grid.appendChild(b);
     });
     runBtn.onclick = function () { runCmd(inp.value); inp.value = ""; };
