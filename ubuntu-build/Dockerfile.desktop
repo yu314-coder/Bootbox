@@ -58,6 +58,35 @@ RUN set -eux; \
     echo "DESKTOP-V2-OK dillo=$(command -v dillo) pcmanfm=$(command -v pcmanfm) claude=$(claude --version 2>/dev/null | head -c 40) nm=$(du -sm /usr/lib/node_modules 2>/dev/null | cut -f1)MB"
 COPY --from=wall /wallpaper.png /usr/share/bootbox-wallpaper.png
 
+# 3b2) v3 (build 74): desktop ICONS + official-claude check + real `help`.
+#      · The user asked for the official CLI: try Anthropic's native installer first; if its
+#        binary runs on musl, it wins — otherwise the npm @anthropic-ai/claude-code (ALSO the
+#        official CLI, just the npm distribution) stays. Either way `claude --version` gates.
+#      · Desktop icons: PCManFM --desktop renders the wallpaper AND clickable .desktop icons
+#        (the classic Linux desktop layer) — icons for Dillo/Files/Claude/Terminal/Python.
+#      · adwaita-icon-theme so the icons are real, not placeholder squares.
+#      · `help` → a real command list (ash's builtin is shadowed via a profile alias).
+RUN set -eux; \
+    (curl -fsSL https://claude.ai/install.sh | sh 2>&1 | tail -2 && \
+     /root/.local/bin/claude --version && ln -sf /root/.local/bin/claude /usr/local/bin/claude && echo "CLAUDE-NATIVE-OK") \
+    || echo "CLAUDE-NATIVE-SKIP (musl — the npm official CLI stays)"; \
+    claude --version; \
+    apk add --no-cache adwaita-icon-theme 2>&1 | tail -1; \
+    mkdir -p /root/Desktop /root/.config/pcmanfm/default /root/.config/libfm; \
+    printf '[Desktop Entry]\nType=Application\nName=Web (Dillo)\nIcon=web-browser\nExec=dillo http://example.com\n' > "/root/Desktop/dillo.desktop"; \
+    printf '[Desktop Entry]\nType=Application\nName=Files\nIcon=system-file-manager\nExec=pcmanfm\n' > "/root/Desktop/files.desktop"; \
+    printf '[Desktop Entry]\nType=Application\nName=Claude Code\nIcon=utilities-terminal\nExec=xterm -fn fixed -bg rgb:0d/15/26 -fg rgb:9f/e8/b8 -geometry 100x30 -title Claude -e sh -lc claude\n' > "/root/Desktop/claude.desktop"; \
+    printf '[Desktop Entry]\nType=Application\nName=Terminal\nIcon=utilities-terminal\nExec=xterm -fn fixed -bg black -fg green -sb\n' > "/root/Desktop/terminal.desktop"; \
+    printf '[Desktop Entry]\nType=Application\nName=Python\nIcon=text-x-script\nExec=xterm -fn fixed -bg black -fg white -e python3\n' > "/root/Desktop/python.desktop"; \
+    chmod +x /root/Desktop/*.desktop; \
+    printf '[*]\nwallpaper_mode=stretch\nwallpaper=/usr/share/bootbox-wallpaper.png\ndesktop_bg=#0a1220\ndesktop_fg=#dfe8f5\ndesktop_shadow=#0a1220\nshow_documents=0\nshow_trash=0\nshow_mounts=0\n' > /root/.config/pcmanfm/default/desktop-items-0.conf; \
+    printf '[config]\nsingle_click=1\n' > /root/.config/libfm/libfm.conf; \
+    echo "ICONS-OK $(ls /root/Desktop | tr '\n' ' ')"
+COPY bootbox-help.sh /usr/local/bin/bootbox-help
+RUN chmod +x /usr/local/bin/bootbox-help && \
+    printf 'alias help="/usr/local/bin/bootbox-help"\n' > /etc/profile.d/00bootbox-help.sh && \
+    echo "HELP-OK"
+
 # 3c) First-run warm-up (the wine lesson applied to the desktop): GTK's first start builds icon
 #     and mime caches — minutes on the emulated CPU that make PCManFM look hung. Run both GUI
 #     apps once against a throwaway X here at native speed; also refresh the shared caches

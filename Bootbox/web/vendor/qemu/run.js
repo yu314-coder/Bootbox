@@ -278,6 +278,14 @@
         }
       } catch (e) {}
     }, 12000);
+    // Pinch-zoom-proof coordinates (build 74): if the user pinch-zooms the page, canvas
+    // getBoundingClientRect and pointer coords skew — recompute the noVNC scale whenever the
+    // visual viewport changes so taps keep landing exactly under the iPad pointer.
+    try {
+      if (self.visualViewport) self.visualViewport.addEventListener("resize", function () {
+        try { if (rfb && rfb._rfbConnectionState === "connected") { rfb.scaleViewport = false; rfb.scaleViewport = true; } } catch (e) {}
+      });
+    } catch (e) {}
     async function connectGui(guiHost, statusCb) {
       statusCb = statusCb || function () {};
       lastGuiHost = guiHost; lastStatusCb = statusCb;

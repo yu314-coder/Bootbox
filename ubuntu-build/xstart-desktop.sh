@@ -49,14 +49,16 @@ TWMRC
     n=0; while [ "$n" -lt 80 ] && [ ! -e /tmp/.X11-unix/X0 ]; do sleep 0.25; n=$((n+1)); done
     export DISPLAY=:0
     export HOME=/root
-    # Wallpaper (v2): the generated gradient; solid-color fallback if xwallpaper is missing.
+    # Wallpaper base (fallback layer — pcmanfm --desktop paints over it with wallpaper+icons).
     xwallpaper --zoom /usr/share/bootbox-wallpaper.png 2>/dev/null || xsetroot -solid '#1f3350' 2>/dev/null
-    # A terminal + the mc file manager, pre-opened (tap the tint2 taskbar to switch).
+    # A terminal, pre-opened (the desktop icons cover browser/files/claude/python).
     xterm -fn fixed -bg black -fg green -geometry 78x22+30+24 -title "Terminal" -sb >/tmp/xterm.log 2>&1 &
-    xterm -fn fixed -bg black -fg white -geometry 78x22+360+300 -title "Files (mc)" -e mc >/tmp/mc.log 2>&1 &
     sleep 1
     twm >/tmp/twm.log 2>&1 &
     sleep 1
+    # v3: PCManFM desktop mode = the wallpaper AND single-tap app icons on it (dillo/files/
+    # claude/terminal/python .desktop entries in /root/Desktop). tint2 stays as the taskbar.
+    pcmanfm --desktop >/tmp/pcmanfm-desktop.log 2>&1 &
     tint2 >/tmp/tint2.log 2>&1 &
   ) &
 fi
