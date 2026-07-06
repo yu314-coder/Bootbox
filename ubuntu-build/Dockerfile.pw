@@ -164,13 +164,14 @@ RUN set -eux; \
     apk del xvfb xdpyinfo 2>&1 | tail -1; \
     test -n "$ok" && echo "WINE-WARM-OK (winemine window appeared at build time)" || { tail -20 /tmp/warm.log; echo "WINE-WARM-SKIP (no window in 240s — caches still partially warmed)"; }
 # 6b) Trim wine-staging's heavy optional runtime deps — winemine/user exes don't need media
-#     (gstreamer), vulkan, scanners (sane), audio (no audio device in the guest) or OpenCL.
-#     wine dlopens these lazily; missing libs = that feature off, core win32 unaffected.
+#     (gstreamer), vulkan, scanners (sane) or OpenCL. wine dlopens these lazily; missing libs =
+#     that feature off, core win32 unaffected. AUDIO LIBS (pulse/alsa) ARE KEPT since v4:
+#     ffmpeg's libavdevice hard-links libpulse (Error relocating: pa_* symbol not found broke
+#     the manim render) — apk won't reinstall them because its DB still says they're present.
 RUN set -eux; \
     rm -rf /usr/lib/libgstreamer* /usr/lib/gstreamer-1.0 /usr/lib/libgst* \
            /usr/lib/libvulkan* /usr/share/vulkan \
            /usr/lib/sane /usr/lib/libsane* /etc/sane.d \
-           /usr/lib/libpulse* /usr/lib/pulseaudio /usr/lib/alsa-lib /usr/lib/libasound* \
            /usr/lib/libOpenCL* /etc/OpenCL /usr/lib/libMagick* ; \
     wine --version; \
     python3 -c "import requests; print('python-still-ok')"; \
@@ -179,6 +180,33 @@ RUN set -eux; \
 COPY --from=cxbuild /cx16test /usr/local/bin/cx16test
 COPY winetest.sh /usr/local/bin/winetest
 RUN chmod +x /usr/local/bin/winetest /usr/local/bin/cx16test
+
+# 7) NATIVE manim (rootfs v4) — the real path for ManimStudio-type work: no wine, no WebView2
+#    wall. Built at IMAGE time (native speed under colima; on-device pip would be minutes AND
+#    not persist across reboots — the guest fs is a fresh unpack each boot). ffmpeg encodes,
+#    cairo+pango render; manimpango/av have no musl wheels so they compile here against the
+#    -dev headers (removed after). numpy resolves <2 via the baked constraints file (the
+#    emulated CPU has no SSE4). Gated by a REAL 3-frame render, not just an import.
+RUN set -eux; \
+    apk add --no-cache ffmpeg cairo pango py3-cairo 2>&1 | tail -1; \
+    apk add --no-cache --virtual .manim-build gcc g++ musl-dev python3-dev pkgconf cairo-dev pango-dev ffmpeg-dev 2>&1 | tail -1; \
+    uv pip install manim 2>&1 | tail -3; \
+    apk del .manim-build 2>&1 | tail -1; \
+    uv cache clean 2>&1 | tail -1 || true; \
+    python3 -m compileall -j 0 -q /usr/lib/python3.12/site-packages || true; \
+    cd /tmp; \
+    printf 'from manim import *\nconfig.pixel_width=160\nconfig.pixel_height=90\nconfig.frame_rate=5\nclass S(Scene):\n    def construct(self): self.play(Create(Circle()), run_time=0.4)\nS().render()\nprint("MANIM-RENDER-OK")\n' > /tmp/ms.py; \
+    python3 /tmp/ms.py; \
+    rm -rf /tmp/ms.py /tmp/media; \
+    echo "MANIM-OK $(python3 -c 'import manim; print(manim.__version__)') site=$(du -sm /usr/lib/python3.12/site-packages | cut -f1)MB ffmpeg=$(du -sm /usr/lib/libav* /usr/bin/ffmpeg 2>/dev/null | awk '{s+=$1} END {print s}')MB"
+
+# 8) Faster cold-boot desktop (rootfs v4): Xvnc+twm launch from openrc's `local` service in the
+#    DEFAULT runlevel — parallel with the other boot services — instead of waiting for the
+#    console CMD. xstart's /tmp/.xstarted guard makes the two launch paths mutually exclusive.
+COPY xvnc-early.start /etc/local.d/xvnc-early.start
+RUN chmod +x /etc/local.d/xvnc-early.start && \
+    mkdir -p /etc/runlevels/default && ln -sf /etc/init.d/local /etc/runlevels/default/local && \
+    ls -la /etc/runlevels/default/local && echo "XVNC-EARLY-OK"
 # Start a BARE X (Xvnc + twm) in the background on boot, then drop to the interactive serial shell.
 # The plain guest's GUI stays blank until a program is launched; the "Desktop" guest's full chrome
 # (wallpaper + terminal + tint2 taskbar) is started on demand by start-desktop (the app runs it).

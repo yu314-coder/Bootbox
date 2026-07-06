@@ -56,12 +56,13 @@
     // mismatch (build 64 — heals caches poisoned by a saved GitHub error body, the
     // on-device "TypeError: Load failed" bug) and rejects truncated transfers.
     "vendor/qemu-aload/": { files: [
-      // wine v3 (build 65): wine-staging 11.5 + esync + baked prefix + BUILD-TIME GUI cache warm-up
-      // (winemine ran to a real window during the image build — first on-device run skips minutes
-      // of font/registry cache building) + winetest v3 (patient, staged). Pairs with the bundled
-      // cx16lock engine (lock-based cmpxchg16b, on-device verified: 2x penalty vs 8-byte CAS).
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux64-wine-v3/qemu64-wine3-rootfs.data.gz",
-        name: "qemu64-wine3-rootfs-943336509.data.gz", mb: 310, size: 308852283 },
+      // v4 (build 70): NATIVE manim CE 0.18.1 + ffmpeg baked (render without wine — the real
+      // ManimStudio path) + everything from wine v3 (wine-staging 11.5 + esync + warm prefix)
+      // + Xvnc early-start (desktop up in parallel with boot). Pairs with the bundled 3392MB-heap
+      // cx16 engine (the 1336MB data no longer fits the old 3000MB heap). Mac-verified: boots in
+      // 20s, X-IS-UP early, manim --version answers in-guest.
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux64-v4/qemu64-v4-rootfs.data.gz",
+        name: "qemu64-v4-rootfs-1401496641.data.gz", mb: 450, size: 450018070 },
     ] },
     "vendor/qemu-aarch64/": { files: [
       { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-arm64-v1/qemu-aarch64-engine.wasm.gz",
