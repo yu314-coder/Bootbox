@@ -114,7 +114,7 @@ final class LocalServer {
         // Desktop guest (x86_64, no Wine/browser): rootfs download-on-demand; engine wasm shared from
         // qemu-aload (the page requests ../qemu-aload/...wasm, which normalizes to the bundled one).
         if rel == "vendor/qemu-desktop/qemu-system-x86_64.data.gz" {
-            let cached = VMStorage.importsDir().appendingPathComponent("qemu-desktop5-rootfs-710349814.data.gz")
+            let cached = VMStorage.importsDir().appendingPathComponent("qemu-desktop6-rootfs-711740250.data.gz")
             return FileManager.default.fileExists(atPath: cached.path) ? cached : nil
         }
         guard let root = LocalServer.webRoot else { return nil }

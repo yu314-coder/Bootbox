@@ -43,8 +43,8 @@ RUN set -eux; \
 # 3) Desktop: Xvnc (X+VNC in one) + twm (the only WM that survives the single-threaded Xvnc under TCG)
 #    + tint2 (panel) + xterm + browsers + mc.
 RUN set -eux; \
-    apk add --no-cache tigervnc openbox tint2 xsetroot xterm font-misc-misc ttf-dejavu mc links; \
-    echo "DESKTOP-LAYER $(apk info 2>/dev/null | wc -l) pkgs openbox=$(command -v openbox)"
+    apk add --no-cache tigervnc twm tint2 xsetroot xterm font-misc-misc ttf-dejavu mc links; \
+    echo "DESKTOP-LAYER $(apk info 2>/dev/null | wc -l) pkgs twm=$(command -v twm)"
 
 # 3b) v2 (build 73): graphical browser + file manager + Claude Code CLI + wallpaper tools.
 #     dillo = FLTK (light, CSS, no JS) · pcmanfm = the standard light GTK file manager ·
