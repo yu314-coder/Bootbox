@@ -72,16 +72,16 @@ RUN set -eux; \
     || echo "CLAUDE-NATIVE-SKIP (musl — the npm official CLI stays)"; \
     claude --version; \
     apk add --no-cache adwaita-icon-theme 2>&1 | tail -1; \
-    mkdir -p /root/Desktop /root/.config/pcmanfm/default /root/.config/libfm; \
-    printf '[Desktop Entry]\nType=Application\nName=Web (Dillo)\nIcon=web-browser\nExec=dillo http://example.com\n' > "/root/Desktop/dillo.desktop"; \
-    printf '[Desktop Entry]\nType=Application\nName=Files\nIcon=system-file-manager\nExec=pcmanfm\n' > "/root/Desktop/files.desktop"; \
-    printf '[Desktop Entry]\nType=Application\nName=Claude Code\nIcon=utilities-terminal\nExec=bxterm -bg rgb:0d/15/26 -fg rgb:cd/e6/ff -geometry 100x32 -title Claude -e sh -lc claude\n' > "/root/Desktop/claude.desktop"; \
-    printf '[Desktop Entry]\nType=Application\nName=Terminal\nIcon=utilities-terminal\nExec=bxterm -ls -bg rgb:0b/0f/17 -fg rgb:b7/f5/cf\n' > "/root/Desktop/terminal.desktop"; \
-    printf '[Desktop Entry]\nType=Application\nName=Python\nIcon=text-x-script\nExec=bxterm -bg black -fg white -e python3\n' > "/root/Desktop/python.desktop"; \
-    chmod +x /root/Desktop/*.desktop; \
+    mkdir -p /usr/share/bootbox-apps /root/.config/pcmanfm/default /root/.config/libfm; \
+    printf '[Desktop Entry]\nType=Application\nName=Web (Dillo)\nIcon=web-browser\nExec=dillo http://example.com\n' > "/usr/share/bootbox-apps/dillo.desktop"; \
+    printf '[Desktop Entry]\nType=Application\nName=Files\nIcon=system-file-manager\nExec=pcmanfm\n' > "/usr/share/bootbox-apps/files.desktop"; \
+    printf '[Desktop Entry]\nType=Application\nName=Claude Code\nIcon=utilities-terminal\nExec=bxterm -bg rgb:0d/15/26 -fg rgb:cd/e6/ff -geometry 100x32 -title Claude -e sh -lc claude\n' > "/usr/share/bootbox-apps/claude.desktop"; \
+    printf '[Desktop Entry]\nType=Application\nName=Terminal\nIcon=utilities-terminal\nExec=bxterm -ls -bg rgb:0b/0f/17 -fg rgb:b7/f5/cf\n' > "/usr/share/bootbox-apps/terminal.desktop"; \
+    printf '[Desktop Entry]\nType=Application\nName=Python\nIcon=text-x-script\nExec=bxterm -bg black -fg white -e python3\n' > "/usr/share/bootbox-apps/python.desktop"; \
+    chmod +x /usr/share/bootbox-apps/*.desktop; \
     printf '[*]\nwallpaper_mode=stretch\nwallpaper=/usr/share/bootbox-wallpaper.png\ndesktop_bg=#0a1220\ndesktop_fg=#dfe8f5\ndesktop_shadow=#0a1220\nshow_documents=0\nshow_trash=0\nshow_mounts=0\n' > /root/.config/pcmanfm/default/desktop-items-0.conf; \
     printf '[config]\nsingle_click=1\nquick_exec=1\n' > /root/.config/libfm/libfm.conf; \
-    echo "ICONS-OK $(ls /root/Desktop | tr '\n' ' ')"
+    echo "APPS-OK $(ls /usr/share/bootbox-apps | tr '\n' ' ')"
 # 3b3) v4 (build 75): fonts, locale, help, and the openbox menu — the round that fixes the
 #      garbled Claude TUI, 'help not found', and the ancient twm look.
 #      · Box-drawing FONT without Xft weight: `bxterm` wrapper picks Terminus (a Unicode BITMAP
@@ -97,9 +97,25 @@ RUN set -eux; \
     chmod +x /usr/local/bin/bxterm; \
     printf 'alias help=/usr/local/bin/bootbox-help\n' > /etc/ashrc; \
     printf 'export LANG=C.UTF-8\nexport LC_ALL=C.UTF-8\nexport ENV=/etc/ashrc\nalias help=/usr/local/bin/bootbox-help\n' > /etc/profile.d/00bootbox.sh; \
-    mkdir -p /root/.config/openbox; \
-    printf '<?xml version="1.0" encoding="UTF-8"?>\n<openbox_menu xmlns="http://openbox.org/3.4/menu">\n<menu id="root-menu" label="Bootbox">\n<item label="Web (Dillo)"><action name="Execute"><command>dillo http://example.com</command></action></item>\n<item label="Files"><action name="Execute"><command>pcmanfm</command></action></item>\n<item label="Claude Code"><action name="Execute"><command>bxterm -bg rgb:0d/15/26 -fg rgb:cd/e6/ff -geometry 100x32 -title Claude -e sh -lc claude</command></action></item>\n<item label="Terminal"><action name="Execute"><command>bxterm -ls</command></action></item>\n<item label="Python"><action name="Execute"><command>bxterm -e python3</command></action></item>\n<separator/>\n<item label="Reconfigure"><action name="Reconfigure"/></item>\n</menu>\n</openbox_menu>\n' > /root/.config/openbox/menu.xml; \
-    echo "FONTS-HELP-MENU-OK utf8=$(printf '\342\224\214' | wc -c)bytes"
+    mkdir -p /root/.config/tint2; \
+    { \
+      echo 'rounded = 0'; echo 'border_width = 0'; \
+      echo 'background_color = #16263f 100'; echo 'panel_background_id = 1'; \
+      echo 'panel_items = LTC'; \
+      echo 'panel_position = bottom center horizontal'; \
+      echo 'panel_size = 100% 46'; echo 'panel_margin = 0 0'; echo 'panel_padding = 6 4 6'; \
+      echo 'panel_dock = 0'; echo 'wm_menu = 1'; echo 'panel_layer = top'; \
+      echo 'taskbar_mode = single_desktop'; echo 'taskbar_padding = 4 0 4'; \
+      echo 'task_text = 1'; echo 'task_font_color = #dfe8f5 100'; echo 'task_padding = 6 2'; \
+      echo 'launcher_padding = 4 6 4'; echo 'launcher_icon_size = 34'; echo 'launcher_icon_theme = Adwaita'; \
+      echo 'launcher_item_app = /usr/share/bootbox-apps/dillo.desktop'; \
+      echo 'launcher_item_app = /usr/share/bootbox-apps/files.desktop'; \
+      echo 'launcher_item_app = /usr/share/bootbox-apps/claude.desktop'; \
+      echo 'launcher_item_app = /usr/share/bootbox-apps/terminal.desktop'; \
+      echo 'launcher_item_app = /usr/share/bootbox-apps/python.desktop'; \
+      echo 'time1_format = %H:%M'; echo 'time1_font = sans 10'; echo 'clock_font_color = #dfe8f5 100'; echo 'clock_padding = 6 0'; \
+    } > /root/.config/tint2/tint2rc; \
+    echo "FONTS-HELP-TINT2-OK"
 COPY bootbox-help.sh /usr/local/bin/bootbox-help
 RUN chmod +x /usr/local/bin/bootbox-help && \
     printf 'alias help="/usr/local/bin/bootbox-help"\n' > /etc/profile.d/00bootbox-help.sh && \

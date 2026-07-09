@@ -15,7 +15,6 @@ if [ ! -e /tmp/.xstarted ]; then
   cat > /root/.twmrc <<'TWMRC'
 NoGrabServer
 RestartPreviousState
-DecorateTransients
 OpaqueMove
 OpaqueResize
 NoRaiseOnMove
@@ -23,7 +22,14 @@ TitleFont "fixed"
 MenuFont "fixed"
 IconFont "fixed"
 ResizeFont "fixed"
-BorderWidth 3
+BorderWidth 2
+# Don't decorate the panel / desktop with a title bar (the "Tint2 panel" stray window was twm
+# framing tint2 as a normal window). Leave the pcmanfm desktop window undecorated too.
+NoTitle {
+  "tint2"
+  "pcmanfm"
+}
+NoHighlight { "tint2" "pcmanfm" }
 Color {
   BorderColor "#2f6bdb"
   DefaultBackground "#16263f"

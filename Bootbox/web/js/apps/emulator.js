@@ -71,10 +71,11 @@
         name: "qemu-aarch64-rootfs-265519785.data.gz", mb: 57, size: 60000998 },
     ] },
     "vendor/qemu-desktop/": { files: [   // x86_64 engine shared from qemu-aload; only the rootfs downloads
-      // desktop v6 (build 76): twm+OpaqueMove (openbox rendered BLACK on-device — reverted) +
-      // multi-core + working help + pcmanfm wallpaper/icons + quick_exec + cursor fix.
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v6/qemu-desktop6-rootfs.data.gz",
-        name: "qemu-desktop6-rootfs-711740250.data.gz", mb: 240, size: 240308057 },
+      // desktop v7 (build 77): polished — bottom app-launcher dock (no Execute-file popups),
+      // clean wallpaper, pure-ASCII help, tint2 properly docked, twm OpaqueMove; twm (renders,
+      // unlike openbox) + multi-core + cursor fix all kept.
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v7/qemu-desktop7-rootfs.data.gz",
+        name: "qemu-desktop7-rootfs-711887616.data.gz", mb: 240, size: 240447093 },
     ] },
   };
   // Ensure the guest's rootfs is present before booting: trigger the native download (BinaryBridge
