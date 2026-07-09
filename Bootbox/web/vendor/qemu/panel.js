@@ -88,6 +88,8 @@
     // Wine (build 62-71): wine-staging 11.5, esync+quiet defaults, warm prefix, cx16 engine.
     // "🍷" runs the streaming diagnostic matrix (cx16 → cmd → winemine), pushed via /share.
     ["🍷 Wine test", "__wt4__"],
+    ["🏆 CPU-Z 64", "__cpuz64__"],   // real CPU-Z, wine, -bench headless benchmark (64-bit)
+    ["🏆 CPU-Z 32", "__cpuz32__"],   // 32-bit CPU-Z benchmark
     // Bounded tail (build 72): 45s of live log then the pty frees itself — the old `tail -f`
     // held the console hostage until ^C and made every other button look dead.
     ["📜 Wine log", "timeout 45 tail -n 40 -f /root/winetest-cmd.log /root/winetest-esync.log 2>/dev/null; echo '[log view ended — tap 📜 again for more]'"],
@@ -104,7 +106,10 @@
     ["🌐 internet", "wget -T 12 -qO- http://example.com 2>&1 | head -c 400; echo"],
     ["uv pip", "uv pip install --help 2>&1 | head -3"],
     ["memory", "free -m"],
-    ["procs", "ps"]
+    ["procs", "ps"],
+    // CPU-Z (build 78): CPU model + cores + live usage over a 1s sample of /proc/stat, so you can
+    // see how much emulated-CPU headroom is left (idle % = free). All-cores aggregate.
+    ["📈 CPU load", "S(){ awk '/^cpu /{t=0;for(i=2;i<=NF;i++)t+=$i;print t, $5+$6}' /proc/stat; }; set -- $(S); t1=$1; i1=$2; sleep 1; set -- $(S); t2=$1; i2=$2; dt=$((t2-t1)); di=$((i2-i1)); if [ \"$dt\" -gt 0 ]; then u=$((100-100*di/dt)); else u=0; fi; echo '===== Bootbox CPU-Z ====='; echo \"CPU    : $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | sed 's/^ //')\"; echo \"Arch   : $(uname -m)    Cores: $(nproc)\"; echo \"Usage  : ${u}% used  /  $((100-u))% free   (1s sample, all cores)\"; echo \"Load   : $(cut -d' ' -f1-3 /proc/loadavg)   (1/5/15 min)\"; free -m | awk '/^Mem:/{printf \"Memory : %d / %d MB used (%d%%),  %d MB free\\n\",$3,$2,($2>0?100*$3/$2:0),$4}'"]
   ];
 
   function make(sc, opts) {
@@ -340,6 +345,21 @@
       runCmd("winetest" + (arg ? " " + arg : ""));
     }
 
+    // 📊 CPU-Z (build 78): the REAL CPU-Z Windows app run under wine with -bench (headless CPU
+    // benchmark). Script pushed via /share; CPU-Z .exe downloaded in-guest from the cpuz-v1 release.
+    var cpuzText = null;
+    async function runCpuz(bits) {
+      try {
+        if (!cpuzText) cpuzText = await (await fetch("vendor/qemu/cpuztest.sh")).text();
+        if (shareFs && shareFs.write && cpuzText && cpuzText.indexOf("cpuz") >= 0) {
+          shareFs.write("cpuztest.sh", new TextEncoder().encode(cpuzText));
+          runCmd("sh /share/cpuztest.sh " + (bits || "64"));
+          return;
+        }
+      } catch (e) {}
+      show("CPU-Z", "Couldn't push the CPU-Z script — boot the 64-bit guest first.");
+    }
+
     // Busy-state UI (build 72): lock the quick grid + Run button while a command is in flight.
     function setBusyUI(on) {
       try { grid.classList.toggle("locked", !!on); } catch (e) {}
@@ -551,6 +571,8 @@
         b.classList.add("running");
         try {
           if (pair[1] === "__wt4__") await runWinetest4();
+          else if (pair[1] === "__cpuz64__") await runCpuz("64");
+          else if (pair[1] === "__cpuz32__") await runCpuz("32");
           else await runCmd(pair[1]);
         } catch (e) {}
         b.classList.remove("running");
