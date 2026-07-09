@@ -322,7 +322,7 @@
               .join("\n").replace(/\s+$/, "");
             busy = false; return resolve(res);
           }
-          if (Date.now() - t0 > to) { busy = false; return resolve("(timed out — the guest may be slow; try again)"); }
+          if (Date.now() - t0 > to) { busy = false; return resolve("(still working — the output is streaming in the terminal above; scroll up to watch it finish)"); }
           setTimeout(poll, 90);
         })();
       });
@@ -338,7 +338,7 @@
         if (!wt4Text) wt4Text = await (await fetch("vendor/qemu/winetest4.sh")).text();
         if (shareFs && shareFs.write && wt4Text && wt4Text.indexOf("stream_wait") >= 0) {
           shareFs.write("winetest4.sh", new TextEncoder().encode(wt4Text));
-          runCmd("sh /share/winetest4.sh" + (arg ? " " + arg : ""));
+          runCmd("sh /share/winetest4.sh" + (arg ? " " + arg : ""), 1200000);   // wine tests stream for minutes
           return;
         }
       } catch (e) {}
@@ -353,7 +353,7 @@
         if (!cpuzText) cpuzText = await (await fetch("vendor/qemu/cpuztest.sh")).text();
         if (shareFs && shareFs.write && cpuzText && cpuzText.indexOf("cpuz") >= 0) {
           shareFs.write("cpuztest.sh", new TextEncoder().encode(cpuzText));
-          runCmd("sh /share/cpuztest.sh " + (bits || "64"));
+          runCmd("sh /share/cpuztest.sh " + (bits || "64"), 1200000);   // benchmark takes minutes; wait up to 20m
           return;
         }
       } catch (e) {}
@@ -366,7 +366,7 @@
       try { runBtn.disabled = !!on; runBtn.textContent = on ? "…" : "Run"; } catch (e) {}
     }
 
-    async function runCmd(cmd) {
+    async function runCmd(cmd, timeoutMs) {
       cmd = (cmd || "").trim();
       if (!cmd) return;
       if (!xt) { show(cmd, "Terminal not ready yet — wait for the # prompt."); return; }
@@ -381,7 +381,7 @@
       show(cmd, "…running…");
       setBusyUI(true);
       var res;
-      try { res = await scrape(cmd, 90000); } finally { setBusyUI(false); }
+      try { res = await scrape(cmd, timeoutMs || 90000); } finally { setBusyUI(false); }
       if (res === "__BUSY__") { show(cmd, "Busy with another command — try again in a moment."); return; }
       show(cmd, res == null ? "Terminal not ready." : (res || "(no output)"));
     }
