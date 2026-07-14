@@ -39,7 +39,7 @@
       base: "vendor/qemu-desktop/", wasm: "../qemu-aload/qemu-system-x86_64.wasm", url: "", ram: 1536, gui: true },
     { id: "android64", name: "Android 12 AOSP — Full 64-bit x86_64 (QEMU)", boot: "q64",
       base: "vendor/qemu-android/", engineBase: "vendor/qemu-aload/", engineModuleBase: "vendor/qemu-android-engine/", wasm: "qemu-system-x86_64.wasm",
-      url: "", ram: 1280, minRam: 1024, maxRam: 1280, cores: 4, maxCores: 4, gui: true, android: true },
+      url: "", ram: 1280, minRam: 1280, maxRam: 1280, cores: 1, maxCores: 1, gui: true, android: true },
     // REAL 64-bit ARM (aarch64) Linux — separate QEMU engine (qemu-system-aarch64). Alpine + Python +
     // internet; no Wine (x86-only). wasm names the engine binary so run.js fetches the right one.
     { id: "arm64",     name: "64-bit Linux — ARM64 (aarch64) — QEMU-Wasm",  boot: "q64",
@@ -83,8 +83,8 @@
     // Android is a full AOSP x86_64 userspace on Bootbox's QEMU guest kernel.
     // The rootfs is download-on-demand; the x86_64 engine is shared with Linux.
     "vendor/qemu-android/": { files: [
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v1/qemu-android64-rootfs-qcow2.data.gz",
-        name: "qemu-android64-rootfs-622982112.data.gz", mb: 591, size: 619631072 },
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v2/qemu-android64-warm-2016118441.data.gz",
+        name: "qemu-android64-warm-2016118441.data.gz", mb: 881, size: 923904193 },
     ] },
   };
   // Ensure the guest's rootfs is present before booting: trigger the native download (BinaryBridge
@@ -679,7 +679,7 @@
                 if (g.gui) {   // full-screen desktop/Android guest
                   try { panel64.showGui(); } catch (e) {}   // the desktop IS the GUI → connect immediately
                   status.textContent = g.android
-                    ? "Running — full Android 12 AOSP (64-bit x86_64) in QEMU. First WebAssembly boot takes several minutes; touch the screen directly and use ⌨ Type for text."
+                    ? "Running — full Android 12 AOSP (64-bit x86_64) in QEMU. This is a warm-boot image: it resumes to the home screen in a few seconds (no cold boot). Touch the screen directly and use ⌨ Type for text."
                     : "Running — full-screen x86_64 Linux desktop (terminal + mc file manager). It comes up ~20–40s after boot; tap a window, then ⌨ Type to use the keyboard.";
                 } else {        // [ terminal | GUI ]: blank GUI until you launch an X program from the terminal
                   // LAZY DISPLAY (power/heat): do NOT connect noVNC on boot — a connected viewer renders

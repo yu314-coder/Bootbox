@@ -1,23 +1,30 @@
 Module['arguments'] =
 [
-    // Full Android 12 AOSP x86_64. The first virtio disk is the immutable
-    // container/rootfs; the second is a thin 2 GiB ext4 userdata filesystem
-    // stored as qcow2 (small download, normal writable /data inside Android).
-    // Four MTTCG vCPUs are the balanced Android default; run.js exposes the
-    // same 1–8 core control and caps guest RAM at 1280 MiB for iPad headroom.
-    // The Wasm TCG POPCNT operand bug is patched in Bootbox's shared engine.
-    // qemu64 plus Android's useful scalar SIMD extensions is measurably faster
-    // here than -cpu max: translated AVX paths increase cold-boot time.
+    // Full Android 12 AOSP x86_64 — WARM-SNAPSHOT resume. The guest was booted
+    // once to a drawn Launcher3 and its RAM+device state captured to
+    // /pack/vm.state; -incoming resumes it in ~seconds instead of the multi-minute
+    // cold boot (which, under this software emulation, tripped Android's 60s
+    // watchdog and crash-looped system_server before System UI ever drew).
+    //
+    // -smp/-m/-drive topology MUST match the capture exactly or the migration
+    // stream will not load. Single vCPU: the shared engine's cmpxchg16b path is a
+    // stop-the-world under MTTCG, so multi-core made Android pathologically slow;
+    // 1 core resumes cleanly. rootfs is a read-only LZ4 SquashFS (format=raw);
+    // userdata is the writable 2 GiB ext4 /data captured post-boot.
+    // -icount is REQUIRED on resume: the snapshot was captured with an
+    // instruction-counted clock (to dilate guest-time so Android's watchdog / ART
+    // 32s thread-suspend timeouts don't fire during the ~9x-slow emulated boot),
+    // so the migration stream carries icount vmstate. shift here can be milder
+    // than the capture's shift=0 — the guest resumes PAST the boot at an idle
+    // launcher, so there's no timeout cascade to guard against on-device.
     "-nographic", "-cpu", "qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt", "-m", "1280M",
-    "-accel", "tcg,tb-size=256,thread=multi", "-smp", "4",
+    "-accel", "tcg,tb-size=256", "-smp", "1", "-icount", "shift=0",
     "-L", "/pack/",
-    "-drive", "if=virtio,format=qcow2,readonly=on,file=/pack/rootfs.bin",
+    "-incoming", "file:/pack/vm.state",
+    "-drive", "if=virtio,format=raw,readonly=on,file=/pack/rootfs.bin",
     "-drive", "if=virtio,format=qcow2,file=/pack/userdata.qcow2,cache=writeback,discard=unmap",
     "-kernel", "/pack/bzImage",
-    // Keep Go-based container2wasm helpers on their generic amd64 routines;
-    // Android still sees the SSE4/POPCNT CPU flags above. This avoids a wasm-TCG
-    // mis-execution in Go's optional optimized memory path.
-    "-append", "nohz=on console=ttyS0,115200n8 root=/dev/vda rootwait ro loglevel=3 nowatchdog nosoftlockup audit=0 tsc=reliable no_timer_check cryptomgr.notests random.trust_cpu=on QEMU_MODE=1 init=/sbin/tini -- /bin/busybox env GODEBUG=cpu.all=off /sbin/init",
+    "-append", "nohz=on console=ttyS0,115200n8 root=/dev/vda rootwait ro loglevel=6 nowatchdog nosoftlockup audit=0 tsc=reliable no_timer_check cryptomgr.notests random.trust_cpu=on QEMU_MODE=1 init=/sbin/tini -- /bin/busybox env GODEBUG=cpu.all=off /sbin/init",
     "-virtfs", "local,path=/,mount_tag=wasi0,security_model=passthrough,id=wasi0",
     "-virtfs", "local,path=/pack,mount_tag=wasi1,security_model=passthrough,id=wasi1",
     "-nic", "none"
