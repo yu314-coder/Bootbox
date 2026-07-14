@@ -37,6 +37,9 @@
     // qemu-aload — no duplication). The image auto-starts the desktop, so boot64 sends no start-desktop.
     { id: "x64pwd",    name: "64-bit Linux — Desktop (x86_64) — QEMU-Wasm",  boot: "q64",
       base: "vendor/qemu-desktop/", wasm: "../qemu-aload/qemu-system-x86_64.wasm", url: "", ram: 1536, gui: true },
+    { id: "android64", name: "Android 12 AOSP — Full 64-bit x86_64 (QEMU)", boot: "q64",
+      base: "vendor/qemu-android/", engineBase: "vendor/qemu-aload/", engineModuleBase: "vendor/qemu-android-engine/", wasm: "qemu-system-x86_64.wasm",
+      url: "", ram: 1280, minRam: 1024, maxRam: 1280, cores: 4, maxCores: 4, gui: true, android: true },
     // REAL 64-bit ARM (aarch64) Linux — separate QEMU engine (qemu-system-aarch64). Alpine + Python +
     // internet; no Wine (x86-only). wasm names the engine binary so run.js fetches the right one.
     { id: "arm64",     name: "64-bit Linux — ARM64 (aarch64) — QEMU-Wasm",  boot: "q64",
@@ -77,6 +80,12 @@
       { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v7/qemu-desktop7-rootfs.data.gz",
         name: "qemu-desktop7-rootfs-711887616.data.gz", mb: 240, size: 240447093 },
     ] },
+    // Android is a full AOSP x86_64 userspace on Bootbox's QEMU guest kernel.
+    // The rootfs is download-on-demand; the x86_64 engine is shared with Linux.
+    "vendor/qemu-android/": { files: [
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v1/qemu-android64-rootfs-qcow2.data.gz",
+        name: "qemu-android64-rootfs-622982112.data.gz", mb: 591, size: 619631072 },
+    ] },
   };
   // Ensure the guest's rootfs is present before booting: trigger the native download (BinaryBridge
   // "download" → Downloader, progress via "downloadProgress" events) and wait for it. No-op for
@@ -98,7 +107,13 @@
           if (p.done) { if (Bridge.offEvent) Bridge.offEvent("downloadProgress", handler); p.ok ? resolve() : reject(new Error(p.error || "download failed")); return; }
           const mb = (p.received / 1048576) | 0;
           const pct = p.total > 0 ? (Math.round(p.received / p.total * 100) + "% ") : "";
-          if (mb !== last) { last = mb; try { status.textContent = "Downloading Linux image (one-time, ~" + f.mb + " MB)… " + pct + mb + " MB"; } catch (e) {} }
+          if (mb !== last) {
+            last = mb;
+            try {
+              const label = g.android ? "Android image" : "Linux image";
+              status.textContent = "Downloading " + label + " (one-time, ~" + f.mb + " MB)… " + pct + mb + " MB";
+            } catch (e) {}
+          }
         };
         Bridge.onEvent("downloadProgress", handler);
       });
@@ -349,7 +364,7 @@
               <option value="cdrom">CD/ISO</option><option value="hda">HDD</option><option value="fda">Floppy</option>
             </select>
             <input class="e-in" id="ram" style="width:64px" type="number" value="1536" title="RAM (MB) for the 64-bit guests — up to 1536 (the engine's 3 GB WebAssembly heap must also hold the OS image; QEMU itself caps at 2047). More RAM helps big pip installs and file work; it does NOT speed up the CPU.">
-            <select class="e-sel" id="cores" style="width:104px;display:none" title="CPU cores for the 64-bit Linux guests. Changing this reboots the guest to apply it. Each core is a full software-emulated CPU, so more cores run genuinely in parallel (faster builds / numpy / compiles) BUT also run hotter and draw more power under load. 1 = coolest · 2 = balanced (default) · pick 4–8 only for heavy parallel compute. Disk-heavy work (apt, ncdu) gains little past 2.">
+            <select class="e-sel" id="cores" style="width:104px;display:none" title="CPU cores for 64-bit QEMU guests. Changing this reboots the guest to apply it. Each core is a full software-emulated CPU, so more cores run genuinely in parallel but also run hotter and draw more power. Android is capped at 4 cores for memory and stability.">
               <option value="1">1 core</option>
               <option value="2" selected>2 cores</option>
               <option value="4">4 cores</option>
@@ -432,16 +447,21 @@
             imgInput.style.display = "none";
             if (g.kind) kindSel.value = g.kind;
           }
-          ramInput.value = c.ram || g.ram || 512;   // restore the RAM the user last set
+          ramInput.value = Math.min(g.maxRam || 1536,
+            Math.max(g.minRam || 64, c.ram || g.ram || 512));   // restore RAM within this guest's safe range
           coresSel.style.display = (g.boot === "q64") ? "" : "none";   // cores apply to the 64-bit guests
+          const maxCores = g.maxCores || 8;
+          if (+coresSel.value > maxCores) coresSel.value = String(maxCores);
         }
         guestSel.onchange = syncGuest; syncGuest();
         if (args.ram) ramInput.value = args.ram;   // RAM chosen in the Bootbox BIOS overrides for this boot
         // persist the RAM count whenever the user edits it (so it's remembered)
         ramInput.addEventListener("change", () => { const v = Math.max(64, +ramInput.value || 0); if (v) setCfg({ ram: v }); });
         // CPU cores (64-bit guests): remembered across boots; the UEFI-Setup value seeds this boot.
-        coresSel.value = String(+args.cores || +c.cores64 || 2);
+        const initialGuest = GUESTS.find(x => x.id === guestSel.value) || GUESTS[0];
+        coresSel.value = String(+args.cores || +c.cores64 || +initialGuest.cores || 2);
         if (!coresSel.value) coresSel.value = "2";   // guard: unknown value -> select falls back
+        if (+coresSel.value > (initialGuest.maxCores || 8)) coresSel.value = String(initialGuest.maxCores || 8);
         coresSel.addEventListener("change", () => {
           setCfg({ cores64: +coresSel.value || 2 });
           try { status.textContent = "CPU cores set to " + coresSel.value + " — applies on the next boot (press ⏻ Start to reboot)."; } catch (e) {}
@@ -631,15 +651,23 @@
             const panel64 = window.QEMU_PANEL.make(body.querySelector("#screen_container"), { mode: g.gui ? "desktop" : "console" });
             // Download the rootfs on first boot (hosted on GitHub; cached after). No-op if bundled/cached.
             try { await ensureRootfs(g, status, setState); }
-            catch (e) { setState("Download needed"); status.textContent = "Couldn't download the 64-bit Linux image (needs internet on first boot): " + ((e && e.message) || e); return; }
+            catch (e) {
+              setState("Download needed");
+              status.textContent = "Couldn't download the " + (g.android ? "Android" : "64-bit Linux") + " image (needs internet on first boot): " + ((e && e.message) || e);
+              return;
+            }
             await window.QEMU_WASM.run({
               screen_container: panel64.termHost,
               base: g.base || "vendor/qemu/",   // per-guest engine/rootfs dir (qemu-aload = the Python/Wine Alpine)
+              engineBase: g.engineBase || undefined,   // terminal support files; Android may use a distinct engine module
+              engineModuleBase: g.engineModuleBase || undefined,
               wasm: g.wasm || "qemu-system-x86_64.wasm",   // engine binary name (aarch64 guest = qemu-system-aarch64.wasm)
               netWs: "ws://127.0.0.1:8889/",   // in-app gVisor netstack (MiniOSApp.startNetStack) -> real internet
               vnc: "ws://127.0.0.1:8889/vnc",   // noVNC GUI bridge: netstack /vnc endpoint -> vn.Dial(guest x11vnc:5900)
-              ram: Math.min(1536, Math.max(64, +ramInput.value || g.ram || 1536)),   // toolbar drives QEMU -m; cap 1536 (Mac-verified boot; 2047 = QEMU wasm hard max but doesn't fit the 3GB heap beside the rootfs)
-              smp: Math.max(1, Math.min(8, +coresSel.value || (args && +args.cores) || 0)) || undefined,   // toolbar "cores" (falls back to UEFI setup, then the guest's baked -smp)
+              ram: Math.min(g.maxRam || 1536, Math.max(g.minRam || 64, +ramInput.value || g.ram || 1536)),
+              smp: Math.max(1, Math.min(g.maxCores || 8, +coresSel.value || (args && +args.cores) || 0)) || undefined,
+              compressedVnc: !!g.android,
+              vncLabel: g.android ? "Android" : undefined,
               onStatus: (m) => { try { status.textContent = m; } catch (e) {} },
               onReady: (r) => {
                 setState("Running");
@@ -648,9 +676,11 @@
                 try { panel64.setFs && panel64.setFs(qemuFs); } catch (e) {}   // Files tab ⬆/⬇ transfers
                 try { panel64.setXterm(qemuTerm); } catch (e) {}
                 try { if (r && r.connectGui) panel64.onGuiOpen = (host) => r.connectGui(host, panel64.setGuiStatus); } catch (e) {}
-                if (g.gui) {   // full-screen desktop (the qemu-desktop image auto-starts twm/tint2 + terminal + mc)
+                if (g.gui) {   // full-screen desktop/Android guest
                   try { panel64.showGui(); } catch (e) {}   // the desktop IS the GUI → connect immediately
-                  status.textContent = "Running — full-screen x86_64 Linux desktop (terminal + mc file manager). It comes up ~20–40s after boot; tap a window, then ⌨ Type to use the keyboard.";
+                  status.textContent = g.android
+                    ? "Running — full Android 12 AOSP (64-bit x86_64) in QEMU. First WebAssembly boot takes several minutes; touch the screen directly and use ⌨ Type for text."
+                    : "Running — full-screen x86_64 Linux desktop (terminal + mc file manager). It comes up ~20–40s after boot; tap a window, then ⌨ Type to use the keyboard.";
                 } else {        // [ terminal | GUI ]: blank GUI until you launch an X program from the terminal
                   // LAZY DISPLAY (power/heat): do NOT connect noVNC on boot — a connected viewer renders
                   // the (blank) Xvnc framebuffer continuously = wasted CPU/GPU even with nothing on screen.

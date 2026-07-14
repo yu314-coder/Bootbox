@@ -117,6 +117,13 @@ final class LocalServer {
             let cached = VMStorage.importsDir().appendingPathComponent("qemu-desktop7-rootfs-711887616.data.gz")
             return FileManager.default.fileExists(atPath: cached.path) ? cached : nil
         }
+        // Full Android 12 AOSP x86_64 guest. Its QEMU engine is shared with qemu-aload, while this
+        // size-tagged guest pack (system/vendor/product + prepared ext4 userdata) is downloaded once.
+        // Keep the filename in sync with emulator.js ROOTFS_REMOTE and qemu-android/load.js.
+        if rel == "vendor/qemu-android/qemu-system-x86_64.data.gz" {
+            let cached = VMStorage.importsDir().appendingPathComponent("qemu-android64-rootfs-622982112.data.gz")
+            return FileManager.default.fileExists(atPath: cached.path) ? cached : nil
+        }
         guard let root = LocalServer.webRoot else { return nil }
         let f = root.appendingPathComponent(rel)
         if f.standardizedFileURL.path.hasPrefix(root.standardizedFileURL.path),

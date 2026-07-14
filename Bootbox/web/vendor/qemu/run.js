@@ -19,6 +19,15 @@
 
   async function run(opts) {
     const base = opts.base || "vendor/qemu/";
+    // A guest pack can reuse a compatible engine without duplicating its
+    // multi-megabyte WASM/JS/xterm files. The Android guest does this: its
+    // .data + QEMU arguments live in qemu-android, while the executable engine
+    // remains the proven qemu-aload build.
+    const engineBase = opts.engineBase || base;
+    // Some guests require a different QEMU binary but can still share the
+    // established terminal support files. Android uses a 3 GiB fixed-heap
+    // build here; the Wine engine needs (and keeps) its larger heap.
+    const engineModuleBase = opts.engineModuleBase || engineBase;
     const host = opts.screen_container;
     const say = (typeof opts.onStatus === "function") ? opts.onStatus : function () {};
     if (!self.crossOriginIsolated) {
@@ -29,13 +38,25 @@
     // Pre-create Module with locateFile so load.js (.data) and out.js (.wasm)
     // fetch from the vendor/qemu/ subdir rather than the page root.
     const absBase = new URL(base, location.href).href;
+    const absEngineBase = new URL(engineBase, location.href).href;
+    const absEngineModuleBase = new URL(engineModuleBase, location.href).href;
     self.Module = self.Module || {};
-    self.Module.locateFile = (p) => absBase + p;
+    self.Module.locateFile = (p) => (/\.data(?:$|\?)/.test(p) ? absBase : absEngineModuleBase) + p;
+    // load.js starts fetching before the terminal exists.  Preserve its progress
+    // here and surface it through the Bootbox status UI immediately; otherwise a
+    // WebKit allocation/fetch failure looks exactly like a frozen "Preparing…".
+    const earlyBootStages = [];
+    self.Module.bootboxStage = (message) => {
+      const text = String(message || "");
+      if (!text) return;
+      earlyBootStages.push(text);
+      say("Android: " + text);
+    };
 
-    loadCss(base + "xterm.css");
+    loadCss(engineBase + "xterm.css");
     // xterm + xterm-pty expose globals (Terminal, openpty)
-    await loadScript(base + "xterm.js");
-    await loadScript(base + "xterm-pty.js");
+    await loadScript(engineBase + "xterm.js");
+    await loadScript(engineBase + "xterm-pty.js");
     // load.js (data preloader) + arg-module.js (qemu args) define/extend global Module
     await loadScript(base + "load.js");
     await loadScript(base + "arg-module.js");
@@ -158,9 +179,10 @@
 
     const Module = self.Module;
     Module.pty = slave;
-    Module.mainScriptUrlOrBlob = new URL(base + "out.js", location.href).href;
+    Module.mainScriptUrlOrBlob = new URL(engineModuleBase + "out.js", location.href).href;
     // Diagnostics so a hang/crash is VISIBLE: Emscripten data-load status, QEMU stderr, and abort.
     const toTerm = (t) => { try { xterm.write(String(t).replace(/\n/g, "\r\n") + "\r\n"); } catch (e) {} try { console.log("[qemu]", t); } catch (e2) {} };
+    earlyBootStages.forEach((stage) => toTerm("[android] " + stage));
     Module.setStatus = (s) => { if (s) say("64-bit: " + s); };
     Module.printErr = (t) => { toTerm(t); if (t) say("64-bit: " + String(t).slice(-140)); };
     Module.print = (t) => { toTerm(t); };
@@ -174,7 +196,7 @@
     // it. A fully buffered fetch sidesteps streaming and returns {instance, module} so the
     // QEMU pthread workers still get the compiled module. (Custom miniapp:// schemes need it too.)
     Module.instantiateWasm = (imports, receive) => {
-      const wurl = absBase + (opts.wasm || "qemu-system-x86_64.wasm");   // per-guest engine (aarch64 differs)
+      const wurl = absEngineModuleBase + (opts.wasm || "qemu-system-x86_64.wasm");   // per-guest engine (aarch64 differs)
       say("64-bit: fetching engine binary…");
       fetch(wurl)
         .then((r) => { if (!r.ok) throw new Error("wasm HTTP " + r.status); say("64-bit: compiling engine (first load is slow)…"); return r.arrayBuffer(); })
@@ -214,7 +236,7 @@
       .then((m) => { __RFB = m.default; return m.default; }).catch(() => null);
     toTerm("[boot] serving=" + location.protocol + " isolated=" + self.crossOriginIsolated + " ram=" + (opts.ram || "?") + "M");
     say("64-bit: loading engine module…");
-    const init = (await import(new URL(base + "out.js", location.href).href)).default;
+    const init = (await import(new URL(engineModuleBase + "out.js", location.href).href)).default;
     // Heartbeat — so it VISIBLY does stuff while QEMU sets up and the kernel cold-boots (no output yet).
     let hbN = 0;
     const hb = setInterval(() => { hbN++; say("64-bit: working… " + hbN + "s — booting kernel (watch the terminal below)"); }, 1000);
@@ -291,7 +313,7 @@
       lastGuiHost = guiHost; lastStatusCb = statusCb;
       if (rfb) return rfb;
       if (!opts.vnc) { statusCb("No VNC endpoint configured for this guest."); return null; }
-      statusCb("Connecting to the Linux desktop…");
+      statusCb("Connecting to " + (opts.vncLabel || "the Linux desktop") + "…");
       let RFB = __RFB || (await __rfbWarm);   // use the pre-warmed viewer (loaded while memory was free)
       if (!RFB) {
         // Pre-warm didn't land — try a fresh import; if that fails too, retry on a timer (don't stick).
@@ -304,6 +326,10 @@
       }
       try {
         rfb = new RFB(guiHost, opts.vnc, { shared: true });
+        // ReDroid's LibVNCServer handles Tight/ZRLE correctly and benefits
+        // enormously from compressed frames. The Linux Xvnc guest still uses
+        // Bootbox's conservative Hextile-only compatibility list.
+        rfb._bootboxCompressed = !!opts.compressedVnc;
         rfbBornAt = Date.now();   // stuck-connecting watchdog baseline
         try { self.__rfb = rfb; } catch (e) {}
         rfb.scaleViewport = true;
@@ -319,7 +345,7 @@
           // every connect feel slow), then back off to 4s for the long cold-boot tail.
           if (guiRetries++ < 60) {
             var wait = guiRetries <= 8 ? 1200 : 4000;
-            statusCb("Connecting to the Linux desktop…" + (guiRetries > 8 ? " (~" + (guiRetries * 4) + "s)" : ""));
+            statusCb("Connecting to " + (opts.vncLabel || "the Linux desktop") + "…" + (guiRetries > 8 ? " (~" + (guiRetries * 4) + "s)" : ""));
             setTimeout(function () { connectGui(guiHost, statusCb); }, wait);
           }
           else { statusCb("Desktop didn't come up. Tap 🖥️ GUI to retry."); }

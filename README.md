@@ -1,7 +1,7 @@
 # Bootbox
 
 **A boot manager for your iPad.** Bootbox is a native iOS app that boots real operating
-systems — 64-bit Linux (x86-64 *and* ARM64), classic Windows, graphical desktops — inside
+systems — 64-bit Linux (x86-64 *and* ARM64), full Android, classic Windows, graphical desktops — inside
 a WebKit-hosted emulation stack, with real internet, real multi-core, a built-in file
 browser, guest files in the iOS Files app, and one-tap downloads for every guest image.
 
@@ -24,7 +24,7 @@ Everything runs on-device. No servers, no streaming, no jailbreak.
 │  │  │  · QEMU-Wasm aarch64 (real ARM64, dual-core)   │  │  │
 │  │  │  · v86 (fast 32-bit x86: Win98/2000, i686)     │  │  │
 │  │  │  · Boxedwine (Wine in the browser)             │  │  │
-│  │  │  · noVNC (graphical output for X11/Wine)       │  │  │
+│  │  │  · noVNC (Linux desktop + direct Android UI)   │  │  │
 │  │  └────────────────────────────────────────────────┘  │  │
 │  └──────────────────────────────────────────────────────┘  │
 └────────────────────────────────────────────────────────────┘
@@ -39,6 +39,7 @@ Everything runs on-device. No servers, no streaming, no jailbreak.
 | **64-bit Linux + Python & Wine** | x86-64 | **1–8 (default 2)** | Alpine · Python 3.12 + pip · real internet · file browser · `mc` · **wine-staging 11.5, esync on by default, warm prefix** | ~310 MB, once |
 | **64-bit Linux — Desktop** | x86-64 | **1–8 (default 2)** | Openbox desktop · app icons on the wallpaper · **Dillo browser** · **PCManFM** · **Claude Code CLI** · terminal + `mc` + `links` | ~240 MB, once |
 | **64-bit Linux — ARM64** | aarch64 | 2 | *Genuine* ARM64 Alpine (`uname -m` = aarch64) · Python · internet · up to 1.5 GB RAM | ~61 MB, once |
+| **Android 12 AOSP** | x86-64 | **1–4 (default 4)** | Full Android framework + ART · System UI · Launcher3 · touch/keyboard · writable 2 GiB `/data` · direct framebuffer VNC | ~591 MB, once |
 | **Windows 98 SE** | i686 (v86) | 1 | Boots to the desktop | ~89 MB, once |
 | **Windows 2000 Pro** | i686 (v86) | 1 | Working internet (NT NDIS via the relay) | ~340 MB, once |
 | **Your own images** | i686 (v86) | 1 | Import `.iso`/`.img` via the Files app; paired save-states resume in ~1 s | — |
@@ -93,6 +94,28 @@ Under *sustained* heavy load, heat is `N_cores × cost-per-instruction × duty-c
 can't make an emulated instruction cheap, so the honest levers are fewer cores / less
 duty-cycle (hence the cores knob above). The three wins here cut everything *around* the
 core emulation: idle, startup, memory, and the engine tax.
+
+### Full Android 12 on iPadOS
+
+The Android option is a real **64-bit x86-64 AOSP userspace**, not the older JavaScript
+APK compatibility harness. Android init, Binder/HwBinder/VndBinder, ART, Package Manager,
+System UI and Launcher3 all run inside Bootbox's full-system QEMU-Wasm VM. A real ext4
+virtio userdata disk supplies Android's required security xattrs, so `/data` behaves like
+an Android device rather than a temporary browser filesystem.
+
+ReDroid's compositor publishes a linear software framebuffer to a small Android-side VNC
+bridge. The bridge maps the buffer directly, sends ZRLE-compressed updates to noVNC, and
+injects browser touch/keyboard events through a virtual Android input device. That avoids
+running an X11 desktop or repeatedly copying frames through EGL, which keeps the UI usable
+under software CPU emulation.
+
+This is **AOSP**, so Google Play, Google Mobile Services and Play certification are not
+included. The guest is software-emulated because Apple exposes Hypervisor.framework and
+Virtualization.framework on macOS, not iPadOS; performance is therefore suitable for the
+Android compatibility testing rather than graphics-heavy games. Cold boot under browser
+WebAssembly is currently a development limitation: the clean Mac validation reached VNC in
+about 251 seconds but System UI had not drawn after ten minutes. The image downloads once
+and stays outside the app bundle.
 
 ### Python that actually works
 - `pip install` is backed by **uv** (a static Rust resolver — no slow Python import tree)
@@ -181,6 +204,8 @@ Bootbox/                    Swift host app
     vendor/qemu-aload/          x86-64 engine (patched QEMU-Wasm, -g-stripped) + loader
     vendor/qemu-aarch64/        ARM64 engine loader (engine wasm + rootfs download on demand)
     vendor/qemu-desktop/        desktop-guest loader (shares the x86-64 engine binary)
+    vendor/qemu-android/        Android guest loader + QEMU arguments
+    vendor/qemu-android-engine/ Android-only 3 GiB QEMU-Wasm engine
     vendor/v86/                 v86 (32-bit x86 in wasm)
     vendor/boxedwine/           Boxedwine
     vendor/novnc/               noVNC (guest GUI)
@@ -224,6 +249,13 @@ images. The Dockerfiles live in `ubuntu-build/`:
 | `Dockerfile.base` → `Dockerfile.pw` | Alpine + Python 3.12 + pip/uv + Wine + Xvnc + TUI tools (+ constraints, timeouts) | x86-64 console guest |
 | `Dockerfile.desktop` | Alpine + twm/tint2 desktop + links + mc | x86-64 desktop guest |
 | `Dockerfile.arm64` | aarch64 Alpine + Python | ARM64 guest |
+| `Dockerfile.android64` | Android 12 x86-64 + direct-framebuffer VNC/input bridge | Android guest |
+
+The Android build additionally applies
+[`ubuntu-build/android64-container2wasm.patch`](ubuntu-build/android64-container2wasm.patch)
+to the `lowpower` container2wasm branch. It adds Android kernel/Binder support, a SquashFS
+guest root, and a writable ext4 userdata virtio disk. Exact build and artifact details are
+in [`ubuntu-build/README.android64.md`](ubuntu-build/README.android64.md).
 
 Two small public forks carry the fixes that make multi-core, low-power and small binaries
 possible (single-purpose branches over the upstream pins — diff them to see exactly what
@@ -325,6 +357,8 @@ Bootbox stands on excellent open source:
 - **[container2wasm](https://github.com/container2wasm/container2wasm)** (Apache-2.0) —
   container → wasm packaging, guest init, and the `c2w-net`/gVisor networking approach
 - **[noVNC](https://github.com/novnc/noVNC)** (MPL-2.0) — the guest GUI viewer
+- **[ReDroid](https://github.com/remote-android/redroid-doc)** — Android-in-container userspace
+- **[LibVNCServer](https://github.com/LibVNC/libvncserver)** (GPL-2.0+) — Android framebuffer/input bridge
 - **[Boxedwine](https://github.com/danoon2/Boxedwine)** (GPL-2.0) — Wine in the browser
 - **[xterm.js](https://github.com/xtermjs/xterm.js)** (MIT) +
   [xterm-pty](https://github.com/mame/xterm-pty) — the serial console

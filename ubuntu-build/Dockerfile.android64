@@ -1,0 +1,69 @@
+# syntax=docker/dockerfile:1.7
+# Bootbox Android guest: a real 64-bit-only Android 12 AOSP userspace. It runs
+# as PID 1 inside the container hosted by Bootbox's full-system x86_64 QEMU VM.
+# The guest kernel must provide binder, hwbinder and vndbinder.
+#
+# ReDroid's own virtual-display VNC service feeds Bootbox's existing noVNC UI.
+# This avoids an extra Linux desktop and scrcpy process, saving image size, RAM
+# and CPU time on iPadOS. Rendering is software-only because iPadOS does not
+# expose a host GPU or hardware virtualization to this WebAssembly QEMU.
+
+ARG REDROID_IMAGE=redroid/redroid:12.0.0_64only-latest
+FROM ${REDROID_IMAGE} AS redroid
+
+# ReDroid's stock VNC server imports each frame through EGL. QEMU's software
+# renderer exposes a linear dma-buf instead, so that import fails with
+# EGL_BAD_PARAMETER and leaves noVNC black. This small bridge maps the shared
+# buffer directly and retains LibVNCServer's Tight/ZRLE encoders.
+FROM debian:bookworm-slim AS vnc-build
+ARG NDK_VERSION=r27d
+ARG LIBVNCSERVER_REF=LibVNCServer-0.9.13
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip && \
+    rm -rf /var/lib/apt/lists/*
+RUN --mount=type=cache,target=/var/cache/bootbox-ndk \
+    test -f /var/cache/bootbox-ndk/android-ndk-${NDK_VERSION}-linux.zip || \
+    curl -fL --retry 3 -o /var/cache/bootbox-ndk/android-ndk-${NDK_VERSION}-linux.zip \
+      https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip
+RUN --mount=type=cache,target=/var/cache/bootbox-ndk \
+    unzip -q /var/cache/bootbox-ndk/android-ndk-${NDK_VERSION}-linux.zip -d /opt
+RUN curl -fL --retry 3 \
+      https://github.com/LibVNC/libvncserver/archive/refs/tags/${LIBVNCSERVER_REF}.tar.gz | \
+    tar -xz -C /opt && mv /opt/libvncserver-* /opt/libvncserver
+COPY android-vnc/ /src/
+COPY --from=redroid /vendor/lib64/libvncserver.so /src/lib/libvncserver.so
+RUN /opt/android-ndk-${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/x86_64-linux-android31-clang \
+      -std=c11 -D_GNU_SOURCE -O3 -fPIE -pie -Wall -Wextra -Werror \
+      -I/src/include -I/opt/libvncserver /src/bootbox_android_vnc.c \
+      -L/src/lib -Wl,-rpath,/vendor/lib64 -lvncserver -lz -lm -ldl \
+      -o /src/vncserver && \
+    /opt/android-ndk-${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip /src/vncserver
+
+FROM redroid AS android
+COPY --from=vnc-build /src/vncserver /vendor/bin/vncserver
+
+# Eager Zygote preload verifies ~14k framework classes before system_server is
+# allowed to start. That is sensible on hardware, but costs several minutes on
+# WebAssembly TCG. Android's supported lazy-preload mode starts the framework
+# first and defers cold classes until an app actually needs them.
+COPY android-config/init.zygote64.rc /system/etc/init/hw/init.zygote64.rc
+
+# runc re-execs a small Go stage inside the container using the image's own
+# environment. Keep that helper on generic amd64 routines under QEMU-Wasm;
+# Android itself still reads the SSE4/POPCNT CPUID flags directly.
+ENV GODEBUG=cpu.all=off
+
+EXPOSE 5900 5555
+
+ENTRYPOINT ["/init", \
+  "qemu=1", \
+  "androidboot.hardware=redroid", \
+  "androidboot.use_memfd=true", \
+  "androidboot.redroid_gpu_mode=guest", \
+  "androidboot.redroid_width=1024", \
+  "androidboot.redroid_height=768", \
+  "androidboot.redroid_dpi=160", \
+  "androidboot.redroid_fps=15", \
+  "androidboot.use_redroid_stream=1", \
+  "androidboot.use_redroid_vnc=1", \
+  "androidboot.redroid_net_ndns=1", \
+  "androidboot.redroid_net_dns1=8.8.8.8"]

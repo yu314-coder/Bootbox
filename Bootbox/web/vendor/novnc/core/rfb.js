@@ -2111,6 +2111,21 @@ export default class RFB extends EventTargetMixin {
     _sendEncodings() {
         const encs = [];
 
+        // Android's direct-buffer bridge uses LibVNCServer and supports its
+        // fast compressed encoders. Prefer Tight/ZRLE there; keep the minimal
+        // compatibility list below for the older Linux Xvnc guest.
+        if (this._bootboxCompressed) {
+            encs.push(encodings.encodingCopyRect);
+            encs.push(encodings.encodingTight);
+            encs.push(encodings.encodingZRLE);
+            encs.push(encodings.encodingHextile);
+            encs.push(encodings.encodingRaw);
+            encs.push(encodings.pseudoEncodingCompressLevel0 + this._compressionLevel);
+            encs.push(encodings.pseudoEncodingQEMUExtendedKeyEvent);
+            RFB.messages.clientEncodings(this._sock, encs);
+            return;
+        }
+
         // BOOTBOX-MINIMAL encoding set. The guest's Xvnc runs on the qemu-wasm TCG (software) CPU.
         // With the stock noVNC list it sends ServerInit and then NEVER emits a FramebufferUpdate —
         // noVNC stays a black canvas. A raw in-guest RFB probe (bypassing the in-app netstack bridge,
