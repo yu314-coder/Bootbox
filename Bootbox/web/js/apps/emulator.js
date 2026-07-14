@@ -83,8 +83,8 @@
     // Android is a full AOSP x86_64 userspace on Bootbox's QEMU guest kernel.
     // The rootfs is download-on-demand; the x86_64 engine is shared with Linux.
     "vendor/qemu-android/": { files: [
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v2/qemu-android64-warm-2016118441.data.gz",
-        name: "qemu-android64-warm-2016118441.data.gz", mb: 881, size: 923904193 },
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v3/qemu-android64-warm-2163449947.data.gz",
+        name: "qemu-android64-warm-2163449947.data.gz", mb: 921, size: 965954927 },
     ] },
   };
   // Ensure the guest's rootfs is present before booting: trigger the native download (BinaryBridge

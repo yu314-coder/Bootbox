@@ -38,8 +38,31 @@ RUN /opt/android-ndk-${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/x8
       -o /src/vncserver && \
     /opt/android-ndk-${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip /src/vncserver
 
+# Slow-device timeout scaling. Under WebAssembly software emulation the guest runs
+# ~15-30x slower than hardware, so ART's thread-suspend timeout (4-12s), the
+# system_server watchdog (60s) and related timeouts fire during the heavy boot and
+# crash-loop system_server before System UI draws. ro.hw_timeout_multiplier is the
+# exact knob Google's own emulator uses on slow hosts: it scales those timeouts up
+# so the boot survives at software-emulation speed (no -icount needed, which the
+# wasm-TCG engine cannot run). Verified on-Mac: the no-icount cold boot reaches
+# sys.boot_completed=1 with system_server stable (no crash-loop).
+#
+# The append is done in a Debian stage, NOT a RUN in the redroid image: redroid's
+# only shell is Android's mksh at /system/bin/sh (Docker's default `/bin/sh -c`),
+# which under buildkit silently no-ops the `>>` redirect — the line never lands.
+# COPY of a host-appended file is deterministic. The property is global once any
+# loaded build.prop sets it, so /system + /vendor cover it.
+FROM debian:bookworm-slim AS propedit
+COPY --from=redroid /system/build.prop /work/system.build.prop
+COPY --from=redroid /vendor/build.prop /work/vendor.build.prop
+RUN printf '\n# Bootbox: slow-host timeout scaling (survives boot without -icount)\nro.hw_timeout_multiplier=50\n' >> /work/system.build.prop && \
+    printf '\n# Bootbox: slow-host timeout scaling\nro.hw_timeout_multiplier=50\n' >> /work/vendor.build.prop && \
+    grep -c hw_timeout_multiplier /work/system.build.prop /work/vendor.build.prop
+
 FROM redroid AS android
 COPY --from=vnc-build /src/vncserver /vendor/bin/vncserver
+COPY --from=propedit /work/system.build.prop /system/build.prop
+COPY --from=propedit /work/vendor.build.prop /vendor/build.prop
 
 # Eager Zygote preload verifies ~14k framework classes before system_server is
 # allowed to start. That is sensible on hardware, but costs several minutes on
@@ -66,4 +89,5 @@ ENTRYPOINT ["/init", \
   "androidboot.use_redroid_stream=1", \
   "androidboot.use_redroid_vnc=1", \
   "androidboot.redroid_net_ndns=1", \
-  "androidboot.redroid_net_dns1=8.8.8.8"]
+  "androidboot.redroid_net_dns1=8.8.8.8", \
+  "androidboot.hw_timeout_multiplier=50"]
