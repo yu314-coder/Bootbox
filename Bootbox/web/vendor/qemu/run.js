@@ -24,9 +24,9 @@
     // .data + QEMU arguments live in qemu-android, while the executable engine
     // remains the proven qemu-aload build.
     const engineBase = opts.engineBase || base;
-    // Some guests require a different QEMU binary but can still share the
-    // established terminal support files. Android uses a 3 GiB fixed-heap
-    // build here; the Wine engine needs (and keeps) its larger heap.
+    // A guest that needs a different QEMU binary can point engineModuleBase at it
+    // while still sharing the terminal support files. (Android used a separate
+    // 3 GiB-heap build until build 83; it now runs on the shared qemu-aload engine.)
     const engineModuleBase = opts.engineModuleBase || engineBase;
     const host = opts.screen_container;
     const say = (typeof opts.onStatus === "function") ? opts.onStatus : function () {};

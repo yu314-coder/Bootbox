@@ -38,7 +38,7 @@
     { id: "x64pwd",    name: "64-bit Linux — Desktop (x86_64) — QEMU-Wasm",  boot: "q64",
       base: "vendor/qemu-desktop/", wasm: "../qemu-aload/qemu-system-x86_64.wasm", url: "", ram: 1536, gui: true },
     { id: "android64", name: "Android 12 AOSP — Full 64-bit x86_64 (QEMU)", boot: "q64",
-      base: "vendor/qemu-android/", engineBase: "vendor/qemu-aload/", engineModuleBase: "vendor/qemu-android-engine/", wasm: "qemu-system-x86_64.wasm",
+      base: "vendor/qemu-android/", engineBase: "vendor/qemu-aload/", wasm: "qemu-system-x86_64.wasm",   // shared x86_64 engine
       url: "", ram: 1280, minRam: 1280, maxRam: 1280, cores: 1, maxCores: 1, gui: true, android: true },
     // REAL 64-bit ARM (aarch64) Linux — separate QEMU engine (qemu-system-aarch64). Alpine + Python +
     // internet; no Wine (x86-only). wasm names the engine binary so run.js fetches the right one.

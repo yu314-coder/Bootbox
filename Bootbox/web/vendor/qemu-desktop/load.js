@@ -51,35 +51,43 @@ var REMOTE_PACKAGE_SIZE = metadata['remote_package_size'];
               return Promise.reject(new Error(`Unexpected error while handling : ${response.url} ${cause}`, {cause}));
             });
 
-            const chunks = [];
+            // Bootbox: stream each chunk straight into ONE buffer sized from the package
+            // metadata (the uncompressed size; Content-Length is the .gz size when
+            // LocalServer sends Content-Encoding: gzip). The stock loader kept every chunk
+            // and copied them all into a second buffer at the end — 2x the package in
+            // memory at the worst moment for the iPad. Progress is reported once per whole
+            // percent instead of per chunk (tens of thousands of main-thread updates).
             const headers = response.headers;
-            const total = Number(headers.get('Content-Length') ?? packageSize);
+            const total = packageSize > 0 ? packageSize : Number(headers.get('Content-Length') || 0);
+            let packageData = new Uint8Array(total);
             let loaded = 0;
+            let lastPct = -1;
 
             const handleChunk = ({done, value}) => {
               if (!done) {
-                chunks.push(value);
+                if (loaded + value.length > packageData.length) {   // more than expected: grow (amortized)
+                  const grown = new Uint8Array(Math.max(loaded + value.length, packageData.length * 2, 1 << 20));
+                  grown.set(packageData.subarray(0, loaded));
+                  packageData = grown;
+                }
+                packageData.set(value, loaded);
                 loaded += value.length;
                 Module['dataFileDownloads'][packageName] = {loaded, total};
 
-                let totalLoaded = 0;
-                let totalSize = 0;
-
-                for (const download of Object.values(Module['dataFileDownloads'])) {
-                  totalLoaded += download.loaded;
-                  totalSize += download.total;
+                const pct = total > 0 ? Math.floor(loaded * 100 / total) : -1;
+                if (pct !== lastPct || pct < 0) {
+                  lastPct = pct;
+                  let totalLoaded = 0;
+                  let totalSize = 0;
+                  for (const download of Object.values(Module['dataFileDownloads'])) {
+                    totalLoaded += download.loaded;
+                    totalSize += download.total;
+                  }
+                  Module['setStatus']?.(`Downloading data... (${totalLoaded}/${totalSize})`);
                 }
-
-                Module['setStatus']?.(`Downloading data... (${totalLoaded}/${totalSize})`);
                 return iterate();
               } else {
-                const packageData = new Uint8Array(chunks.map((c) => c.length).reduce((a, b) => a + b, 0));
-                let offset = 0;
-                for (const chunk of chunks) {
-                  packageData.set(chunk, offset);
-                  offset += chunk.length;
-                }
-                callback(packageData.buffer);
+                callback(loaded === packageData.length ? packageData.buffer : packageData.slice(0, loaded).buffer);
               }
             };
 
