@@ -16,6 +16,17 @@
   function loadCss(href) {
     const l = document.createElement("link"); l.rel = "stylesheet"; l.href = href; document.head.appendChild(l);
   }
+  // Does this engine accept wasm tail calls? (func (param i32) (result i32) with return_call_indirect
+  // through a funcref table.) Gates the engine's TB chaining.
+  function wasmTailCalls() {
+    try {
+      return WebAssembly.validate(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0,
+        1, 6, 1, 96, 1, 127, 1, 127,            // type 0: (i32) -> i32
+        3, 2, 1, 0,                             // func 0: type 0
+        4, 4, 1, 112, 0, 1,                     // table: funcref, min 1
+        10, 11, 1, 9, 0, 32, 0, 32, 0, 19, 0, 0, 11]));   // local.get 0 x2, return_call_indirect 0 0
+    } catch (e) { return false; }
+  }
 
   async function run(opts) {
     const base = opts.base || "vendor/qemu/";
@@ -217,11 +228,15 @@
       if (opts.netWs) info += "n:02:00:00:00:00:01\n";
       mod.FS.writeFile("/pack/info", info);
       // wasm-TCG JIT tunables, read once by the engine (build 84+; older engines ignore the file):
-      // jit = interpreted runs before a block is compiled to wasm, max = live compiled-block cap.
+      // jit = interpreted runs before a block is compiled to wasm, max = live compiled-block cap,
+      // chain = blocks tail-call their compiled successor instead of returning to the dispatcher
+      // (needs wasm tail calls: Chrome 112+, Safari 18.2+ - feature-detected, never assumed),
+      // fpinline = SSE float ops as native wasm float/SIMD ops (on by default in the engine).
       const t = opts.tune || {};
-      if (t.jit || t.max) {
-        mod.FS.writeFile("/bootbox-tune", (t.jit ? "jit=" + (t.jit | 0) + "\n" : "") + (t.max ? "max=" + (t.max | 0) + "\n" : ""));
-      }
+      let tune = (t.jit ? "jit=" + (t.jit | 0) + "\n" : "") + (t.max ? "max=" + (t.max | 0) + "\n" : "");
+      if (t.chain !== 0 && wasmTailCalls()) tune += "chain=1\n";
+      if (t.fpinline === 0) tune += "fpinline=0\n";
+      if (tune) mod.FS.writeFile("/bootbox-tune", tune);
     });
     let cbs = [];
     Module.pty.onReadable(() => { cbs.forEach((cb) => cb()); cbs = []; });

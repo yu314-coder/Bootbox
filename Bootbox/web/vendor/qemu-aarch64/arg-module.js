@@ -13,6 +13,11 @@ Module['arguments'] =
     "-append", "nohz=on earlyprintk=ttyS0 console=ttyS0 root=/dev/vda rootwait no_console_suspend ro loglevel=0 QEMU_MODE=1 init=/sbin/tini -- /sbin/init",
     "-virtfs", "local,path=/,mount_tag=wasi0,security_model=passthrough,id=wasi0",
     "-virtfs", "local,path=/pack,mount_tag=wasi1,security_model=passthrough,id=wasi1",
-    "-netdev", "socket,id=vmnic,connect=127.0.0.1:8888", "-device", "virtio-net-pci,netdev=vmnic"
+    "-netdev", "socket,id=vmnic,connect=127.0.0.1:8888", "-device", "virtio-net-pci,netdev=vmnic",
+    // Entropy (build 85): cortex-a53 has no RNDR and the kernel lacks a virtio-rng driver, so the CRNG
+    // stayed uninitialized for minutes and os.urandom / TLS (pip, HTTPS) blocked. With this device,
+    // EDK2's VirtioRngDxe offers EFI_RNG_PROTOCOL; the kernel's EFI stub seeds from it and the kernel
+    // trusts that seed (RANDOM_TRUST_BOOTLOADER=y) -> "crng init done" at 0s. Keep it LAST (PCI slot).
+    "-device", "virtio-rng-pci"
 ]
 ;
