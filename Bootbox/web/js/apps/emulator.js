@@ -39,7 +39,11 @@
       base: "vendor/qemu-desktop/", wasm: "../qemu-aload/qemu-system-x86_64.wasm", url: "", ram: 1536, gui: true },
     { id: "android64", name: "Android 12 AOSP — Full 64-bit x86_64 (QEMU)", boot: "q64",
       base: "vendor/qemu-android/", engineBase: "vendor/qemu-aload/", wasm: "qemu-system-x86_64.wasm",   // shared x86_64 engine
-      url: "", ram: 1280, minRam: 1280, maxRam: 1280, cores: 1, maxCores: 1, gui: true, android: true },
+      url: "", ram: 1280, minRam: 1280, maxRam: 1280, cores: 4, minCores: 4, maxCores: 4, gui: true, android: true,   // RAM + cores fixed by the warm snapshot
+      // Android's code footprint overflows the engine's default 15000 live compiled blocks (shared by
+      // all 4 vCPUs) → constant evict/recompile churn. Mac-measured cold Settings launch: v3 1-core 605s,
+      // v4 4-core 314s, v4 + max=45000 53-109s. A host that can't hold that many just interprets past it.
+      tune: { max: 45000 } },
     // REAL 64-bit ARM (aarch64) Linux — separate QEMU engine (qemu-system-aarch64). Alpine + Python +
     // internet; no Wine (x86-only). wasm names the engine binary so run.js fetches the right one.
     { id: "arm64",     name: "64-bit Linux — ARM64 (aarch64) — QEMU-Wasm",  boot: "q64",
@@ -83,8 +87,11 @@
     // Android is a full AOSP x86_64 userspace on Bootbox's QEMU guest kernel.
     // The rootfs is download-on-demand; the x86_64 engine is shared with Linux.
     "vendor/qemu-android/": { files: [
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v3/qemu-android64-warm-2163449947.data.gz",
-        name: "qemu-android64-warm-2163449947.data.gz", mb: 921, size: 965954927 },
+      // v4 (build 84): QUAD-CORE warm snapshot (-smp 4 + MTTCG; nproc=4, ~3.3x parallel throughput,
+      // cold Settings launch 605s → 53s with the engine tune below), LZ4-HC rootfs (-136 MB unpacked RAM),
+      // animations off, no lock screen, immersive-mode confirmation pre-acknowledged.
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v4/qemu-android64-warm4-2038076444.data.gz",
+        name: "qemu-android64-warm4-2038076444.data.gz", mb: 901, size: 944421011 },
     ] },
   };
   // Ensure the guest's rootfs is present before booting: trigger the native download (BinaryBridge
@@ -450,8 +457,14 @@
           ramInput.value = Math.min(g.maxRam || 1536,
             Math.max(g.minRam || 64, c.ram || g.ram || 512));   // restore RAM within this guest's safe range
           coresSel.style.display = (g.boot === "q64") ? "" : "none";   // cores apply to the 64-bit guests
-          const maxCores = g.maxCores || 8;
+          const maxCores = g.maxCores || 8, minCores = g.minCores || 1;
+          // A warm-snapshot guest (Android) resumes ONLY at the vCPU count it was captured with, so
+          // min == max pins and locks the selector; leaving it restores the user's remembered count.
+          const pinned = minCores === maxCores;
+          if (!pinned && coresSel.disabled) coresSel.value = String(+c.cores64 || +g.cores || 2);
+          coresSel.disabled = pinned;
           if (+coresSel.value > maxCores) coresSel.value = String(maxCores);
+          if (+coresSel.value < minCores) coresSel.value = String(minCores);
         }
         guestSel.onchange = syncGuest; syncGuest();
         if (args.ram) ramInput.value = args.ram;   // RAM chosen in the Bootbox BIOS overrides for this boot
@@ -462,6 +475,7 @@
         coresSel.value = String(+args.cores || +c.cores64 || +initialGuest.cores || 2);
         if (!coresSel.value) coresSel.value = "2";   // guard: unknown value -> select falls back
         if (+coresSel.value > (initialGuest.maxCores || 8)) coresSel.value = String(initialGuest.maxCores || 8);
+        if (+coresSel.value < (initialGuest.minCores || 1)) coresSel.value = String(initialGuest.minCores || 1);
         coresSel.addEventListener("change", () => {
           setCfg({ cores64: +coresSel.value || 2 });
           try { status.textContent = "CPU cores set to " + coresSel.value + " — applies on the next boot (press ⏻ Start to reboot)."; } catch (e) {}
@@ -665,7 +679,8 @@
               netWs: "ws://127.0.0.1:8889/",   // in-app gVisor netstack (MiniOSApp.startNetStack) -> real internet
               vnc: "ws://127.0.0.1:8889/vnc",   // noVNC GUI bridge: netstack /vnc endpoint -> vn.Dial(guest x11vnc:5900)
               ram: Math.min(g.maxRam || 1536, Math.max(g.minRam || 64, +ramInput.value || g.ram || 1536)),
-              smp: Math.max(1, Math.min(g.maxCores || 8, +coresSel.value || (args && +args.cores) || 0)) || undefined,
+              smp: Math.max(g.minCores || 1, Math.min(g.maxCores || 8, +coresSel.value || (args && +args.cores) || 0)) || undefined,
+              tune: g.tune,   // engine JIT tunables (run.js writes /bootbox-tune; build-84+ engine reads it)
               compressedVnc: !!g.android,
               vncLabel: g.android ? "Android" : undefined,
               onStatus: (m) => { try { status.textContent = m; } catch (e) {} },

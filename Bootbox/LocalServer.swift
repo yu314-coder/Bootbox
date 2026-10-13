@@ -121,7 +121,7 @@ final class LocalServer {
         // size-tagged guest pack (system/vendor/product + prepared ext4 userdata) is downloaded once.
         // Keep the filename in sync with emulator.js ROOTFS_REMOTE and qemu-android/load.js.
         if rel == "vendor/qemu-android/qemu-system-x86_64.data.gz" {
-            let cached = VMStorage.importsDir().appendingPathComponent("qemu-android64-warm-2163449947.data.gz")
+            let cached = VMStorage.importsDir().appendingPathComponent("qemu-android64-warm4-2038076444.data.gz")
             return FileManager.default.fileExists(atPath: cached.path) ? cached : nil
         }
         guard let root = LocalServer.webRoot else { return nil }

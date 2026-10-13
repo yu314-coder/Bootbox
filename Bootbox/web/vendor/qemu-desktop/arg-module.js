@@ -7,7 +7,11 @@ Module['arguments'] =
     // read = REAL multi-core, exactly like the console guest. Plus the console's boot-work cuts
     // (tickless, no watchdog, tsc=reliable, skip crypto self-tests) — the desktop "optimize" pass.
     // tb-size 256 to match the console (GUI apps have a bigger working set than the old default).
-    "-nographic", "-m", "256M", "-accel", "tcg,tb-size=256,thread=multi", "-smp", "2",
+    // -cpu +rdrand (build 84): qemu64 has no hardware RNG, so random.trust_cpu=on did nothing and the
+    // kernel CRNG stayed UNINITIALIZED for minutes after boot (idle guest = no entropy; serial input
+    // credits none) - every blocking getrandom() caller (Wine at startup, Python os.urandom, TLS)
+    // just hung until it filled. TCG emulates RDRAND from the host crypto RNG -> "crng init done" at boot.
+    "-nographic", "-cpu", "qemu64,+rdrand", "-m", "256M", "-accel", "tcg,tb-size=256,thread=multi", "-smp", "2",
     "-L", "/pack/",
     "-drive", "if=virtio,format=raw,file=/pack/rootfs.bin",
     "-kernel", "/pack/bzImage",

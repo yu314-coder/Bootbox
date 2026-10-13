@@ -11,6 +11,10 @@
 #   sh /share/winetest4.sh logs|kill  tails / wineserver -k
 
 export DISPLAY=:0 WINEPREFIX=/root/.wine WINEARCH=win64
+# Skip Wine's per-boot prefix auto-update + menu builder (minutes of full CPU on the first launch,
+# because the fresh-unpacked rootfs always fails Wine's timestamp check; see cpuztest.sh).
+echo disable > "$WINEPREFIX/.update-timestamp" 2>/dev/null
+export WINEDLLOVERRIDES="winemenubuilder.exe=d"
 ulimit -n 65536 2>/dev/null || ulimit -n 4096 2>/dev/null || true
 
 # stream_wait <log> <timeout-s> <pass-grep|-> <window-grep|->

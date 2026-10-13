@@ -61,8 +61,15 @@ enum VMStorage {
     /// flight then (the gunzip is only kicked off later from the boot menu).
     static func cleanupStale() {
         let dir = importsDir()
-        for n in (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? [] where n.hasSuffix(".part") {
+        for n in (try? FileManager.default.contentsOfDirectory(atPath: dir.path)) ?? []
+            where n.hasSuffix(".part") || supersededPacks.contains(n) {
             try? FileManager.default.removeItem(at: dir.appendingPathComponent(n))
         }
     }
+
+    /// Downloaded guest packs that a newer, differently-named pack replaced. Nothing references
+    /// them any more, so they are only dead weight in the imports folder (~1 GB each).
+    private static let supersededPacks: Set<String> = [
+        "qemu-android64-warm-2163449947.data.gz",   // Android v3, single-core (build 82-83) → v4 quad-core
+    ]
 }

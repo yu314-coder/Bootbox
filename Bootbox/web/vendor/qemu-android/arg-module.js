@@ -16,11 +16,15 @@ Module['arguments'] =
     // icount vmstate and this resume is a plain, real-time load the wasm engine runs.
     //
     // -smp/-m/-drive/-device topology MUST match the capture exactly or the
-    // migration stream will not load. Single vCPU: the shared engine's cmpxchg16b
-    // path is a stop-the-world under MTTCG, so multi-core made Android pathologically
-    // slow; 1 core resumes cleanly. rootfs is a read-only LZ4 SquashFS (format=raw)
-    // with the timeout-multiplier prop injected; userdata is the writable ext4 /data
-    // captured post-boot.
+    // migration stream will not load. QUAD-CORE (android64-v4, build 84): captured
+    // with -smp 4 + MTTCG (thread=multi), so the 4 vCPUs run as 4 parallel engine
+    // workers (nproc=4 in the guest; system_server, SurfaceFlinger and the app run
+    // truly concurrently). The old single-core rationale (cmpxchg16b = stop-the-world
+    // under MTTCG) is obsolete since the engine's lock-based 16-byte CAS (build 63).
+    // emulator.js pins cores to 4 (minCores == maxCores) because a snapshot can only
+    // resume at the vCPU count it was captured with. rootfs is a read-only LZ4-HC
+    // SquashFS (format=raw) with the timeout-multiplier prop injected; userdata is the
+    // writable ext4 /data captured post-boot.
     //
     // Network: keep "-nic none" here. run.js (opts.netWs) swaps it IN PLACE for
     // `-netdev socket,connect=127.0.0.1:8889 -device virtio-net-pci,mac=02:00:00:00:00:01`
@@ -31,7 +35,7 @@ Module['arguments'] =
     // only injects when none is present, so a placeholder backend (build 82 used
     // `hubport`) leaves the guest resumed but cut off — no screen, no internet.
     "-nographic", "-cpu", "qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt", "-m", "1280M",
-    "-accel", "tcg,tb-size=256", "-smp", "1",
+    "-accel", "tcg,tb-size=256,thread=multi", "-smp", "4",
     "-L", "/pack/",
     "-incoming", "file:/pack/vm.state",
     "-drive", "if=virtio,format=raw,readonly=on,file=/pack/rootfs.bin",

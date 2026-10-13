@@ -90,6 +90,7 @@
     ["🍷 Wine test", "__wt4__"],
     ["🏆 CPU-Z 64", "__cpuz64__"],   // real CPU-Z, wine, -bench headless benchmark (64-bit)
     ["🏆 CPU-Z 32", "__cpuz32__"],   // 32-bit CPU-Z benchmark
+    ["🎮 GPU bench", "__gpubench__"],   // glmark2 OpenGL benchmark (Mesa llvmpipe, one render thread per core)
     // Bounded tail (build 72): 45s of live log then the pty frees itself — the old `tail -f`
     // held the console hostage until ^C and made every other button look dead.
     ["📜 Wine log", "timeout 45 tail -n 40 -f /root/winetest-cmd.log /root/winetest-esync.log 2>/dev/null; echo '[log view ended — tap 📜 again for more]'"],
@@ -360,6 +361,21 @@
       show("CPU-Z", "Couldn't push the CPU-Z script — boot the 64-bit guest first.");
     }
 
+    // 🎮 GPU bench: glmark2 (installed from Alpine's repo on first use per boot) rendering through
+    // Mesa llvmpipe on the emulated CPU. Pushed via /share like CPU-Z.
+    var gpuText = null;
+    async function runGpuBench() {
+      try {
+        if (!gpuText) gpuText = await (await fetch("vendor/qemu/gpubench.sh")).text();
+        if (shareFs && shareFs.write && gpuText && gpuText.indexOf("glmark2") >= 0) {
+          shareFs.write("gpubench.sh", new TextEncoder().encode(gpuText));
+          runCmd("sh /share/gpubench.sh", 1500000);   // install + fixed-length scenes: up to 25m
+          return;
+        }
+      } catch (e) {}
+      show("GPU bench", "Couldn't push the GPU benchmark script — boot the 64-bit guest first.");
+    }
+
     // Busy-state UI (build 72): lock the quick grid + Run button while a command is in flight.
     function setBusyUI(on) {
       try { grid.classList.toggle("locked", !!on); } catch (e) {}
@@ -573,6 +589,7 @@
           if (pair[1] === "__wt4__") await runWinetest4();
           else if (pair[1] === "__cpuz64__") await runCpuz("64");
           else if (pair[1] === "__cpuz32__") await runCpuz("32");
+          else if (pair[1] === "__gpubench__") await runGpuBench();
           else await runCmd(pair[1]);
         } catch (e) {}
         b.classList.remove("running");

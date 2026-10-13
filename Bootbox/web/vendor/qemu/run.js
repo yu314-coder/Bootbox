@@ -216,6 +216,12 @@
       let info = "t:" + Math.round(Date.now() / 1000) + "\nm:share\n";
       if (opts.netWs) info += "n:02:00:00:00:00:01\n";
       mod.FS.writeFile("/pack/info", info);
+      // wasm-TCG JIT tunables, read once by the engine (build 84+; older engines ignore the file):
+      // jit = interpreted runs before a block is compiled to wasm, max = live compiled-block cap.
+      const t = opts.tune || {};
+      if (t.jit || t.max) {
+        mod.FS.writeFile("/bootbox-tune", (t.jit ? "jit=" + (t.jit | 0) + "\n" : "") + (t.max ? "max=" + (t.max | 0) + "\n" : ""));
+      }
     });
     let cbs = [];
     Module.pty.onReadable(() => { cbs.forEach((cb) => cb()); cbs = []; });
