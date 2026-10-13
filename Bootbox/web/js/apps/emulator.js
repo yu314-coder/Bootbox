@@ -30,13 +30,19 @@
   const GUESTS = [
     { id: "custom",    name: "ISO / disk image…",                          boot: "cdrom",
       url: "", kind: "cdrom", ram: 512, vga: 32 },
+    // tune max: Linux + X + Wine compile ~34K distinct blocks across 2 vCPUs; with the default 15000
+    // the engine evicted and recompiled them nonstop, and under JavaScriptCore every recompiled block
+    // leaves memory behind (a CPU-Z run grew the page by ~15 MB/s until WebKit killed it). 40000 holds
+    // the working set (Mac-measured: no recompiles, growth ~5 MB/s); the engine still evicts the
+    // least-recently-run blocks past it, and lowers the cap itself if the host refuses a compile.
     { id: "x64pw",     name: "64-bit Linux + Python & Wine (x86_64) — QEMU-Wasm",  boot: "q64",
-      base: "vendor/qemu-aload/", url: "", ram: 1536 },
+      base: "vendor/qemu-aload/", url: "", ram: 1536, tune: { max: 40000 } },
     // Lightweight graphical desktop: its OWN image (no Wine, no browser — browsers freeze Xvnc under
     // TCG). twm/tint2 + a terminal + mc file manager. Reuses the x86_64 engine (wasm shared from
     // qemu-aload — no duplication). The image auto-starts the desktop, so boot64 sends no start-desktop.
     { id: "x64pwd",    name: "64-bit Linux — Desktop (x86_64) — QEMU-Wasm",  boot: "q64",
-      base: "vendor/qemu-desktop/", wasm: "../qemu-aload/qemu-system-x86_64.wasm", url: "", ram: 1536, gui: true },
+      base: "vendor/qemu-desktop/", wasm: "../qemu-aload/qemu-system-x86_64.wasm", url: "", ram: 1536, gui: true,
+      tune: { max: 40000 } },   // same reason as x64pw
     { id: "android64", name: "Android 12 AOSP — Full 64-bit x86_64 (QEMU)", boot: "q64",
       base: "vendor/qemu-android/", engineBase: "vendor/qemu-aload/", wasm: "qemu-system-x86_64.wasm",   // shared x86_64 engine
       url: "", ram: 1280, minRam: 1280, maxRam: 1280, cores: 4, minCores: 4, maxCores: 4, gui: true, android: true,   // RAM + cores fixed by the warm snapshot

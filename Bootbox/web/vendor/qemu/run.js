@@ -231,11 +231,13 @@
       // jit = interpreted runs before a block is compiled to wasm, max = live compiled-block cap,
       // chain = blocks tail-call their compiled successor instead of returning to the dispatcher
       // (needs wasm tail calls: Chrome 112+, Safari 18.2+ - feature-detected, never assumed),
-      // fpinline = SSE float ops as native wasm float/SIMD ops (on by default in the engine).
+      // fpinline = SSE float ops as native wasm float/SIMD ops (on by default in the engine),
+      // regloc = TCG registers as wasm locals instead of globals (build 86+ engine; on by default).
       const t = opts.tune || {};
       let tune = (t.jit ? "jit=" + (t.jit | 0) + "\n" : "") + (t.max ? "max=" + (t.max | 0) + "\n" : "");
       if (t.chain !== 0 && wasmTailCalls()) tune += "chain=1\n";
       if (t.fpinline === 0) tune += "fpinline=0\n";
+      if (t.regloc === 0) tune += "regloc=0\n";
       if (tune) mod.FS.writeFile("/bootbox-tune", tune);
     });
     let cbs = [];
