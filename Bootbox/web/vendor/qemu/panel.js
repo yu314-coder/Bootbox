@@ -244,7 +244,7 @@
       var age = hudChangeT ? Math.round((now - hudChangeT) / 1000) : -1;
       hud.style.color = "#8fd18f";
       hud.textContent = "🖥️ display: ON · " + dim + (age >= 0 ? " · screen changed " + age + "s ago" : "") +
-        " — black = empty desktop; wine windows can take minutes on first run (📜 Wine log)";
+        (mode === "desktop" ? "" : " — black = empty desktop; wine windows can take minutes on first run (📜 Wine log)");
     }, 2000);
 
     function showTab(which) {

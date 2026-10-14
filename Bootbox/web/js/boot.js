@@ -47,10 +47,12 @@
       try {
         // A one-shot reboot (set by the emulator when it reloads the page to apply new CPU-core / RAM
         // settings to a 64-bit guest) takes priority: resume straight into that guest and auto-boot.
+        // (localStorage too: switching 64-bit guests restarts in a fresh web view, which has a new session.)
         let reboot = null;
-        try { reboot = sessionStorage.getItem("bootbox.reboot"); } catch (e) {}
+        try { reboot = sessionStorage.getItem("bootbox.reboot") || localStorage.getItem("bootbox.reboot"); } catch (e) {}
         if (reboot) {
           try { sessionStorage.removeItem("bootbox.reboot"); } catch (e) {}
+          try { localStorage.removeItem("bootbox.reboot"); } catch (e) {}
           let p; try { p = JSON.parse(reboot); } catch (e) { p = { guest: reboot }; }
           Bootbox.runVM({ guest: p.guest, cores: p.cores, ram: p.ram, autoboot: true });
         }

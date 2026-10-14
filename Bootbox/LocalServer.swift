@@ -92,6 +92,21 @@ final class LocalServer {
         if rel.hasPrefix("ISOs/") || rel.hasPrefix("vmres/") {
             if let f = VMStorage.resolve((rel as NSString).lastPathComponent) { return f }
         }
+        // Bootbox: a guest pack the app has EXPANDED on disk (emulator.js ensureRootfs → BinaryBridge
+        // "gunzip", once after download) is served raw, so Range requests work and load.js reads the
+        // guest disk on demand (vendor/qemu/lazypack.js) instead of holding the whole pack (up to 1.9 GB)
+        // in page memory — that whole-pack transfer failed on the iPad with "TypeError: Load failed".
+        // Until a pack is expanded, the .gz mappings below keep the old whole-file path working.
+        let expandedPacks: [String: String] = [
+            "vendor/qemu-aload/qemu-system-x86_64.data": "qemu64-v5-rootfs-945742898.data",
+            "vendor/qemu-desktop/qemu-system-x86_64.data": "qemu-desktop7-rootfs-711887616.data",
+            "vendor/qemu-android/qemu-system-x86_64.data": "qemu-android64-warm4-2038076444.data",
+            "vendor/qemu-aarch64/qemu-system-aarch64.data": "qemu-aarch64-rootfs-265519785.data",
+        ]
+        if let name = expandedPacks[rel] {
+            let raw = VMStorage.importsDir().appendingPathComponent(name)
+            return FileManager.default.fileExists(atPath: raw.path) ? raw : nil
+        }
         // 64-bit Linux rootfs is download-on-demand: NOT in the bundle. emulator.js's ensureRootfs()
         // downloads it (BinaryBridge → Downloader) into the imports store on first boot; serve it from
         // there (the gzip-on-the-fly path requests the .data.gz). Returns nil until it's downloaded.

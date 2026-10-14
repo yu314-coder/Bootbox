@@ -20,7 +20,10 @@
       var PACKAGE_NAME = 'qemu-system-x86_64.data';
       var REMOTE_PACKAGE_BASE = 'qemu-system-x86_64.data';
       var REMOTE_PACKAGE_NAME = Module['locateFile'] ? Module['locateFile'](REMOTE_PACKAGE_BASE, '') : REMOTE_PACKAGE_BASE;
-      var REMOTE_PACKAGE_SIZE = metadata['remote_package_size'];
+      var REMOTE_PACKAGE_SIZE = metadata['remote_package_size']
+      // Bootbox: an expanded pack served with Range support is read on demand (vendor/qemu/lazypack.js)
+      // instead of fetched whole into page memory; otherwise the stock whole-pack fetch below runs.
+      var lazyProbe = (typeof self !== 'undefined' && typeof window !== 'undefined' && self.BootboxLazyPack) ? self.BootboxLazyPack.probe(REMOTE_PACKAGE_NAME) : Promise.resolve(false);;
 
       function stage(message) {
         try { Module['bootboxStage']?.(message); } catch (_) {}
@@ -132,16 +135,16 @@
       var fetchedCallback = null;
       var fetched = Module['getPreloadedPackage'] ? Module['getPreloadedPackage'](REMOTE_PACKAGE_NAME, REMOTE_PACKAGE_SIZE) : null;
 
-      if (!fetched) fetchRemotePackage(REMOTE_PACKAGE_NAME, REMOTE_PACKAGE_SIZE, (data) => {
+      if (!fetched) lazyProbe.then((lazy) => lazy || fetchRemotePackage(REMOTE_PACKAGE_NAME, REMOTE_PACKAGE_SIZE, (data) => {
         if (fetchedCallback) {
           fetchedCallback(data);
           fetchedCallback = null;
         } else {
           fetched = data;
         }
-      }, handleError);
+      }, handleError));
 
-    function runWithFS(Module) {
+    function stockRunWithFS(Module) {
 
       function assert(check, msg) {
         if (!check) throw msg + new Error().stack;
@@ -239,6 +242,17 @@ Module['FS_createPath']("/", "pack", true, true);
         fetchedCallback = processPackageData;
       }
 
+    }
+    function runWithFS(Module) {
+      Module['addRunDependency']('lazy_datafile_qemu-system-x86_64.data');
+      lazyProbe.then((lazy) => {
+        if (!lazy) { stockRunWithFS(Module); Module['removeRunDependency']('lazy_datafile_qemu-system-x86_64.data'); return; }
+        Module['setStatus']?.('Reading the guest disk from storage (on demand)…');
+        Module['FS_createPath']('/', 'pack', true, true);
+        self.BootboxLazyPack.install(Module, REMOTE_PACKAGE_NAME, metadata['files']).then(
+          () => Module['removeRunDependency']('lazy_datafile_qemu-system-x86_64.data'),
+          (e) => { console.error('lazy pack:', e); Module['setStatus']?.('Guest pack read failed: ' + ((e && e.message) || e)); });
+      });
     }
     if (Module['calledRun']) {
       runWithFS(Module);

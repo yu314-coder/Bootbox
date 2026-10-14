@@ -28,32 +28,30 @@
   //  • state        → optional gzipped v86 snapshot for instant restore: a hosted URL,
   //                   or an imported NAME.img auto-pairs with a NAME.img.state.gz beside it.
   const GUESTS = [
-    { id: "custom",    name: "ISO / disk image…",                          boot: "cdrom",
+    { id: "custom",    name: "Windows / ISO / disk image…",                          boot: "cdrom",
       url: "", kind: "cdrom", ram: 512, vga: 32 },
     // tune max: Linux + X + Wine compile ~34K distinct blocks across 2 vCPUs; with the default 15000
     // the engine evicted and recompiled them nonstop, and under JavaScriptCore every recompiled block
     // leaves memory behind (a CPU-Z run grew the page by ~15 MB/s until WebKit killed it). 40000 holds
     // the working set (Mac-measured: no recompiles, growth ~5 MB/s); the engine still evicts the
     // least-recently-run blocks past it, and lowers the cap itself if the host refuses a compile.
-    { id: "x64pw",     name: "64-bit Linux + Python & Wine (x86_64) — QEMU-Wasm",  boot: "q64",
+    { id: "x64pw",     name: "Linux (Terminal)",  boot: "q64",
       base: "vendor/qemu-aload/", url: "", ram: 1536, tune: { max: 40000 } },
     // Lightweight graphical desktop: its OWN image (no Wine, no browser — browsers freeze Xvnc under
     // TCG). twm/tint2 + a terminal + mc file manager. Reuses the x86_64 engine (wasm shared from
     // qemu-aload — no duplication). The image auto-starts the desktop, so boot64 sends no start-desktop.
-    { id: "x64pwd",    name: "64-bit Linux — Desktop (x86_64) — QEMU-Wasm",  boot: "q64",
+    { id: "x64pwd",    name: "Linux (Desktop)",  boot: "q64",
       base: "vendor/qemu-desktop/", wasm: "../qemu-aload/qemu-system-x86_64.wasm", url: "", ram: 1536, gui: true,
       tune: { max: 40000 } },   // same reason as x64pw
-    { id: "android64", name: "Android 12 AOSP — Full 64-bit x86_64 (QEMU)", boot: "q64",
+    { id: "android64", name: "Android", boot: "q64",
       base: "vendor/qemu-android/", engineBase: "vendor/qemu-aload/", wasm: "qemu-system-x86_64.wasm",   // shared x86_64 engine
       url: "", ram: 1280, minRam: 1280, maxRam: 1280, cores: 4, minCores: 4, maxCores: 4, gui: true, android: true,   // RAM + cores fixed by the warm snapshot
       // Android's code footprint overflows the engine's default 15000 live compiled blocks (shared by
       // all 4 vCPUs) → constant evict/recompile churn. Mac-measured cold Settings launch: v3 1-core 605s,
       // v4 4-core 314s, v4 + max=45000 53-109s. A host that can't hold that many just interprets past it.
       tune: { max: 45000 } },
-    // REAL 64-bit ARM (aarch64) Linux — separate QEMU engine (qemu-system-aarch64). Alpine + Python +
-    // internet; no Wine (x86-only). wasm names the engine binary so run.js fetches the right one.
-    { id: "arm64",     name: "64-bit Linux — ARM64 (aarch64) — QEMU-Wasm",  boot: "q64",
-      base: "vendor/qemu-aarch64/", wasm: "qemu-system-aarch64.wasm", url: "", ram: 1536, arch: "arm64" },
+    // (The ARM64 guest — vendor/qemu-aarch64/, its own engine — is no longer offered: the systems are
+    // Linux Desktop, Linux Terminal, Android, and the Windows images through the ISO/disk path.)
   ];
 
   // The 64-bit Linux rootfs (~213 MB compressed) is NOT bundled in the app — it's hosted on a GitHub
@@ -103,11 +101,39 @@
   // Ensure the guest's rootfs is present before booting: trigger the native download (BinaryBridge
   // "download" → Downloader, progress via "downloadProgress" events) and wait for it. No-op for
   // bundled guests or when the native bridge isn't present (e.g. the Mac test harness).
+  // Expand a downloaded guest pack (NAME.data.gz → NAME.data) once, on disk (BinaryBridge "gunzip":
+  // atomic .part → rename, deletes the .gz on success). LocalServer then serves the raw pack with Range
+  // and load.js reads the guest disk on demand (vendor/qemu/lazypack.js) instead of loading the whole
+  // pack — up to 1.9 GB — into page memory, which failed on the iPad ("TypeError: Load failed").
+  // Resolves true when NAME.data exists (already or now); false when the .gz isn't downloaded yet.
+  async function expandPack(gzName, rawName, g, status) {
+    let r;
+    try { r = await Bridge.call("binary", "gunzip", { src: gzName, dst: rawName }); }
+    catch (e) { return false; }                      // "source not found": download it first
+    if (r && r.cached) return true;
+    const label = g.android ? "Android image" : "Linux image";
+    await new Promise((resolve, reject) => {
+      const handler = (p) => {
+        if (!p || p.name !== rawName) return;
+        if (p.done) { if (Bridge.offEvent) Bridge.offEvent("gunzipProgress", handler); p.ok ? resolve() : reject(new Error(p.error || "expand failed")); return; }
+        const pct = p.total > 0 ? Math.round(p.received / p.total * 100) + "%" : ((p.received / 1048576) | 0) + " MB";
+        try { status.textContent = "Preparing the " + label + " (one-time, stays on this iPad)… " + pct; } catch (e) {}
+      };
+      Bridge.onEvent("gunzipProgress", handler);
+    });
+    return true;
+  }
+
   async function ensureRootfs(g, status, setState) {
     const cfg = ROOTFS_REMOTE[g && g.base];
     if (!cfg) return;
     if (!window.Bridge || typeof Bridge.call !== "function") return;
     for (const f of cfg.files) {                     // download each part (aarch64 = engine + rootfs)
+      const raw = /\.data\.gz$/.test(f.name) ? f.name.replace(/\.gz$/, "") : null;   // guest packs only
+      if (raw) {
+        try { if (await expandPack(f.name, raw, g, status)) continue; }   // expanded already (or just now)
+        catch (e) { console.warn("pack expand failed; using the compressed pack:", e); continue; }
+      }
       let r;
       try { r = await Bridge.call("binary", "download", { url: f.url, name: f.name, size: f.size || 0 }); }
       catch (e) { throw new Error("couldn't start the image download — " + ((e && e.message) || e)); }
@@ -130,6 +156,10 @@
         };
         Bridge.onEvent("downloadProgress", handler);
       });
+      if (raw) {
+        try { await expandPack(f.name, raw, g, status); }
+        catch (e) { console.warn("pack expand failed; using the compressed pack:", e); }
+      }
     }
   }
 
@@ -500,8 +530,16 @@
             if (window.__q64Live) {
               // Carry cores+RAM in the reboot payload (not just via the debounced config save) so the new
               // selection is applied even if the page reloads before VFS's 250 ms save flushes.
-              try { sessionStorage.setItem("bootbox.reboot", JSON.stringify({ guest: g.id, cores: +coresSel.value || undefined, ram: +ramInput.value || undefined })); } catch (e) {}
+              const reboot = JSON.stringify({ guest: g.id, cores: +coresSel.value || undefined, ram: +ramInput.value || undefined });
+              try { sessionStorage.setItem("bootbox.reboot", reboot); } catch (e) {}
+              try { localStorage.setItem("bootbox.reboot", reboot); } catch (e) {}   // survives a fresh web view
               try { status.textContent = "Rebooting to apply new settings…"; } catch (e) {}
+              // Prefer a FRESH web view (new WebContent process): a plain reload keeps the old process,
+              // which still held the previous guest's ~2 GB of wasm memory, so the next 64-bit guest
+              // failed with "Out of memory". Without the native call (Mac harness, old app) just reload.
+              try {
+                if (window.Bridge && typeof Bridge.call === "function") { await Bridge.call("system", "freshReload", {}); return; }
+              } catch (e) {}
               location.reload();
               return;
             }

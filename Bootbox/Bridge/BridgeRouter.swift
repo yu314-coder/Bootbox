@@ -10,6 +10,8 @@ import UIKit
 /// Event (host -> guest):  window.__hostEvent(name, payload)
 final class BridgeRouter: NSObject, WKScriptMessageHandler, UIGestureRecognizerDelegate {
     weak var webView: WKWebView?
+    /// Replaces the WKWebView with a brand-new one (set by WebHostView). See "freshReload" below.
+    var onFreshReload: (() -> Void)?
     // Let our trackpad-scroll pan run alongside the WebView's own recognizers (don't steal touches).
     func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 
@@ -60,6 +62,17 @@ final class BridgeRouter: NSObject, WKScriptMessageHandler, UIGestureRecognizerD
         let payload = body["payload"] as? [String: Any] ?? [:]
         let respond: (Bool, Any?) -> Void = { [weak self] ok, result in
             self?.reply(id: id, ok: ok, result: result)
+        }
+
+        // system.freshReload: start over in a NEW web view (= a new WebContent process) instead of
+        // location.reload(). Switching 64-bit guests needs a page reload (an emscripten engine can't be
+        // re-instantiated), but a reload keeps the old process, and WebKit had not released the previous
+        // guest's ~2 GB of wasm memory 20 s later, so the next guest failed with "Out of memory".
+        // A new process starts with all of it free.
+        if bridge == "system" && action == "freshReload" {
+            respond(true, nil)
+            DispatchQueue.main.async { [weak self] in self?.onFreshReload?() }
+            return
         }
 
         switch bridge {

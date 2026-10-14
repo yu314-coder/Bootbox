@@ -42,8 +42,14 @@ final class BinaryBridge {
             let dir = Self.importsDir()
             let srcURL = dir.appendingPathComponent(srcName)
             let dstURL = dir.appendingPathComponent(dstName)
+            // Expanded already → cached, even though the .gz is gone (it is deleted after a successful
+            // expand). Checking the source first made every later boot of an expanded guest pack say
+            // "source not found", so emulator.js re-downloaded the whole .gz each time.
+            if FileManager.default.fileExists(atPath: dstURL.path) {
+                try? FileManager.default.removeItem(at: srcURL)   // a leftover .gz is dead weight
+                return respond(true, ["cached": true, "name": dstName])
+            }
             guard FileManager.default.fileExists(atPath: srcURL.path) else { return respond(false, "source not found") }
-            if FileManager.default.fileExists(atPath: dstURL.path) { return respond(true, ["cached": true, "name": dstName]) }
             respond(true, ["started": true, "name": dstName])
             DispatchQueue.global(qos: .utility).async {
                 // Inflate into a `.part` temp and atomically rename to the final name

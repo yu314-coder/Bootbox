@@ -33,11 +33,35 @@ final class WebDropDelegate: NSObject, UIDropInteractionDelegate {
 /// focus — so a Magic Keyboard types into the guest. Each key is forwarded to
 /// `window.__emuKey`, which feeds v86's keyboard.
 final class KeyCaptureViewController: UIViewController {
-    let webView: WKWebView
+    private(set) var webView: WKWebView
     init(webView: WKWebView) { self.webView = webView; super.init(nibName: nil, bundle: nil) }
     required init?(coder: NSCoder) { fatalError("not used") }
 
-    override func loadView() { view = webView }
+    // The web view sits in a plain container so it can be swapped for a fresh one (replaceWebView).
+    override func loadView() {
+        let container = UIView()
+        container.backgroundColor = .black
+        view = container
+        attach(webView)
+    }
+
+    private func attach(_ wv: WKWebView) {
+        wv.frame = view.bounds
+        wv.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        view.addSubview(wv)
+    }
+
+    /// Drop the current web view (its WebContent process goes with it, and all of its memory) and
+    /// show `fresh` instead.
+    func replaceWebView(with fresh: WKWebView) {
+        let old = webView
+        old.configuration.userContentController.removeScriptMessageHandler(forName: "host")
+        old.stopLoading()
+        old.removeFromSuperview()
+        webView = fresh
+        attach(fresh)
+        becomeFirstResponder()
+    }
     override var canBecomeFirstResponder: Bool { true }
 
     override func viewDidAppear(_ animated: Bool) {
@@ -116,8 +140,19 @@ struct WebHostView: UIViewControllerRepresentable {
     func makeCoordinator() -> BridgeRouter { BridgeRouter() }
 
     func makeUIViewController(context: Context) -> KeyCaptureViewController {
+        let coordinator = context.coordinator
+        let vc = KeyCaptureViewController(webView: Self.makeWebView(coordinator))
+        coordinator.onFreshReload = { [weak vc] in
+            guard let vc else { return }
+            vc.replaceWebView(with: Self.makeWebView(coordinator))
+        }
+        return vc
+    }
+
+    /// A fully configured web view (bridges, schemes, gestures) loading the Bootbox runtime.
+    static func makeWebView(_ coordinator: BridgeRouter) -> WKWebView {
         let controller = WKUserContentController()
-        controller.add(context.coordinator, name: "host")
+        controller.add(coordinator, name: "host")
 
         let config = WKWebViewConfiguration()
         config.userContentController = controller
@@ -139,16 +174,16 @@ struct WebHostView: UIViewControllerRepresentable {
         webView.backgroundColor = .black
         webView.isOpaque = false
         webView.allowsBackForwardNavigationGestures = false
-        context.coordinator.webView = webView
+        coordinator.webView = webView
 
         // Trackpad / mouse two-finger scroll → guest terminal. scrollView.isScrollEnabled is off (so touch
         // reaches the emulator), which otherwise drops the Magic Keyboard's indirect scroll. maximumNumberOfTouches
         // = 0 makes this fire ONLY for indirect scroll (trackpad/mouse), never touchscreen — so touch input is
         // untouched. The handler bridges the delta to window.__trackpadScroll (run.js → xterm scrollback).
-        let scrollPan = UIPanGestureRecognizer(target: context.coordinator, action: #selector(BridgeRouter.handleTrackpadScroll(_:)))
+        let scrollPan = UIPanGestureRecognizer(target: coordinator, action: #selector(BridgeRouter.handleTrackpadScroll(_:)))
         scrollPan.maximumNumberOfTouches = 0
         scrollPan.cancelsTouchesInView = false
-        scrollPan.delegate = context.coordinator
+        scrollPan.delegate = coordinator
         if #available(iOS 13.4, *) { scrollPan.allowedScrollTypesMask = .all }
         webView.addGestureRecognizer(scrollPan)
 
@@ -166,7 +201,7 @@ struct WebHostView: UIViewControllerRepresentable {
                 }
             }
         }
-        return KeyCaptureViewController(webView: webView)
+        return webView
     }
 
     func updateUIViewController(_ uiViewController: KeyCaptureViewController, context: Context) {}

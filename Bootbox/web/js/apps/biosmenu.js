@@ -18,19 +18,18 @@
 (function () {
   // The bootable "systems" — REAL official distro ISOs (not lightweight spins),
   // all 32-bit. Each downloads its official ISO on first boot, then boots it.
+  // The boot menu offers exactly five systems (user direction, Oct 2026): two Linux front-ends of the
+  // 64-bit x86_64 engine, Android, and the two v86 Windows images. (The ARM64 guest is no longer listed.)
   const SYSTEMS = [
-    { id: "x64pw", name: "64-bit Linux + Python & Wine", sub: "REAL 64-bit Alpine · Python 3.12 + pip + Wine · terminal + graphical output · internet", icon: "🐍", tag: "64-BIT",
-      guest: "x64pw", ram: 1536,
-      note: "Real 64-bit x86_64 Alpine Linux via QEMU-Wasm — DUAL-CORE (nproc 2, cores 1–8 selectable) and now RUNS COOL: a tickless kernel + power-optimized engine keep it near-idle when you’re not working it (no more constant heat). 1.5 GB RAM. Python 3.12 + pip + Wine 9.0 (32 & 64-bit .exe) + REAL internet. Pre-installed tools: ncdu, htop, tree, nano, less, tmux, mc (all instant — no waiting on apk). `pip install numpy` auto-picks the compatible build; scipy/pandas/pillow wheels work. Terminal on the LEFT (scroll with a finger; arrow keys drive ncdu/mc/vi); GUI on the RIGHT stays OFF until you launch an X app and tap it. The 📁 Files tab manages guest files — tap ⬇ to save a file to the iPad, ⬆ to copy one in. Downloaded once (~260 MB)." },
-    { id: "x64pwd", name: "64-bit Linux — Desktop", sub: "Lightweight x86_64 desktop · twm + taskbar · web browser · terminal · mc", icon: "🖥️", tag: "DESKTOP",
+    { id: "x64pwd", name: "Linux (Desktop)", sub: "64-bit Linux desktop · windows, taskbar, terminal, file manager, text web browser", icon: "🖥️", tag: "DESKTOP",
       guest: "x64pwd", ram: 1536,
-      note: "A full-screen lightweight graphical desktop: window manager (twm) + a taskbar/clock (tint2) + a terminal + the mc (Midnight Commander) file manager. Python 3.12 with pip preloaded. WEB BROWSER: right-click the desktop → 'Web browser (links)' — a text-mode browser that fetches and renders real web pages (no images/JS). (Graphical browsers were tested and they freeze the emulated X server, so links is the one that works.) NO Wine (use the Python & Wine guest for that). Much lighter than the Wine guest: downloaded once on first use (~129 MB), then ~2 min first cold-boot." },
-    { id: "android64", name: "Android 12 AOSP — Full 64-bit", sub: "Experimental x86_64 Android · QUAD-CORE · touch + keyboard · System UI + Launcher3", icon: "🤖", tag: "ANDROID",
+      note: "A full-screen 64-bit (x86_64) Linux desktop: window manager (twm) + taskbar/clock (tint2) + a terminal + the mc file manager, Python 3.12 with pip. Right-click the desktop for the menu (web browser = links, text mode). Downloaded once (~240 MB), then the guest disk is read straight from the iPad's storage as needed." },
+    { id: "x64pw", name: "Linux (Terminal)", sub: "64-bit Linux console · Python 3.12 + pip · Wine for .exe · internet", icon: "🐍", tag: "TERMINAL",
+      guest: "x64pw", ram: 1536,
+      note: "64-bit (x86_64) Alpine Linux in a terminal — DUAL-CORE (cores 1–8 in UEFI Setup). Python 3.12 + pip, Wine (32 & 64-bit .exe) and real internet. Terminal on the LEFT; the panel on the RIGHT has quick buttons and shows graphical output when you start an X app or a Wine .exe. Downloaded once (~310 MB), then the guest disk is read straight from the iPad's storage as needed." },
+    { id: "android64", name: "Android", sub: "Android 12 AOSP · 64-bit x86_64 · quad-core · touch + keyboard", icon: "🤖", tag: "ANDROID",
       guest: "android64", ram: 1280,
-      note: "Full Android 12 AOSP in the 64-bit QEMU-Wasm engine: Android framework, ART, System UI, Launcher3, writable /data, direct touchscreen and keyboard input. WARM-BOOT IMAGE: it ships a snapshot captured after Launcher3 was fully drawn, so it RESUMES to the home screen in a few seconds instead of the multi-minute cold boot (which, under software emulation, tripped Android's watchdog and never drew System UI). The first download is ~901 MB (bigger because it includes the RAM snapshot) and is cached by Bootbox. QUAD-CORE: 4 vCPUs that really run in parallel (system_server, SurfaceFlinger and apps on separate cores), plus a bigger compiled-code cache — apps open about 10x faster than the old single-core image (Mac-measured cold Settings launch: ~10 min → under 1 min). 4 cores and 1280 MB are fixed by the snapshot. No Google Play, GMS, Play certification, hardware GPU acceleration, or game-level performance." },
-    { id: "arm64", name: "64-bit Linux — ARM64 (aarch64)", sub: "REAL 64-bit ARM Linux · DUAL-CORE · Alpine + Python · internet", icon: "💪", tag: "ARM64",
-      guest: "arm64", ram: 1536,
-      note: "A genuine 64-bit ARM (aarch64) Alpine Linux — a different CPU than the x86_64 guests (uname -m = aarch64, kernel 6.1), via a separate QEMU-Wasm engine. DUAL-CORE: 2 real emulated CPUs running in parallel (nproc = 2) — a busy program no longer freezes the other core, and two jobs really run at once. Python 3.12 + pip + real internet. NO Wine (Wine runs x86 Windows binaries — meaningless on ARM). Still software-emulated (Apple blocks the hypervisor on iOS), so per-core speed is like the x86_64 guest. Downloaded once on first use (~77 MB)." },
+      note: "Android 12 AOSP (System UI + Launcher3) on 4 emulated cores. It resumes from a snapshot taken at the home screen, so it opens in seconds instead of a multi-minute cold boot. Touch the screen directly; ⌨ Type for text. Downloaded once (~901 MB). No Google Play, no GPU acceleration." },
     { id: "win98", name: "Windows 98 SE", sub: "One-tap download + boot · ~89 MB", icon: "🪟", tag: "WIN",
       img: "vmres://iso/win98.img", kind: "hda", ram: 256, fixedRam: true,
       downloadName: "win98.img.gz", imgName: "win98.img", gz: true,
@@ -100,7 +99,8 @@
                      : "Your imported image. Manage these in the Files app (Bootbox)." };
       });
     }
-    function build(names) { return SYSTEMS.concat(importRows(names)).concat([SETUP_ROW]); }
+    // Setup is reached from the footer button (and the S key), not a list row.
+    function build(names) { return SYSTEMS.concat(importRows(names)); }
 
     container.innerHTML = `
       <style>

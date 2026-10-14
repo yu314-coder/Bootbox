@@ -5,6 +5,7 @@
  * In a browser that means COOP/COEP response headers; in the iPad app the host
  * page must be served cross-origin-isolated (see HostView scheme handler).        */
 (function () {
+  const RUN_JS_URL = (document.currentScript && document.currentScript.src) || location.href;   // for lazypack.js
   function loadScript(src, type) {
     return new Promise((res, rej) => {
       const s = document.createElement("script");
@@ -68,7 +69,9 @@
     // xterm + xterm-pty expose globals (Terminal, openpty)
     await loadScript(engineBase + "xterm.js");
     await loadScript(engineBase + "xterm-pty.js");
-    // load.js (data preloader) + arg-module.js (qemu args) define/extend global Module
+    // load.js (data preloader) + arg-module.js (qemu args) define/extend global Module.
+    // lazypack.js first: load.js reads an expanded, Range-served pack on demand through it.
+    await loadScript(new URL("lazypack.js", RUN_JS_URL).href).catch(() => {});
     await loadScript(base + "load.js");
     await loadScript(base + "arg-module.js");
     // RAM control: the toolbar value (opts.ram) overrides the baked "-m" so it's no longer locked.
@@ -259,7 +262,35 @@
       .then((m) => { __RFB = m.default; return m.default; }).catch(() => null);
     toTerm("[boot] serving=" + location.protocol + " isolated=" + self.crossOriginIsolated + " ram=" + (opts.ram || "?") + "M");
     say("64-bit: loading engine module…");
-    const init = (await import(new URL(engineModuleBase + "out.js", location.href).href)).default;
+    const engineJs = new URL(engineModuleBase + "out.js", location.href).href;
+    // Allocate the engine's shared wasm memory HERE, retrying for a while, and hand it to the engine
+    // (emscripten uses a pre-made Module.wasmMemory). Switching 64-bit guests reloads the page, and
+    // right after that reload WebKit has not yet released the previous guest's memory, so the engine's
+    // own allocation failed with "Out of memory" (seen in the iOS app going Linux Terminal -> Desktop).
+    // The sizes come from the engine's own initMemory so they always match its memory import.
+    if (!Module.wasmMemory) {
+      try {
+        const src = await (await fetch(engineJs)).text();
+        const ini = +(Module.INITIAL_MEMORY || ((src.match(/INITIAL_MEMORY"\]\|\|(\d+)/) || [])[1]) || 0);
+        const mx = src.match(/maximum:(\d+|INITIAL_MEMORY\/65536),shared:true/);
+        if (ini && mx) {
+          const pages = ini / 65536, maxPages = /^INITIAL/.test(mx[1]) ? pages : +mx[1];
+          for (let i = 0; ; i++) {
+            try { Module.wasmMemory = new WebAssembly.Memory({ initial: pages, maximum: maxPages, shared: true }); break; }
+            catch (e) {
+              if (i >= 40) throw e;                      // ~20 s: give up, the engine reports the error itself
+              if (i === 0) say("64-bit: waiting for the previous guest's memory to be released…");
+              // The old page's memory is garbage, but WebKit frees it only after a full GC, which it
+              // won't run on its own soon enough. A large short-lived allocation reports memory pressure
+              // to the GC (the same nudge the engine uses for evicted code).
+              try { new Uint8Array(256 << 20)[0] = 1; } catch (e2) {}
+              await new Promise((r) => setTimeout(r, 500));
+            }
+          }
+        }
+      } catch (e) { try { console.warn("[boot] memory pre-allocation:", e); } catch (e2) {} }
+    }
+    const init = (await import(engineJs)).default;
     // Heartbeat — so it VISIBLY does stuff while QEMU sets up and the kernel cold-boots (no output yet).
     let hbN = 0;
     const hb = setInterval(() => { hbN++; say("64-bit: working… " + hbN + "s — booting kernel (watch the terminal below)"); }, 1000);
