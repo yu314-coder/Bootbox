@@ -685,6 +685,7 @@
           const ms = performance.now() - t0;
           const tier = ms < 90 ? "fast" : ms < 380 ? "medium" : "slow";
           cachedPerf = { tier, ms: Math.round(ms), jit: ms < 380 };
+          try { console.log("[perf] JS benchmark " + Math.round(ms) + " ms (" + tier + "), " + (navigator.hardwareConcurrency || "?") + " cores"); } catch (e) {}
         }
         (function showPerf() {
           const p = cachedPerf;
@@ -990,6 +991,39 @@
               }
             } catch (e) {}
             if (memNote) { try { console.log("[mem]" + memNote); status.textContent += memNote; } catch (e) {} }
+            // Device-compatibility ladder. On the iPad (TestFlight 87-89) the page's process crashed the
+            // moment a resumed/booted guest started executing, though the same engine runs in the iOS
+            // simulator and in macOS WebKit: some engine feature trips the device's WebKit. Each time a
+            // 64-bit boot's page crashes before it has run 75 s, the next boot turns one more of the
+            // newer features off; the first level that runs is kept (and logged).
+            const SAFE_LEVELS = [
+              { name: "full speed" },
+              { name: "no wasm tail calls", tune: { chain: 0 } },
+              { name: "no tail calls, no SIMD float inlining", tune: { chain: 0, fpinline: 0 } },
+              { name: "no tail calls/float inlining/register locals", tune: { chain: 0, fpinline: 0, regloc: 0 } },
+              { name: "the above + fixed-size memory, fewer compiled blocks", tune: { chain: 0, fpinline: 0, regloc: 0, max: 8000 }, presize: true },
+              { name: "interpreter only (slow)", tune: { chain: 0, fpinline: 0, regloc: 0, max: 8000, jit: 1000000000 }, presize: true },
+            ];
+            let safe = cfg().q64safe || { level: 0 };
+            try {
+              const lc = (window.Bridge && Bridge.onDevice) ? await Bridge.call("system", "takeLastCrash") : null;
+              console.log("[safe] last page crash " + JSON.stringify(lc) + ", previous boot " + JSON.stringify(safe));
+              if (lc && lc.at && safe.startedAt && lc.at * 1000 > safe.startedAt && !safe.ok) {
+                safe.level = Math.min(SAFE_LEVELS.length - 1, (safe.level || 0) + 1);
+                console.log("[safe] the last 64-bit boot crashed the page (code " + lc.code + ") — stepping down");
+              }
+            } catch (e) {}
+            const level = SAFE_LEVELS[Math.min(SAFE_LEVELS.length - 1, safe.level || 0)];
+            safe = { level: safe.level || 0, startedAt: Date.now(), ok: false };
+            setCfg({ q64safe: safe });
+            console.log("[safe] engine level " + safe.level + ": " + level.name);
+            if (safe.level) { try { status.textContent += " Safer engine settings: " + level.name + "."; } catch (e) {} }
+            setTimeout(() => {
+              const s2 = cfg().q64safe || {};
+              if (s2.startedAt === safe.startedAt) { s2.ok = true; setCfg({ q64safe: s2 }); console.log("[safe] level " + safe.level + " has run 75 s — keeping it"); }
+            }, 75000);
+            const tune = Object.assign({}, g.tune || {}, level.tune || {});
+            if (g.tune && g.tune.max && level.tune && level.tune.max) tune.max = Math.min(g.tune.max, level.tune.max);
             await window.QEMU_WASM.run({
               screen_container: panel64.termHost,
               base: g.base || "vendor/qemu/",   // per-guest engine/rootfs dir (qemu-aload = the Python/Wine Alpine)
@@ -1000,7 +1034,8 @@
               vnc: "ws://127.0.0.1:8889/vnc",   // noVNC GUI bridge: netstack /vnc endpoint -> vn.Dial(guest x11vnc:5900)
               ram: ramMB,
               smp: Math.max(g.minCores || 1, Math.min(g.maxCores || 8, +coresSel.value || (args && +args.cores) || 0)) || undefined,
-              tune: g.tune,   // engine JIT tunables (run.js writes /bootbox-tune; build-84+ engine reads it)
+              tune,   // engine JIT tunables (run.js writes /bootbox-tune; build-84+ engine reads it)
+              initialMemoryMB: level.presize ? ramMB + 900 : undefined,
               compressedVnc: !!g.android,
               vncLabel: g.android ? "Android" : undefined,
               onStatus: (m) => { try { status.textContent = m; } catch (e) {} },

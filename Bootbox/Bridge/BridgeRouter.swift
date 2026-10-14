@@ -80,6 +80,9 @@ final class BridgeRouter: NSObject, WKScriptMessageHandler, UIGestureRecognizerD
         default: why = "WebKit reason code \(reasonCode)"
         }
         BootLog.native("WebContent process terminated: \(why) (code \(reasonCode), app footprint \(Self.footprintMB()) MB)")
+        // The next page reads this (system "takeLastCrash") to step a 64-bit guest down to safer engine settings.
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "BootboxLastPageCrash")
+        UserDefaults.standard.set(reasonCode, forKey: "BootboxLastPageCrashCode")
         DispatchQueue.main.async { [weak self] in self?.onPageDied?(why) }
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {

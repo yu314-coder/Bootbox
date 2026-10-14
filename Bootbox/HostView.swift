@@ -63,6 +63,7 @@ final class KeyCaptureViewController: UIViewController {
         title.text = "The emulator stopped"
         title.font = .boldSystemFont(ofSize: 24); title.textColor = .white
         body.text = "iPadOS ended the emulator page: \(why). The guest was not saved.\n" +
+            "Restart and boot it again: a 64-bit guest automatically tries safer engine settings next time.\n" +
             "Details are in Documents/Logs/bootbox.log."
         body.font = .systemFont(ofSize: 16); body.textColor = UIColor(white: 0.8, alpha: 1)
         body.numberOfLines = 0; body.textAlignment = .center
@@ -201,6 +202,9 @@ struct WebHostView: UIViewControllerRepresentable {
         config.applicationNameForUserAgent = "Bootbox-Host"
         config.suppressesIncrementalRendering = false
         config.defaultWebpagePreferences.allowsContentJavaScript = true
+        // The emulator needs WebKit's JIT: never let the page land in a hardened, interpreter-only
+        // "enhanced security" WebContent process (iPadOS 26.4+). This is the default; set explicitly.
+        if #available(iOS 26.4, *) { config.defaultWebpagePreferences.securityRestrictionMode = .none }
         config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
         config.setValue(true, forKey: "allowUniversalAccessFromFileURLs")
 

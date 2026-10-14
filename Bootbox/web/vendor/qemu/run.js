@@ -274,10 +274,14 @@
         const ini = +(Module.INITIAL_MEMORY || ((src.match(/INITIAL_MEMORY"\]\|\|(\d+)/) || [])[1]) || 0);
         const mx = src.match(/maximum:(\d+|INITIAL_MEMORY\/65536),shared:true/);
         if (ini && mx) {
-          const pages = ini / 65536, maxPages = /^INITIAL/.test(mx[1]) ? pages : +mx[1];
+          const base = ini / 65536, maxPages = /^INITIAL/.test(mx[1]) ? base : +mx[1];
+          // opts.initialMemoryMB: start the memory that big, so it never has to grow while the guest
+          // boots (untouched pages cost nothing). Falls back to the engine's own size if refused.
+          let pages = Math.min(maxPages, Math.max(base, Math.ceil((+opts.initialMemoryMB || 0) * 16)));
           for (let i = 0; ; i++) {
             try { Module.wasmMemory = new WebAssembly.Memory({ initial: pages, maximum: maxPages, shared: true }); break; }
             catch (e) {
+              if (pages > base) { console.warn("[boot] " + (pages >> 4) + " MB up front refused; growing from " + (base >> 4) + " MB"); pages = base; continue; }
               if (i >= 40) throw e;                      // ~20 s: give up, the engine reports the error itself
               if (i === 0) say("64-bit: waiting for the previous guest's memory to be released…");
               // The old page's memory is garbage, but WebKit frees it only after a full GC, which it

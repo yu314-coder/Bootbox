@@ -20,6 +20,12 @@ final class SystemBridge: NSObject {
                 "memLimitMB": MemoryProbe.limitMB ?? 0,
                 "memProbeRunning": MemoryProbe.shared.isRunning
             ])
+        case "takeLastCrash":
+            // When the previous page's process died (0 = it didn't); cleared once read.
+            let d = UserDefaults.standard
+            let at = d.double(forKey: "BootboxLastPageCrash"), code = d.integer(forKey: "BootboxLastPageCrashCode")
+            d.removeObject(forKey: "BootboxLastPageCrash")
+            respond(true, ["at": at, "code": code])
         case "memLimit":
             // Waits (up to ~20 s) for the one-time probe if it is still running.
             MemoryProbe.shared.whenDone { respond(true, ["limitMB": $0 ?? 0, "how": MemoryProbe.lastHow]) }

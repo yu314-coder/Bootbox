@@ -23,15 +23,32 @@
   let tree = defaultTree();
 
   const VFS = {
+    // Saving must never happen before the disk has been read: startup code that writes to the VFS
+    // early used to trigger the debounced save while `tree` was still the empty default, overwriting
+    // the real disk (settings, files) - then load() read back the empty tree. Seen in the iOS app
+    // when a fresh web view started (Restart after the page died). If the disk can't be read or
+    // parsed, this session doesn't save at all rather than destroy it.
+    _loaded: false,
+    _readOnly: false,
     async load() {
-      try {
-        const raw = await Bridge.call("files", "read", { key: DISK_KEY });
-        if (raw) tree = JSON.parse(raw);
-      } catch (e) { /* fresh disk */ }
+      const t0 = Date.now();
+      for (let attempt = 1; attempt <= 3 && !this._loaded; attempt++) {
+        try {
+          const raw = await Bridge.call("files", "read", { key: DISK_KEY });
+          if (raw) {
+            try { tree = JSON.parse(raw); }
+            catch (e) { this._readOnly = true; console.warn("[vfs] disk unreadable (" + e + "): not saving this session"); }
+          }
+          this._loaded = true;
+          console.log("[vfs] loaded " + (raw ? raw.length + " bytes" : "nothing (fresh disk)") + " in " + (Date.now() - t0) + " ms");
+        } catch (e) { console.warn("[vfs] load attempt " + attempt + " failed after " + (Date.now() - t0) + " ms: " + e); }
+      }
+      if (!this._loaded) { this._loaded = true; this._readOnly = true; console.warn("[vfs] could not read the disk: not saving this session"); }
       return tree;
     },
     _saveTimer: null,
     save() {
+      if (!this._loaded || this._readOnly) return;   // see above
       // Debounced: coalesce bursts of writes into one host round-trip.
       clearTimeout(this._saveTimer);
       this._saveTimer = setTimeout(async () => {
