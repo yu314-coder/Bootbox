@@ -71,5 +71,10 @@ enum VMStorage {
     /// them any more, so they are only dead weight in the imports folder (~1 GB each).
     private static let supersededPacks: Set<String> = [
         "qemu-android64-warm-2163449947.data.gz",   // Android v3, single-core (build 82-83) → v4 quad-core
+        "qemu-android64-warm-2163449947.data",
+        "qemu-desktop7-rootfs-711887616.data.gz",   // desktop v7 (twm) → v8 openbox (build 93)
+        "qemu-desktop7-rootfs-711887616.data",      //   expanded form (lazy packs, build 87+)
+        "qemu-android64-warm4-2038076444.data.gz",  // Android v4 → v5 (build 93)
+        "qemu-android64-warm4-2038076444.data",
     ]
 }

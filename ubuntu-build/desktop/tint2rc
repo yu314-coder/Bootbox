@@ -1,0 +1,178 @@
+# Bootbox desktop v8 panel: [Apps] start button · pinned launchers · window list · clock.
+# Solid colours only (alpha is blended by tint2 itself, no compositor needed).
+
+# --- backgrounds -----------------------------------------------------------------------------------
+# 1 panel
+rounded = 0
+border_width = 1
+border_sides = T
+background_color = #0e1520 100
+border_color = #263142 100
+background_color_hover = #0e1520 100
+border_color_hover = #263142 100
+background_color_pressed = #0e1520 100
+border_color_pressed = #263142 100
+
+# 2 window button (normal)
+rounded = 6
+border_width = 0
+background_color = #ffffff 0
+border_color = #ffffff 0
+background_color_hover = #ffffff 9
+border_color_hover = #ffffff 0
+background_color_pressed = #ffffff 16
+border_color_pressed = #ffffff 0
+
+# 3 window button (active)
+rounded = 6
+border_width = 1
+border_sides = B
+background_color = #3d8bfd 22
+border_color = #3d8bfd 100
+background_color_hover = #3d8bfd 32
+border_color_hover = #3d8bfd 100
+background_color_pressed = #3d8bfd 42
+border_color_pressed = #3d8bfd 100
+
+# 4 start button
+rounded = 7
+border_width = 0
+background_color = #3d8bfd 100
+border_color = #3d8bfd 100
+background_color_hover = #5b9dff 100
+border_color_hover = #5b9dff 100
+background_color_pressed = #2c6fd6 100
+border_color_pressed = #2c6fd6 100
+
+# 5 launcher icon
+rounded = 7
+border_width = 0
+background_color = #ffffff 0
+border_color = #ffffff 0
+background_color_hover = #ffffff 10
+border_color_hover = #ffffff 0
+background_color_pressed = #ffffff 18
+border_color_pressed = #ffffff 0
+
+# 6 tooltip
+rounded = 5
+border_width = 1
+background_color = #161e2b 100
+border_color = #2b3646 100
+background_color_hover = #161e2b 100
+border_color_hover = #2b3646 100
+background_color_pressed = #161e2b 100
+border_color_pressed = #2b3646 100
+
+# 7 launcher group (subtle pill behind the pinned apps)
+rounded = 8
+border_width = 0
+background_color = #ffffff 5
+border_color = #ffffff 0
+background_color_hover = #ffffff 5
+border_color_hover = #ffffff 0
+background_color_pressed = #ffffff 5
+border_color_pressed = #ffffff 0
+
+# --- panel -----------------------------------------------------------------------------------------
+panel_items = P:L:TC
+panel_size = 100% 46
+panel_margin = 0 0
+panel_padding = 8 5 8
+panel_background_id = 1
+panel_position = bottom center horizontal
+panel_layer = top
+panel_monitor = all
+panel_dock = 0
+wm_menu = 0
+panel_window_name = tint2
+strut_policy = follow_size
+autohide = 0
+disable_transparency = 1
+mouse_effects = 1
+mouse_hover_icon_asb = 100 0 12
+mouse_pressed_icon_asb = 100 0 0
+font_shadow = 0
+separator = new
+separator_background_id = 0
+separator_color = #263142 100
+separator_style = line
+separator_size = 1
+separator_padding = 2 8
+
+# --- start button ----------------------------------------------------------------------------------
+button = new
+button_icon = /usr/share/bootbox/icons/start.png
+button_text = Apps
+button_tooltip = All apps (or right-click the desktop)
+button_lclick_command = bootbox-menu
+button_rclick_command = bootbox-menu
+button_padding = 12 7 8
+button_background_id = 4
+button_centered = 1
+button_max_icon_size = 20
+button_font = DejaVu Sans Bold 10
+button_font_color = #ffffff 100
+
+# --- pinned apps -----------------------------------------------------------------------------------
+launcher_padding = 6 4 4
+launcher_background_id = 7
+launcher_icon_background_id = 5
+launcher_icon_size = 30
+launcher_icon_asb = 100 0 0
+launcher_tooltip = 1
+startup_notifications = 0
+launcher_item_app = /usr/share/bootbox-apps/terminal.desktop
+launcher_item_app = /usr/share/bootbox-apps/files.desktop
+launcher_item_app = /usr/share/bootbox-apps/dillo.desktop
+launcher_item_app = /usr/share/bootbox-apps/claude.desktop
+launcher_item_app = /usr/share/bootbox-apps/python.desktop
+
+# --- open windows ----------------------------------------------------------------------------------
+taskbar_mode = single_desktop
+taskbar_padding = 4 0 6
+taskbar_background_id = 0
+taskbar_active_background_id = 0
+taskbar_name = 0
+taskbar_hide_if_empty = 0
+taskbar_distribute_size = 0
+taskbar_sort_order = none
+task_align = left
+task_text = 1
+task_icon = 1
+task_centered = 0
+task_maximum_size = 190 34
+task_padding = 8 4 6
+task_tooltip = 1
+task_font = DejaVu Sans 9
+task_font_color = #c8d3e3 100
+task_active_font_color = #ffffff 100
+task_iconified_font_color = #7d8aa0 100
+task_background_id = 2
+task_active_background_id = 3
+task_urgent_background_id = 3
+task_iconified_background_id = 2
+urgent_nb_of_blink = 8
+mouse_left = toggle_iconify
+mouse_middle = none
+mouse_right = close
+mouse_scroll_up = none
+mouse_scroll_down = none
+
+# --- clock -----------------------------------------------------------------------------------------
+time1_format = %H:%M
+time2_format = %a %d %b
+time1_font = DejaVu Sans Bold 10
+time2_font = DejaVu Sans 8
+clock_font_color = #dfe8f5 100
+clock_padding = 10 0
+clock_background_id = 0
+clock_tooltip = %A, %d %B %Y
+
+# --- tooltips --------------------------------------------------------------------------------------
+tooltip_show_timeout = 0.4
+tooltip_hide_timeout = 0.1
+tooltip_padding = 8 6
+tooltip_background_id = 6
+tooltip_font_color = #dfe8f5 100
+tooltip_font = DejaVu Sans 9

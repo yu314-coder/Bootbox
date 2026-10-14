@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Midnight Commander
+Comment=Two-pane file manager in a terminal
+Icon=/usr/share/bootbox/icons/mc.png
+Exec=bxterm -T 'Midnight Commander' -geometry 100x30 -e mc
+Terminal=false

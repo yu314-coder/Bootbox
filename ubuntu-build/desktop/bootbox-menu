@@ -1,0 +1,4 @@
+#!/bin/sh
+# Opens the openbox app menu at the pointer (the panel's Apps button / a desktop right-click).
+# openbox has no menu IPC, so press its W-space keybind (rc.xml) through XTEST.
+exec xdotool key --clearmodifiers super+space

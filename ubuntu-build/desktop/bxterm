@@ -1,0 +1,24 @@
+#!/bin/sh
+# Bootbox terminal: xterm with a bitmap font (Xft TrueType in a terminal is too slow on the emulated
+# CPU), a padded dark theme and a 16-colour palette. 9x15 is easier to read on the iPad than `fixed`
+# (6x13); xterm exits at once if the X server lacks a font, so fall back to `fixed` in that case.
+# -u8 keeps UTF-8 correct; -ls makes it a login shell so `help`, aliases and PATH are set.
+FONT=9x15
+if [ "$1" = "--font-fixed" ]; then FONT=fixed; shift; fi
+t0=$(date +%s)
+xterm -fn "$FONT" -u8 -ls -sl 4000 -b 10 -cr '#3d8bfd' \
+  -bg '#0b0f17' -fg '#d6e2f2' -T Terminal -geometry 90x26 \
+  -xrm 'XTerm*scrollBar: false' -xrm 'XTerm*internalBorder: 10' -xrm 'XTerm*cursorBlink: false' \
+  -xrm 'XTerm*iconHint: /usr/share/bootbox/icons/terminal' \
+  -xrm 'XTerm*color0: #1b2433' -xrm 'XTerm*color8: #4b5a72' \
+  -xrm 'XTerm*color1: #ff6b6b' -xrm 'XTerm*color9: #ff8f8f' \
+  -xrm 'XTerm*color2: #7ad88a' -xrm 'XTerm*color10: #9be6a8' \
+  -xrm 'XTerm*color3: #f2c66d' -xrm 'XTerm*color11: #f7d895' \
+  -xrm 'XTerm*color4: #5b9dff' -xrm 'XTerm*color12: #8bb9ff' \
+  -xrm 'XTerm*color5: #c792ea' -xrm 'XTerm*color13: #dab4f4' \
+  -xrm 'XTerm*color6: #5fd3e6' -xrm 'XTerm*color14: #8fe3f0' \
+  -xrm 'XTerm*color7: #c8d3e3' -xrm 'XTerm*color15: #ffffff' \
+  "$@"
+rc=$?
+[ "$rc" -ne 0 ] && [ $(( $(date +%s) - t0 )) -lt 10 ] && exec "$0" --font-fixed "$@"
+exit "$rc"

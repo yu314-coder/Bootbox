@@ -75,12 +75,14 @@
     stats.files.push(st);
     const cache = new Map();     // chunk index -> clean bytes (Map order = LRU)
     const dirty = new Map();     // chunk index -> privately written bytes (never evicted)
+    let packEnd = size;          // bytes still backed by the pack (a truncate can lower it)
     const chunk = (ci) => {
       let c = dirty.get(ci);
       if (c) return c;
       c = cache.get(ci);
       if (c) { cache.delete(ci); cache.set(ci, c); return c; }
-      const s = ci * CHUNK, e = Math.min(size, s + CHUNK);
+      const s = ci * CHUNK, e = Math.min(packEnd, s + CHUNK);
+      if (s >= packEnd) return new Uint8Array(CHUNK);   // grown past the pack (never written): zeros
       c = syncRange(url, base + s, base + e);
       stats.fetched += c.length;
       cache.set(ci, c);
@@ -101,27 +103,57 @@
         let done = 0;
         while (done < n) {
           const p = position + done, ci = Math.floor(p / CHUNK), o = p - ci * CHUNK;
-          const c = chunk(ci), k = Math.min(n - done, c.length - o);
-          dst.set(c.subarray(o, o + k), done);
+          const c = chunk(ci), k = Math.min(n - done, CHUNK - o);
+          const have = Math.max(0, Math.min(k, c.length - o));   // the pack's last chunk is short
+          if (have) dst.set(c.subarray(o, o + have), done);
+          if (have < k) dst.fill(0, done + have, done + k);       // bytes past it read as zeros
           done += k;
         }
         return n;
       },
+      // Writes may GROW the file: a qcow2 disk (Android's /data) appends newly allocated clusters at
+      // its end. Throwing there (as this did) failed every write that needed new space - the guest
+      // saw I/O errors on /data and apps hung. Grown bytes live only in `dirty` (zero-filled chunks).
       write(stream, buffer, offset, length, position) {
-        if (position + length > size) throw new Error("lazy pack: write past the end of " + size);
         const src = new Uint8Array(buffer.buffer, buffer.byteOffset + offset, length);
         let done = 0;
         while (done < length) {
           const p = position + done, ci = Math.floor(p / CHUNK), o = p - ci * CHUNK;
           let c = dirty.get(ci);
-          if (!c) { c = chunk(ci).slice(); dirty.set(ci, c); cache.delete(ci); }
-          const k = Math.min(length - done, c.length - o);
+          if (!c) {
+            c = new Uint8Array(CHUNK);
+            c.set(chunk(ci).subarray(0, CHUNK));
+            dirty.set(ci, c); cache.delete(ci);
+          }
+          const k = Math.min(length - done, CHUNK - o);
           c.set(src.subarray(done, done + k), o);
           done += k;
         }
+        if (position + length > node.usedBytes) node.usedBytes = position + length;
         return length;
       },
+      allocate(stream, offset, length) {   // fallocate: just extend the logical size
+        if (offset + length > node.usedBytes) node.usedBytes = offset + length;
+      },
       mmap() { throw new Error("lazy pack: mmap is not supported"); },
+    });
+    // ftruncate must not fall through to MEMFS (it would allocate node.contents = the whole file).
+    const nops = node.node_ops;
+    node.node_ops = Object.assign({}, nops, {
+      setattr(n, attr) {
+        if (attr.size !== undefined && attr.size !== null) {
+          const sz = attr.size;
+          if (sz < node.usedBytes) {
+            if (sz < packEnd) { packEnd = sz; cache.clear(); }
+            for (const ci of [...dirty.keys()]) if (ci * CHUNK >= sz) dirty.delete(ci);
+            const tail = dirty.get(Math.floor(sz / CHUNK));
+            if (tail) tail.fill(0, sz % CHUNK);
+          }
+          node.usedBytes = sz;
+          attr = Object.assign({}, attr); delete attr.size;
+        }
+        return nops.setattr(n, attr);
+      },
     });
   }
 

@@ -1,0 +1,13 @@
+# Native-arch PREVIEW of the desktop look (Xvfb + screenshots) — not shipped. Build the art stage first:
+#   docker build --target wall -t bb-art -f Dockerfile.desktop .   then   docker build -f Dockerfile.deskpreview -t bb-deskprev .
+FROM alpine:3.20
+RUN apk add --no-cache xvfb openbox tint2 xterm font-misc-misc ttf-dejavu xdotool xwallpaper pcmanfm dillo \
+      adwaita-icon-theme imagemagick mc xsetroot >/dev/null 2>&1 && echo ok
+COPY --from=bb-art /icons/ /usr/share/bootbox/icons/
+COPY --from=bb-art /wallpaper.png /usr/share/bootbox-wallpaper.png
+COPY desktop/apps/ /usr/share/bootbox-apps/
+COPY desktop/openbox-theme/ /usr/share/themes/Bootbox/openbox-3/
+COPY desktop/rc.xml desktop/menu.xml /root/.config/openbox/
+COPY desktop/tint2rc /root/.config/tint2/tint2rc
+COPY desktop/bxterm desktop/bootbox-menu /usr/local/bin/
+RUN mkdir -p /root/.config/gtk-3.0 && printf '[Settings]\ngtk-application-prefer-dark-theme=1\ngtk-font-name=DejaVu Sans 10\n' > /root/.config/gtk-3.0/settings.ini

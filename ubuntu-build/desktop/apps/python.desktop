@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Python
+Comment=Python 3 REPL
+Icon=/usr/share/bootbox/icons/python.png
+Exec=bxterm -T Python -e python3
+Terminal=false

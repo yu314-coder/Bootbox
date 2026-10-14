@@ -37,8 +37,8 @@
     // least-recently-run blocks past it, and lowers the cap itself if the host refuses a compile.
     { id: "x64pw",     name: "Linux (Terminal)",  boot: "q64",
       base: "vendor/qemu-aload/", url: "", ram: 1536, tune: { max: 40000 } },
-    // Lightweight graphical desktop: its OWN image (no Wine, no browser — browsers freeze Xvnc under
-    // TCG). twm/tint2 + a terminal + mc file manager. Reuses the x86_64 engine (wasm shared from
+    // Lightweight graphical desktop: its OWN image (no Wine). openbox/tint2 (v8) + terminal, PCManFM,
+    // Dillo, Claude Code, Python, mc. Reuses the x86_64 engine (wasm shared from
     // qemu-aload — no duplication). The image auto-starts the desktop, so boot64 sends no start-desktop.
     { id: "x64pwd",    name: "Linux (Desktop)",  boot: "q64",
       base: "vendor/qemu-desktop/", wasm: "../qemu-aload/qemu-system-x86_64.wasm", url: "", ram: 1536, gui: true,
@@ -82,20 +82,19 @@
         name: "qemu-aarch64-rootfs-265519785.data.gz", mb: 57, size: 60000998 },
     ] },
     "vendor/qemu-desktop/": { files: [   // x86_64 engine shared from qemu-aload; only the rootfs downloads
-      // desktop v7 (build 77): polished — bottom app-launcher dock (no Execute-file popups),
-      // clean wallpaper, pure-ASCII help, tint2 properly docked, twm OpaqueMove; twm (renders,
-      // unlike openbox) + multi-core + cursor fix all kept.
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v7/qemu-desktop7-rootfs.data.gz",
-        name: "qemu-desktop7-rootfs-711887616.data.gz", mb: 240, size: 240447093 },
+      // desktop v8 (build 93): openbox + flat dark theme + tint2 panel (Apps menu, pinned apps, window
+      // list, clock) - replaces twm, which asked you to click to place every window (the stray grid).
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v8/qemu-desktop8-rootfs.data.gz",
+        name: "qemu-desktop8-rootfs-693375940.data.gz", mb: 223, size: 233310496 },
     ] },
     // Android is a full AOSP x86_64 userspace on Bootbox's QEMU guest kernel.
     // The rootfs is download-on-demand; the x86_64 engine is shared with Linux.
     "vendor/qemu-android/": { files: [
-      // v4 (build 84): QUAD-CORE warm snapshot (-smp 4 + MTTCG; nproc=4, ~3.3x parallel throughput,
-      // cold Settings launch 605s → 53s with the engine tune below), LZ4-HC rootfs (-136 MB unpacked RAM),
-      // animations off, no lock screen, immersive-mode confirmation pre-acknowledged.
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v4/qemu-android64-warm4-2038076444.data.gz",
-        name: "qemu-android64-warm4-2038076444.data.gz", mb: 901, size: 944421011 },
+      // v5 (build 93): the VNC bridge exposes a plain touchscreen (protocol B) + a separate keyboard,
+      // the visible apps and System UI are AOT-compiled, idle CPU wasters (BT HAL, traceur, print
+      // spooler) are off. Same quad-core layout and settings as v4.
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v5/qemu-android64-warm5-2161126625.data.gz",
+        name: "qemu-android64-warm5-2161126625.data.gz", mb: 956, size: 1002880222 },
     ] },
   };
   // Ensure the guest's rootfs is present before booting: trigger the native download (BinaryBridge
@@ -996,15 +995,19 @@
             // simulator and in macOS WebKit: some engine feature trips the device's WebKit. Each time a
             // 64-bit boot's page crashes before it has run 75 s, the next boot turns one more of the
             // newer features off; the first level that runs is kept (and logged).
+            // q64safe2 (build 93): level 0 on the iPad = NESTED TB chaining (chain=2: call_indirect +
+            // return, no wasm tail calls - the tail-call form killed the page on iPadOS 27.2, TestFlight
+            // 90). New key so a device parked on the old ladder's "no tail calls" level tries it once;
+            // if it crashes too, the next boot steps down to "no TB chaining" = the build 91 setup.
             const SAFE_LEVELS = [
               { name: "full speed" },
-              { name: "no wasm tail calls (the iOS default now)", tune: { chain: 0 } },
-              { name: "no tail calls, no SIMD float inlining", tune: { chain: 0, fpinline: 0 } },
-              { name: "no tail calls/float inlining/register locals", tune: { chain: 0, fpinline: 0, regloc: 0 } },
+              { name: "no TB chaining", tune: { chain: 0 } },
+              { name: "no TB chaining, no SIMD float inlining", tune: { chain: 0, fpinline: 0 } },
+              { name: "no chaining/float inlining/register locals", tune: { chain: 0, fpinline: 0, regloc: 0 } },
               { name: "the above + fixed-size memory, fewer compiled blocks", tune: { chain: 0, fpinline: 0, regloc: 0, max: 8000 }, presize: true },
               { name: "interpreter only (slow)", tune: { chain: 0, fpinline: 0, regloc: 0, max: 8000, jit: 1000000000 }, presize: true },
             ];
-            let safe = cfg().q64safe || { level: 0 };
+            let safe = cfg().q64safe2 || { level: 0 };
             try {
               const lc = (window.Bridge && Bridge.onDevice) ? await Bridge.call("system", "takeLastCrash") : null;
               console.log("[safe] last page crash " + JSON.stringify(lc) + ", previous boot " + JSON.stringify(safe));
@@ -1015,17 +1018,17 @@
             } catch (e) {}
             const level = SAFE_LEVELS[Math.min(SAFE_LEVELS.length - 1, safe.level || 0)];
             safe = { level: safe.level || 0, startedAt: Date.now(), ok: false };
-            setCfg({ q64safe: safe });
+            setCfg({ q64safe2: safe });
             console.log("[safe] engine level " + safe.level + ": " + level.name);
             if (safe.level) { try { status.textContent += " Safer engine settings: " + level.name + "."; } catch (e) {} }
             setTimeout(() => {
-              const s2 = cfg().q64safe || {};
-              if (s2.startedAt === safe.startedAt) { s2.ok = true; setCfg({ q64safe: s2 }); console.log("[safe] level " + safe.level + " has run 75 s — keeping it"); }
+              const s2 = cfg().q64safe2 || {};
+              if (s2.startedAt === safe.startedAt) { s2.ok = true; setCfg({ q64safe2: s2 }); console.log("[safe] level " + safe.level + " has run 75 s — keeping it"); }
             }, 75000);
             // Wasm tail calls (the engine's TB-to-TB chaining) crash the page on the iPad (iPadOS 27.2
-            // WebKit, arm64e) the moment the guest starts running - found by the ladder above on the
-            // user's iPad Air M3 (TestFlight 90: level 1 "no wasm tail calls" fixed it). Off on iOS.
-            const iosBase = (window.Bridge && Bridge.onDevice) ? { chain: 0 } : {};
+            // WebKit, arm64e) the moment the guest starts running - found by the ladder on the user's
+            // iPad Air M3 (TestFlight 90). On iOS the engine chains with ordinary nested calls instead.
+            const iosBase = (window.Bridge && Bridge.onDevice) ? { chain: 2 } : {};
             const tune = Object.assign({}, g.tune || {}, iosBase, level.tune || {});
             if (g.tune && g.tune.max && level.tune && level.tune.max) tune.max = Math.min(g.tune.max, level.tune.max);
             await window.QEMU_WASM.run({
@@ -1055,7 +1058,7 @@
                   try { panel64.showGui(); } catch (e) {}   // the desktop IS the GUI → connect immediately
                   status.textContent = g.android
                     ? "Running — full Android 12 AOSP (64-bit x86_64) in QEMU. This is a warm-boot image: it resumes to the home screen in a few seconds (no cold boot). Touch the screen directly and use ⌨ Type for text."
-                    : "Running — full-screen x86_64 Linux desktop (terminal + mc file manager). It comes up ~20–40s after boot; tap a window, then ⌨ Type to use the keyboard.";
+                    : "Running — x86_64 Linux desktop. The panel appears ~1–2 min after the first boot. Tap Apps (bottom-left) or right-click/long-press the desktop for programs; ⌨ Type or the Magic Keyboard types into the focused window.";
                 } else {        // [ terminal | GUI ]: blank GUI until you launch an X program from the terminal
                   // LAZY DISPLAY (power/heat): do NOT connect noVNC on boot — a connected viewer renders
                   // the (blank) Xvnc framebuffer continuously = wasted CPU/GPU even with nothing on screen.
@@ -1261,11 +1264,17 @@
             ArrowUp: 0xff52, ArrowDown: 0xff54, ArrowLeft: 0xff51, ArrowRight: 0xff53 };
           const guiRfb = () => { const r = self.__rfb; return (r && r._rfbConnectionState === "connected") ? r : null; };
           const guiOn = () => { try { return !!(panel64Ref && panel64Ref.isGuiActive && panel64Ref.isGuiActive() && guiRfb()); } catch (e) { return false; } };
+          // Android's VNC bridge turns a keysym into the bare Linux key ('A' -> KEY_A, '!' -> KEY_1),
+          // so capitals/symbols need a real Shift around them there (X servers add Shift themselves).
+          const SHIFTED = "ABCDEFGHIJKLMNOPQRSTUVWXYZ~!@#$%^&*()_+{}|:\"<>?";
           const guiKey = (ks, ctrl) => {
             const r = guiRfb(); if (!r || !ks) return;
+            const shift = !!(r._sock && r._sock.__bbTouch) && ks < 0x80 && SHIFTED.indexOf(String.fromCharCode(ks)) >= 0;
             try {
               if (ctrl) r.sendKey(0xffe3, "ControlLeft", true);     // hold Ctrl_L
+              if (shift) r.sendKey(0xffe1, "ShiftLeft", true);
               r.sendKey(ks, null, true); r.sendKey(ks, null, false);
+              if (shift) r.sendKey(0xffe1, "ShiftLeft", false);
               if (ctrl) r.sendKey(0xffe3, "ControlLeft", false);
             } catch (e) {}
           };

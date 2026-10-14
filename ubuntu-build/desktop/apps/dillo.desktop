@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Web (Dillo)
+Comment=Light web browser
+Icon=/usr/share/bootbox/icons/browser.png
+Exec=dillo https://example.com
+Terminal=false

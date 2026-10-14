@@ -238,7 +238,9 @@
       // regloc = TCG registers as wasm locals instead of globals (build 86+ engine; on by default).
       const t = opts.tune || {};
       let tune = (t.jit ? "jit=" + (t.jit | 0) + "\n" : "") + (t.max ? "max=" + (t.max | 0) + "\n" : "");
-      if (t.chain !== 0 && wasmTailCalls()) tune += "chain=1\n";
+      // chain=2 = the same chaining through ordinary nested calls (no tail calls needed; build 93 engine)
+      if (t.chain === 2) tune += "chain=2\n" + (t.chainmax ? "chainmax=" + (t.chainmax | 0) + "\n" : "");
+      else if (t.chain !== 0 && wasmTailCalls()) tune += "chain=1\n";
       if (t.fpinline === 0) tune += "fpinline=0\n";
       if (t.regloc === 0) tune += "regloc=0\n";
       if (tune) mod.FS.writeFile("/bootbox-tune", tune);
@@ -501,11 +503,44 @@
       };
       host.addEventListener("touchend", end, opt);
       host.addEventListener("touchcancel", end, opt);
-      // A mouse/trackpad pointer just hovering does nothing on a touchscreen - don't make the guest
-      // process a stream of empty pointer events for it. Clicks and click-drags still go through.
-      host.addEventListener("mousemove", function (e) {
-        if (e.target === cv && !e.buttons) e.stopPropagation();
+      // Magic Keyboard trackpad / mouse: handled here too (pointer events), not by noVNC, so both
+      // input paths drive the same guest finger: click = tap, click-drag = swipe, secondary click
+      // = Back (Escape -> KEY_ESC, as scrcpy does). Hovering sends nothing - a touchscreen has no
+      // hover, and every empty pointer event costs the guest CPU. noVNC's own mouse handlers are
+      // kept out of it so nothing is sent twice.
+      let mouseId = null;
+      host.addEventListener("pointerdown", function (e) {
+        if (e.pointerType !== "mouse" || e.target !== cv) return;
+        own(e);
+        try { r.focus({ preventScroll: true }); } catch (x) {}
+        if (e.button === 2) {
+          try { r.sendKey(0xff1b, "Escape", true); r.sendKey(0xff1b, "Escape", false); } catch (x) {}
+          return;
+        }
+        if (e.button !== 0 || mouseId !== null || finger.down) return;
+        mouseId = e.pointerId;
+        try { cv.setPointerCapture(e.pointerId); } catch (x) {}
+        finger.press(fbPoint(r, e.clientX, e.clientY));
       }, true);
+      host.addEventListener("pointermove", function (e) {
+        if (e.pointerType !== "mouse") return;
+        if (e.pointerId === mouseId) { own(e); finger.move(fbPoint(r, e.clientX, e.clientY)); }
+      }, true);
+      const mouseEnd = function (e) {
+        if (e.pointerType !== "mouse" || e.pointerId !== mouseId) return;
+        own(e);
+        mouseId = null;
+        finger.release(e.type === "pointercancel" ? null : fbPoint(r, e.clientX, e.clientY));
+      };
+      host.addEventListener("pointerup", mouseEnd, true);
+      host.addEventListener("pointercancel", mouseEnd, true);
+      for (const type of ["mousedown", "mouseup", "mousemove", "click", "dblclick", "contextmenu"]) {
+        host.addEventListener(type, function (e) {
+          if (e.target !== cv) return;
+          e.stopPropagation();
+          if (type === "contextmenu") e.preventDefault();
+        }, true);
+      }
       // Desktop mouse wheel (Mac browsers) -> the same finger-drag scroll the iPad trackpad gets.
       let wheelEnd = 0;
       host.addEventListener("wheel", function (e) {
@@ -532,7 +567,8 @@
           pan = null;
           if (!r || r._rfbConnectionState !== "connected" || !r._canvas) return false;
           const el = document.elementFromPoint(x, y);
-          if (!el || !r._target.contains(el)) return false;
+          // (noVNC lays a page-wide capture <div> over everything while a mouse button is held)
+          if (!el || !(r._target.contains(el) || el.id === "noVNC_mouse_capture_elem")) return false;
           const b = r._canvas.getBoundingClientRect();
           if (x < b.left || x >= b.right || y < b.top || y >= b.bottom) return false;
           pan = { r, x, y, acc: 0, touch: !!(opts.touchGuest && r.__bbFinger) };
@@ -564,6 +600,14 @@
         return true;
       } catch (e) { pan = null; return false; }
     };
+    let lastPointerType = "touch";
+    function cursorSwitch(e) {
+      if (e && e.pointerType) lastPointerType = e.pointerType;
+      try {
+        const c = rfb && rfb._cursor && rfb._cursor._canvas;
+        if (c) c.style.display = (opts.touchGuest || lastPointerType === "mouse") ? "none" : "";
+      } catch (x) {}
+    }
     async function connectGui(guiHost, statusCb) {
       statusCb = statusCb || function () {};
       lastGuiHost = guiHost; lastStatusCb = statusCb;
@@ -590,6 +634,15 @@
           const d = rfb._display, flip = d.flip;
           d.flip = function () { self.__guiFrameT = Date.now(); return flip.apply(this, arguments); };
         } catch (e) {}
+        // One pointer on screen: noVNC draws the guest's cursor as its own element on iPad (it has
+        // no CSS cursors there), which trailed the Magic Keyboard pointer as a second, lagging arrow.
+        // Hide it while a trackpad/mouse is in use, show it again on touch; Android has none.
+        if (!guiHost.__bbCursorSwitch) {
+          guiHost.__bbCursorSwitch = true;
+          guiHost.addEventListener("pointerdown", cursorSwitch, true);
+          guiHost.addEventListener("pointermove", cursorSwitch, true);
+        }
+        cursorSwitch();
         if (opts.touchGuest) {
           installPointerDither(RFB);
           try { rfb._sock.__bbTouch = { r: rfb, x: -1, y: -1 }; } catch (e) {}

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Claude Code
+Comment=Anthropic's coding agent in a terminal
+Icon=/usr/share/bootbox/icons/claude.png
+Exec=bxterm -T 'Claude Code' -geometry 100x30 -e sh -lc claude
+Terminal=false

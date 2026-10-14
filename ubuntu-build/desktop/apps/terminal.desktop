@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Terminal
+Comment=Shell (pip, apk, git…)
+Icon=/usr/share/bootbox/icons/terminal.png
+Exec=bxterm
+Terminal=false

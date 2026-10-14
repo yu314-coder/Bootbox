@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Files
+Comment=PCManFM file manager
+Icon=/usr/share/bootbox/icons/files.png
+Exec=pcmanfm
+Terminal=false

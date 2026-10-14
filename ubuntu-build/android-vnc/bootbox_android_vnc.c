@@ -30,7 +30,8 @@
 #define HWC_SOCKET "/ipc/hwcomposer.sock"
 
 static rfbScreenInfoPtr screen;
-static int input_fd = -1;
+static int input_fd = -1;     /* touchscreen */
+static int keyboard_fd = -1;
 static int display_width = DEFAULT_WIDTH;
 static int display_height = DEFAULT_HEIGHT;
 static int touch_active;
@@ -53,8 +54,8 @@ static int env_int(const char *name, int fallback, int min, int max) {
     return (int)parsed;
 }
 
-static int send_input_event(uint16_t type, uint16_t code, int32_t value) {
-    if (input_fd < 0) return -1;
+static int send_to(int fd, uint16_t type, uint16_t code, int32_t value) {
+    if (fd < 0) return -1;
     struct input_event event;
     memset(&event, 0, sizeof(event));
     event.type = type;
@@ -62,9 +63,13 @@ static int send_input_event(uint16_t type, uint16_t code, int32_t value) {
     event.value = value;
     ssize_t written;
     do {
-        written = write(input_fd, &event, sizeof(event));
+        written = write(fd, &event, sizeof(event));
     } while (written < 0 && errno == EINTR);
     return written == (ssize_t)sizeof(event) ? 0 : -1;
+}
+
+static int send_input_event(uint16_t type, uint16_t code, int32_t value) {
+    return send_to(input_fd, type, code, value);
 }
 
 static void sync_input(void) {
@@ -80,7 +85,7 @@ static int configure_abs(int fd, unsigned int code, int min, int max) {
     return ioctl(fd, UI_ABS_SETUP, &setup);
 }
 
-static int expose_input_event_node(void) {
+static int expose_input_event_node(const char *device_name) {
     DIR *directory = opendir("/sys/class/input");
     if (!directory) return -1;
     int result = -1;
@@ -95,7 +100,7 @@ static int expose_input_event_node(void) {
         fgets(name, sizeof(name), name_file);
         fclose(name_file);
         name[strcspn(name, "\r\n")] = 0;
-        if (strcmp(name, "Bootbox QEMU Touchscreen") != 0) continue;
+        if (strcmp(name, device_name) != 0) continue;
 
         snprintf(path, sizeof(path), "/sys/class/input/%s/dev", entry->d_name);
         FILE *dev_file = fopen(path, "r");
@@ -127,15 +132,15 @@ static int open_input_device(void) {
         return -1;
     }
 
+    /* A plain single-finger touchscreen: only BTN_TOUCH/BTN_TOOL_FINGER. Declaring every key here
+       (as before) made Android classify it as keyboard+dpad+gamepad+stylus (source 0x5703) and
+       report hover events after each touch; keys now go to a separate keyboard device. */
     ioctl(fd, UI_SET_PROPBIT, INPUT_PROP_DIRECT);
     ioctl(fd, UI_SET_EVBIT, EV_SYN);
     ioctl(fd, UI_SET_EVBIT, EV_KEY);
     ioctl(fd, UI_SET_EVBIT, EV_ABS);
-    ioctl(fd, UI_SET_EVBIT, EV_REL);
-    ioctl(fd, UI_SET_RELBIT, REL_WHEEL);
     ioctl(fd, UI_SET_KEYBIT, BTN_TOUCH);
     ioctl(fd, UI_SET_KEYBIT, BTN_TOOL_FINGER);
-    for (int key = 1; key <= KEY_MAX; ++key) ioctl(fd, UI_SET_KEYBIT, key);
     ioctl(fd, UI_SET_ABSBIT, ABS_X);
     ioctl(fd, UI_SET_ABSBIT, ABS_Y);
     ioctl(fd, UI_SET_ABSBIT, ABS_MT_SLOT);
@@ -168,8 +173,34 @@ static int open_input_device(void) {
     }
 
     sleep_ms(250);
-    if (expose_input_event_node() < 0) {
+    if (expose_input_event_node("Bootbox QEMU Touchscreen") < 0) {
         fprintf(stderr, "bootbox-vnc: warning: Android input node was not exposed\n");
+    }
+    return fd;
+}
+
+static int open_keyboard_device(void) {
+    int fd = open("/dev/uinput", O_WRONLY | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0) return -1;
+    ioctl(fd, UI_SET_EVBIT, EV_SYN);
+    ioctl(fd, UI_SET_EVBIT, EV_KEY);
+    for (int key = 1; key < BTN_MISC; ++key) ioctl(fd, UI_SET_KEYBIT, key);
+
+    struct uinput_setup setup;
+    memset(&setup, 0, sizeof(setup));
+    setup.id.bustype = BUS_VIRTUAL;
+    setup.id.vendor = 0x18d1;
+    setup.id.product = 0x4e12;
+    setup.id.version = 1;
+    snprintf(setup.name, UINPUT_MAX_NAME_SIZE, "Bootbox QEMU Keyboard");
+    if (ioctl(fd, UI_DEV_SETUP, &setup) < 0 || ioctl(fd, UI_DEV_CREATE) < 0) {
+        fprintf(stderr, "bootbox-vnc: cannot create uinput keyboard: %s\n", strerror(errno));
+        close(fd);
+        return -1;
+    }
+    sleep_ms(250);
+    if (expose_input_event_node("Bootbox QEMU Keyboard") < 0) {
+        fprintf(stderr, "bootbox-vnc: warning: Android keyboard node was not exposed\n");
     }
     return fd;
 }
@@ -248,8 +279,9 @@ static void keyboard_event(rfbBool down, rfbKeySym key, rfbClientPtr client) {
     (void)client;
     int linux_key = keysym_to_linux(key);
     if (linux_key < 0) return;
-    send_input_event(EV_KEY, (uint16_t)linux_key, down ? 1 : 0);
-    sync_input();
+    int fd = keyboard_fd >= 0 ? keyboard_fd : input_fd;
+    send_to(fd, EV_KEY, (uint16_t)linux_key, down ? 1 : 0);
+    send_to(fd, EV_SYN, SYN_REPORT, 0);
 }
 
 static void pointer_event(int button_mask, int x, int y, rfbClientPtr client) {
@@ -260,6 +292,7 @@ static void pointer_event(int button_mask, int x, int y, rfbClientPtr client) {
     if (y >= display_height) y = display_height - 1;
 
     int pressed = button_mask & 1;
+    if (!pressed && !touch_active) return;   /* hover: a touchscreen has nothing to report */
     send_input_event(EV_ABS, ABS_MT_SLOT, 0);
     if (pressed && !touch_active) {
         touch_tracking_id = (touch_tracking_id + 1) & 0xffff;
@@ -278,9 +311,6 @@ static void pointer_event(int button_mask, int x, int y, rfbClientPtr client) {
         send_input_event(EV_KEY, BTN_TOOL_FINGER, 0);
     }
     touch_active = pressed;
-
-    if (button_mask & 8) send_input_event(EV_REL, REL_WHEEL, 1);
-    if (button_mask & 16) send_input_event(EV_REL, REL_WHEEL, -1);
     sync_input();
 }
 
@@ -388,6 +418,7 @@ static void relay_frames(void) {
 static void handle_signal(int signal_number) {
     (void)signal_number;
     if (input_fd >= 0) ioctl(input_fd, UI_DEV_DESTROY);
+    if (keyboard_fd >= 0) ioctl(keyboard_fd, UI_DEV_DESTROY);
     _exit(0);
 }
 
@@ -401,6 +432,7 @@ int main(int argc, char **argv) {
 
     input_fd = open_input_device();
     if (input_fd < 0) return 1;
+    keyboard_fd = open_keyboard_device();   /* optional: keys fall back to the touchscreen fd */
 
     screen = rfbGetScreen(&argc, argv, display_width, display_height, 8, 3, 4);
     if (!screen) return 1;
