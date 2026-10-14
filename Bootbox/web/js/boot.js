@@ -42,19 +42,6 @@
     },
     start() {
       interrupted = true; // stop any pending POST handoff
-      // The app reloads into a fresh web view with ?bbnote=crash when iOS killed the page (almost
-      // always memory). Say so instead of silently landing back on the menu.
-      try {
-        if (/[?&]bbnote=crash\b/.test(location.search)) {
-          const n = document.createElement("div");
-          n.textContent = "Bootbox restarted: iPadOS stopped the emulator page (it most likely ran out of memory). Try fewer cores or less RAM, or close other apps.";
-          n.style.cssText = "position:fixed;left:12px;right:12px;top:12px;z-index:99999;padding:12px 14px;border-radius:10px;background:#7a1f1f;color:#fff;font:600 14px/1.4 -apple-system,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,.4)";
-          n.onclick = () => n.remove();
-          document.body.appendChild(n);
-          setTimeout(() => n.remove(), 15000);
-          console.warn("[boot] restarted after the WebContent process was terminated");
-        }
-      } catch (e) {}
       document.querySelectorAll(".screen").forEach(s => s.classList.add("hidden"));
       try { if (Kernel.nvram.sound) chime(); } catch (e) {}
       try {
@@ -67,7 +54,10 @@
           try { sessionStorage.removeItem("bootbox.reboot"); } catch (e) {}
           try { localStorage.removeItem("bootbox.reboot"); } catch (e) {}
           let p; try { p = JSON.parse(reboot); } catch (e) { p = { guest: reboot }; }
-          Bootbox.runVM({ guest: p.guest, cores: p.cores, ram: p.ram, autoboot: true });
+          // Only a reboot that just happened: a stale note (e.g. left behind when the page was killed)
+          // must never auto-start a guest at a later launch.
+          if (p && p.t && Date.now() - p.t < 60000) Bootbox.runVM({ guest: p.guest, cores: p.cores, ram: p.ram, autoboot: true });
+          else Bootbox.showBootMenu();
         }
         // Land on the boot manager ("select operating system"). nvram.bootGuest
         // skips the menu and boots a fixed guest straight away.

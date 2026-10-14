@@ -386,7 +386,14 @@
           if (guiMsg === null || !guiMsgCb) return;
           const line = guiMsg + guiNote();
           guiMsgCb(line);
-          if (++n % 10 === 0) console.log("[gui] " + line);   // leaves a trail in the app log
+          // Leave a trail in the app log (every 2 s for the first minute, then every 10 s): if iPadOS
+          // ends the page during boot, the log shows how far it got and how big the engine was.
+          n++;
+          if (n <= 60 ? n % 2 === 0 : n % 10 === 0) {
+            let wasm = "?";
+            try { wasm = Math.round(self.Module.wasmMemory.buffer.byteLength / 1048576) + " MB"; } catch (e) {}
+            console.log("[gui] " + line + " engine memory " + wasm);
+          }
         }, 1000);
       }
     }

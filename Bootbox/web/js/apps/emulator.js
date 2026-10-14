@@ -748,7 +748,7 @@
             if (window.__q64Live) {
               // Carry cores+RAM in the reboot payload (not just via the debounced config save) so the new
               // selection is applied even if the page reloads before VFS's 250 ms save flushes.
-              const reboot = JSON.stringify({ guest: g.id, cores: +coresSel.value || undefined, ram: +ramInput.value || undefined });
+              const reboot = JSON.stringify({ guest: g.id, cores: +coresSel.value || undefined, ram: +ramInput.value || undefined, t: Date.now() });
               try { sessionStorage.setItem("bootbox.reboot", reboot); } catch (e) {}
               try { localStorage.setItem("bootbox.reboot", reboot); } catch (e) {}   // survives a fresh web view
               try { status.textContent = "Rebooting to apply new settings…"; } catch (e) {}
@@ -966,6 +966,16 @@
             let ramMB = Math.min(g.maxRam || 1536, Math.max(g.minRam || 64, +ramInput.value || g.ram || 1536));
             let memNote = "";
             try {
+              // The app measures it once per iOS version, right after launch (~30 s). Don't compete
+              // with that measurement for memory: wait for it to finish.
+              if (window.Bridge && Bridge.onDevice) {
+                for (let i = 0; i < 60; i++) {
+                  const info = await Bridge.call("system", "info").catch(() => null);
+                  if (!info || !info.memProbeRunning) break;
+                  status.textContent = "Measuring how much memory this iPad gives the emulator (first launch only)… " + i + " s";
+                  await new Promise((r) => setTimeout(r, 1000));
+                }
+              }
               const ml = (window.Bridge && Bridge.onDevice) ? await Bridge.call("system", "memLimit") : null;
               const lim = (ml && +ml.limitMB) || 0;
               if (lim) {

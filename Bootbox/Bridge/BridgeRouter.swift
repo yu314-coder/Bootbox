@@ -12,8 +12,10 @@ final class BridgeRouter: NSObject, WKScriptMessageHandler, UIGestureRecognizerD
     weak var webView: WKWebView?
     /// Replaces the WKWebView with a brand-new one (set by WebHostView). See "freshReload" below.
     var onFreshReload: (() -> Void)?
-    /// Query string for the next page load (e.g. "bbnote=crash" after the WebContent process died).
+    /// Query string for the next page load.
     var nextLoadQuery: String?
+    /// The page's WebContent process died (argument: why, in words). WebHostView shows a stop screen.
+    var onPageDied: ((String) -> Void)?
     // Let our trackpad-scroll pan run alongside the WebView's own recognizers (don't steal touches).
     func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 
@@ -55,13 +57,30 @@ final class BridgeRouter: NSObject, WKScriptMessageHandler, UIGestureRecognizerD
     }
 
     // MARK: - WKNavigationDelegate
-    // iOS kills the WebContent process when it uses too much memory (a big guest can). The web view
-    // then just sits there blank/black. Log it and start over in a fresh web view that tells the user
-    // what happened (boot.js shows the ?bbnote=crash banner).
+    // When the page's WebContent process dies, the web view just sits there blank. Don't hide it by
+    // reloading: log why and show a stop screen with the reason (WebHostView); the user restarts.
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
-        BootLog.native("WebContent process terminated (iOS stopped the page; usually memory) — reloading")
-        nextLoadQuery = "bbnote=crash"
-        DispatchQueue.main.async { [weak self] in self?.onFreshReload?() }
+        pageDied(reasonCode: -1)
+    }
+    // WebKit's (non-public) variant of the callback that says WHY: 0 memory limit, 1 CPU limit,
+    // 2 requested by the app, 3 crash (newer WebKit may add more). When implemented, WebKit calls
+    // this instead of the public one. Diagnostic only - remove before an App Store submission.
+    @objc(_webView:webContentProcessDidTerminateWithReason:)
+    func webContentProcessDidTerminate(_ webView: WKWebView, reason: Int) {
+        pageDied(reasonCode: reason)
+    }
+    private func pageDied(reasonCode: Int) {
+        let why: String
+        switch reasonCode {
+        case 0: why = "it went over WebKit's memory limit"
+        case 1: why = "it went over WebKit's CPU limit"
+        case 2: why = "the app asked for it"
+        case 3: why = "the page's process crashed"
+        case -1: why = "no reason given"
+        default: why = "WebKit reason code \(reasonCode)"
+        }
+        BootLog.native("WebContent process terminated: \(why) (code \(reasonCode), app footprint \(Self.footprintMB()) MB)")
+        DispatchQueue.main.async { [weak self] in self?.onPageDied?(why) }
     }
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         BootLog.native("page load failed: \(error.localizedDescription)")

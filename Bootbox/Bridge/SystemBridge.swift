@@ -17,7 +17,8 @@ final class SystemBridge: NSObject {
                 "osVersion": d.systemVersion,
                 "ram": ProcessInfo.processInfo.physicalMemory,
                 "cores": ProcessInfo.processInfo.processorCount,
-                "memLimitMB": MemoryProbe.limitMB ?? 0
+                "memLimitMB": MemoryProbe.limitMB ?? 0,
+                "memProbeRunning": MemoryProbe.shared.isRunning
             ])
         case "memLimit":
             // Waits (up to ~20 s) for the one-time probe if it is still running.
@@ -143,7 +144,8 @@ enum BootLog {
 /// the last step reached is the limit. Takes a few seconds at launch; the visible app is untouched.
 final class MemoryProbe: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
     static let shared = MemoryProbe()
-    private static let keyMB = "BootboxWebMemLimitMB", keyOS = "BootboxWebMemLimitOS"
+    // v2: slower steps + a 15 s hold at the peak, so a periodic memory check can't be outrun.
+    private static let keyMB = "BootboxWebMemLimitMB2", keyOS = "BootboxWebMemLimitOS2"
     static var lastHow = ""
     static var limitMB: Int? {
         let d = UserDefaults.standard
@@ -156,6 +158,7 @@ final class MemoryProbe: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
     private var lastMB = 0
     private var waiters: [(Int?) -> Void] = []
     private var running = false
+    var isRunning: Bool { running }
 
     func runIfNeeded() {
         guard Self.limitMB == nil, !running else { return }
@@ -191,20 +194,21 @@ final class MemoryProbe: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
         let js = """
         (async () => {
           const post = (m) => window.webkit.messageHandlers.probe.postMessage(m);
-          const STEP = 64;
+          const STEP = 128;
           let mem;
           try { mem = new WebAssembly.Memory({ initial: 0, maximum: 65536 }); }
           catch (e) { post({ done: 0, why: "no memory: " + e }); return; }
           let mb = 0;
+          const hold = async (why) => { post({ hold: mb }); await new Promise((r) => setTimeout(r, 15000)); post({ done: mb, why }); };
           while (mb < 6000) {
-            try { mem.grow(STEP * 16); } catch (e) { post({ done: mb, why: "grow refused" }); return; }
+            try { mem.grow(STEP * 16); } catch (e) { await hold("WebKit refused to grow wasm memory past this; held 15 s"); return; }
             const u8 = new Uint8Array(mem.buffer, mb * 1048576, STEP * 1048576);
             for (let i = 0; i < u8.length; i += 4096) u8[i] = 1;
             mb += STEP;
             post({ mb });
-            await new Promise((r) => setTimeout(r, 30));
+            await new Promise((r) => setTimeout(r, 500));
           }
-          post({ done: mb, why: "reached the probe cap" });
+          await hold("reached the probe cap; held 15 s");
         })();
         """
         wv.loadHTMLString("<!doctype html><meta charset=utf-8><body><script>\(js)</script></body>", baseURL: nil)
@@ -215,6 +219,8 @@ final class MemoryProbe: NSObject, WKScriptMessageHandler, WKNavigationDelegate 
         if let mb = body["mb"] as? Int {
             lastMB = mb
             if mb % 512 == 0 { BootLog.native("memory probe: \(mb) MB so far") }
+        } else if let mb = body["hold"] as? Int {
+            BootLog.native("memory probe: holding \(mb) MB for 15 s")
         } else if let done = body["done"] as? Int {
             finish(done, how: body["why"] as? String ?? "done")
         }

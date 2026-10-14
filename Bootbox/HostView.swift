@@ -51,6 +51,40 @@ final class KeyCaptureViewController: UIViewController {
         view.addSubview(wv)
     }
 
+    /// The page's process died: say so and stop, instead of silently starting over. "Restart" loads
+    /// a fresh web view (back to the boot menu).
+    private var diedView: UIView?
+    func showPageDied(_ why: String, restart: @escaping () -> Void) {
+        diedView?.removeFromSuperview()
+        let v = UIView(frame: view.bounds)
+        v.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        v.backgroundColor = UIColor(red: 0.05, green: 0.06, blue: 0.09, alpha: 1)
+        let title = UILabel(), body = UILabel(), button = UIButton(type: .system)
+        title.text = "The emulator stopped"
+        title.font = .boldSystemFont(ofSize: 24); title.textColor = .white
+        body.text = "iPadOS ended the emulator page: \(why). The guest was not saved.\n" +
+            "Details are in Documents/Logs/bootbox.log."
+        body.font = .systemFont(ofSize: 16); body.textColor = UIColor(white: 0.8, alpha: 1)
+        body.numberOfLines = 0; body.textAlignment = .center
+        button.setTitle("Restart Bootbox", for: .normal)
+        button.titleLabel?.font = .boldSystemFont(ofSize: 18)
+        button.addAction(UIAction { [weak self] _ in
+            self?.diedView?.removeFromSuperview(); self?.diedView = nil
+            restart()
+        }, for: .touchUpInside)
+        let stack = UIStackView(arrangedSubviews: [title, body, button])
+        stack.axis = .vertical; stack.spacing = 18; stack.alignment = .center
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        v.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.centerXAnchor.constraint(equalTo: v.centerXAnchor),
+            stack.centerYAnchor.constraint(equalTo: v.centerYAnchor),
+            stack.widthAnchor.constraint(lessThanOrEqualTo: v.widthAnchor, constant: -48),
+        ])
+        view.addSubview(v)
+        diedView = v
+    }
+
     /// Drop the current web view (its WebContent process goes with it, and all of its memory) and
     /// show `fresh` instead.
     func replaceWebView(with fresh: WKWebView) {
@@ -146,6 +180,9 @@ struct WebHostView: UIViewControllerRepresentable {
         coordinator.onFreshReload = { [weak vc] in
             guard let vc else { return }
             vc.replaceWebView(with: Self.makeWebView(coordinator))
+        }
+        coordinator.onPageDied = { [weak vc] why in
+            vc?.showPageDied(why) { [weak vc] in vc?.replaceWebView(with: Self.makeWebView(coordinator)) }
         }
         return vc
     }

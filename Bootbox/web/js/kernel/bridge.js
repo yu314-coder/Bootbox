@@ -141,7 +141,7 @@
 
   window.Bridge = Bridge;
 
-  // Persistent app log: the page's console + uncaught errors are appended (batched every 2 s,
+  // Persistent app log: the page's console + uncaught errors are appended (batched every 0.5 s,
   // repeats collapsed) to the app's Documents/Logs/bootbox.log via SystemBridge "appendLog", next to
   // native events such as iOS killing the WebContent process. A black screen on a real iPad then
   // leaves evidence that can be read back afterwards (Files app, or a paired Mac).
@@ -163,7 +163,7 @@
       if (rep) { buf.push("    (repeated " + rep + "x)"); rep = 0; }
       last = s;
       buf.push(((Date.now() - t0) / 1000).toFixed(1) + " " + level + " " + s);
-      if (!timer) timer = setTimeout(flush, 2000);
+      if (!timer) timer = setTimeout(flush, 500);   // short: a killed page loses what is still buffered
     }
     ["log", "info", "warn", "error"].forEach((l) => {
       const orig = console[l];
