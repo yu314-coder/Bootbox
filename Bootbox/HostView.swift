@@ -141,6 +141,7 @@ struct WebHostView: UIViewControllerRepresentable {
 
     func makeUIViewController(context: Context) -> KeyCaptureViewController {
         let coordinator = context.coordinator
+        MemoryProbe.shared.runIfNeeded()   // once per iOS version: how much memory a page may use
         let vc = KeyCaptureViewController(webView: Self.makeWebView(coordinator))
         coordinator.onFreshReload = { [weak vc] in
             guard let vc else { return }

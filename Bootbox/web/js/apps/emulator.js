@@ -960,6 +960,26 @@
               status.textContent = "Couldn't download the " + (g.android ? "Android" : "64-bit Linux") + " image (needs internet on first boot): " + ((e && e.message) || e);
               return;
             }
+            // Fit the guest into what this iPad lets one web page use: the app measures it once per iOS
+            // version (MemoryProbe; 0/unknown on a Mac or in a browser) and iOS kills the page outright
+            // past it. Besides guest RAM the page needs ~1 GB (engine, WebKit's compiled code, buffers).
+            let ramMB = Math.min(g.maxRam || 1536, Math.max(g.minRam || 64, +ramInput.value || g.ram || 1536));
+            let memNote = "";
+            try {
+              const ml = (window.Bridge && Bridge.onDevice) ? await Bridge.call("system", "memLimit") : null;
+              const lim = (ml && +ml.limitMB) || 0;
+              if (lim) {
+                console.log("[mem] a page may use ~" + lim + " MB here (" + (ml.how || "?") + ")");
+                const fit = Math.floor((lim - 1000) / 128) * 128;
+                if (g.android) {
+                  if (lim < 2400) memNote = " Heads-up: Android needs about 2.4 GB, and this iPad lets a page use about " + lim + " MB — iPadOS may stop it.";
+                } else if (fit < ramMB) {
+                  ramMB = Math.max(512, fit);
+                  memNote = " Guest RAM set to " + ramMB + " MB to fit this iPad (a page may use ~" + lim + " MB).";
+                }
+              }
+            } catch (e) {}
+            if (memNote) { try { console.log("[mem]" + memNote); status.textContent += memNote; } catch (e) {} }
             await window.QEMU_WASM.run({
               screen_container: panel64.termHost,
               base: g.base || "vendor/qemu/",   // per-guest engine/rootfs dir (qemu-aload = the Python/Wine Alpine)
@@ -968,7 +988,7 @@
               wasm: g.wasm || "qemu-system-x86_64.wasm",   // engine binary name (aarch64 guest = qemu-system-aarch64.wasm)
               netWs: "ws://127.0.0.1:8889/",   // in-app gVisor netstack (MiniOSApp.startNetStack) -> real internet
               vnc: "ws://127.0.0.1:8889/vnc",   // noVNC GUI bridge: netstack /vnc endpoint -> vn.Dial(guest x11vnc:5900)
-              ram: Math.min(g.maxRam || 1536, Math.max(g.minRam || 64, +ramInput.value || g.ram || 1536)),
+              ram: ramMB,
               smp: Math.max(g.minCores || 1, Math.min(g.maxCores || 8, +coresSel.value || (args && +args.cores) || 0)) || undefined,
               tune: g.tune,   // engine JIT tunables (run.js writes /bootbox-tune; build-84+ engine reads it)
               compressedVnc: !!g.android,

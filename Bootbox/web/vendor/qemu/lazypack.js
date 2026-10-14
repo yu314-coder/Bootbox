@@ -19,7 +19,8 @@
 (function () {
   const SMALL = 64 << 20;          // files up to this size are fetched whole
   const CHUNK = 1 << 20;           // on-demand read granularity
-  const CACHE_CHUNKS = 96;         // ~96 MB of clean chunks kept in memory
+  const CACHE_CHUNKS = 32;         // ~32 MB of clean chunks kept in memory (iPad memory limit; the guest
+                                   // kernel caches what it re-reads anyway)
 
   // Does `url` answer a Range request with 206? (LocalServer only does for an expanded pack.)
   async function probe(url) {

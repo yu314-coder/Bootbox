@@ -16,8 +16,12 @@ final class SystemBridge: NSObject {
                 "name": d.name,
                 "osVersion": d.systemVersion,
                 "ram": ProcessInfo.processInfo.physicalMemory,
-                "cores": ProcessInfo.processInfo.processorCount
+                "cores": ProcessInfo.processInfo.processorCount,
+                "memLimitMB": MemoryProbe.limitMB ?? 0
             ])
+        case "memLimit":
+            // Waits (up to ~20 s) for the one-time probe if it is still running.
+            MemoryProbe.shared.whenDone { respond(true, ["limitMB": $0 ?? 0, "how": MemoryProbe.lastHow]) }
         case "haptic":
             let gen = UIImpactFeedbackGenerator(style: .light)
             gen.impactOccurred()
@@ -128,5 +132,111 @@ enum BootLog {
     static func native(_ message: String) {
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
         append("[native \(ISO8601DateFormatter().string(from: Date())) build \(build)] \(message)")
+    }
+}
+
+/// How much memory iOS lets ONE web page (WebContent process) use on this device - the budget a
+/// 64-bit guest has to fit in (the page holds the guest's RAM plus the engine; past the limit iOS
+/// kills the page). Not published anywhere, so measure it once per iOS version: a 1x1, nearly
+/// transparent web view with its own process pool (= its own WebContent process) grows a wasm
+/// memory in 64 MB steps, touching every page, and reports each step; when iOS kills that process,
+/// the last step reached is the limit. Takes a few seconds at launch; the visible app is untouched.
+final class MemoryProbe: NSObject, WKScriptMessageHandler, WKNavigationDelegate {
+    static let shared = MemoryProbe()
+    private static let keyMB = "BootboxWebMemLimitMB", keyOS = "BootboxWebMemLimitOS"
+    static var lastHow = ""
+    static var limitMB: Int? {
+        let d = UserDefaults.standard
+        guard d.string(forKey: keyOS) == UIDevice.current.systemVersion else { return nil }
+        let v = d.integer(forKey: keyMB)
+        return v > 0 ? v : nil
+    }
+
+    private var webView: WKWebView?
+    private var lastMB = 0
+    private var waiters: [(Int?) -> Void] = []
+    private var running = false
+
+    func runIfNeeded() {
+        guard Self.limitMB == nil, !running else { return }
+        running = true
+        DispatchQueue.main.async { self.start() }
+    }
+
+    func whenDone(_ cb: @escaping (Int?) -> Void) {
+        DispatchQueue.main.async {
+            if !self.running { cb(Self.limitMB); return }
+            var fired = false
+            let once: (Int?) -> Void = { v in if !fired { fired = true; cb(v) } }
+            self.waiters.append(once)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 20) { once(nil) }
+        }
+    }
+
+    private func start() {
+        guard let window = UIApplication.shared.connectedScenes.compactMap({ ($0 as? UIWindowScene)?.keyWindow }).first else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self.start() }   // no window yet
+            return
+        }
+        let cfg = WKWebViewConfiguration()
+        cfg.websiteDataStore = .nonPersistent()       // (each WKWebView gets its own WebContent process)
+        cfg.userContentController.add(self, name: "probe")
+        let wv = WKWebView(frame: CGRect(x: 0, y: 0, width: 1, height: 1), configuration: cfg)
+        wv.alpha = 0.02                                // "visible", so WebKit doesn't suspend it
+        wv.isUserInteractionEnabled = false
+        wv.navigationDelegate = self
+        window.addSubview(wv)
+        webView = wv
+        BootLog.native("memory probe: starting")
+        let js = """
+        (async () => {
+          const post = (m) => window.webkit.messageHandlers.probe.postMessage(m);
+          const STEP = 64;
+          let mem;
+          try { mem = new WebAssembly.Memory({ initial: 0, maximum: 65536 }); }
+          catch (e) { post({ done: 0, why: "no memory: " + e }); return; }
+          let mb = 0;
+          while (mb < 6000) {
+            try { mem.grow(STEP * 16); } catch (e) { post({ done: mb, why: "grow refused" }); return; }
+            const u8 = new Uint8Array(mem.buffer, mb * 1048576, STEP * 1048576);
+            for (let i = 0; i < u8.length; i += 4096) u8[i] = 1;
+            mb += STEP;
+            post({ mb });
+            await new Promise((r) => setTimeout(r, 30));
+          }
+          post({ done: mb, why: "reached the probe cap" });
+        })();
+        """
+        wv.loadHTMLString("<!doctype html><meta charset=utf-8><body><script>\(js)</script></body>", baseURL: nil)
+    }
+
+    func userContentController(_ uc: WKUserContentController, didReceive message: WKScriptMessage) {
+        guard running, let body = message.body as? [String: Any] else { return }
+        if let mb = body["mb"] as? Int {
+            lastMB = mb
+            if mb % 512 == 0 { BootLog.native("memory probe: \(mb) MB so far") }
+        } else if let done = body["done"] as? Int {
+            finish(done, how: body["why"] as? String ?? "done")
+        }
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        finish(lastMB, how: "iOS stopped the page")
+    }
+
+    private func finish(_ mb: Int, how: String) {
+        guard running else { return }
+        running = false
+        Self.lastHow = how
+        if mb > 0 {
+            UserDefaults.standard.set(mb, forKey: Self.keyMB)
+            UserDefaults.standard.set(UIDevice.current.systemVersion, forKey: Self.keyOS)
+        }
+        BootLog.native("memory probe: a web page can use about \(mb) MB (\(how))")
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: "probe")
+        webView?.removeFromSuperview()
+        webView = nil
+        let w = waiters; waiters = []
+        w.forEach { $0(mb > 0 ? mb : nil) }
     }
 }
