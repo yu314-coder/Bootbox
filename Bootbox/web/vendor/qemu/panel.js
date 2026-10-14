@@ -213,7 +213,7 @@
       try { if (typeof api.onGuiOpen === "function") api.onGuiOpen(guiEl); } catch (e) {}
     };
     try { guiEl.appendChild(hud); } catch (e) {}
-    var hudSig = null, hudChangeT = 0;
+    var hudChangeT = 0;
     setInterval(function () {
       if (guiEl.style.display === "none") return;   // pane hidden — skip the work
       var st = (window.__guiState ? window.__guiState() : "no-rfb");
@@ -228,22 +228,14 @@
         return;
       }
       var cv = guiEl.querySelector("canvas"), dim = cv && cv.width ? (cv.width + "×" + cv.height) : "no frame yet";
-      var sig = null;
-      try {
-        if (cv && cv.width) {
-          var cx = cv.getContext("2d"), s = 0;
-          for (var i = 1; i <= 5; i++) {
-            var d = cx.getImageData((cv.width * i / 6) | 0, (cv.height * i / 6) | 0, 1, 1).data;
-            s = (s * 31 + d[0] * 3 + d[1] * 5 + d[2] * 7) >>> 0;
-          }
-          sig = s;
-        }
-      } catch (e) {}
+      // Age of the last frame update the guest actually sent (run.js stamps __guiFrameT on every
+      // noVNC flip). The old 5-pixel signature missed menus, the clock and button highlights, so
+      // it claimed "changed 90s ago" on a live screen.
       var now = Date.now();
-      if (sig !== null && sig !== hudSig) { hudSig = sig; hudChangeT = now; }
+      if (window.__guiFrameT) hudChangeT = window.__guiFrameT;
       var age = hudChangeT ? Math.round((now - hudChangeT) / 1000) : -1;
       hud.style.color = "#8fd18f";
-      hud.textContent = "🖥️ display: ON · " + dim + (age >= 0 ? " · screen changed " + age + "s ago" : "") +
+      hud.textContent = "🖥️ display: ON · " + dim + (age >= 0 ? " · last update " + age + "s ago" : "") +
         (mode === "desktop" ? "" : " — black = empty desktop; wine windows can take minutes on first run (📜 Wine log)");
     }, 2000);
 

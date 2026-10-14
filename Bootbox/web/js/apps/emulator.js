@@ -998,7 +998,7 @@
             // newer features off; the first level that runs is kept (and logged).
             const SAFE_LEVELS = [
               { name: "full speed" },
-              { name: "no wasm tail calls", tune: { chain: 0 } },
+              { name: "no wasm tail calls (the iOS default now)", tune: { chain: 0 } },
               { name: "no tail calls, no SIMD float inlining", tune: { chain: 0, fpinline: 0 } },
               { name: "no tail calls/float inlining/register locals", tune: { chain: 0, fpinline: 0, regloc: 0 } },
               { name: "the above + fixed-size memory, fewer compiled blocks", tune: { chain: 0, fpinline: 0, regloc: 0, max: 8000 }, presize: true },
@@ -1022,7 +1022,11 @@
               const s2 = cfg().q64safe || {};
               if (s2.startedAt === safe.startedAt) { s2.ok = true; setCfg({ q64safe: s2 }); console.log("[safe] level " + safe.level + " has run 75 s — keeping it"); }
             }, 75000);
-            const tune = Object.assign({}, g.tune || {}, level.tune || {});
+            // Wasm tail calls (the engine's TB-to-TB chaining) crash the page on the iPad (iPadOS 27.2
+            // WebKit, arm64e) the moment the guest starts running - found by the ladder above on the
+            // user's iPad Air M3 (TestFlight 90: level 1 "no wasm tail calls" fixed it). Off on iOS.
+            const iosBase = (window.Bridge && Bridge.onDevice) ? { chain: 0 } : {};
+            const tune = Object.assign({}, g.tune || {}, iosBase, level.tune || {});
             if (g.tune && g.tune.max && level.tune && level.tune.max) tune.max = Math.min(g.tune.max, level.tune.max);
             await window.QEMU_WASM.run({
               screen_container: panel64.termHost,
@@ -1037,6 +1041,7 @@
               tune,   // engine JIT tunables (run.js writes /bootbox-tune; build-84+ engine reads it)
               initialMemoryMB: level.presize ? ramMB + 900 : undefined,
               compressedVnc: !!g.android,
+              touchGuest: !!g.android,   // touches go straight to Android's touchscreen (run.js installDirectTouch)
               vncLabel: g.android ? "Android" : undefined,
               onStatus: (m) => { try { status.textContent = m; } catch (e) {} },
               onReady: (r) => {

@@ -145,7 +145,11 @@ static int open_input_device(void) {
 
     configure_abs(fd, ABS_X, 0, display_width - 1);
     configure_abs(fd, ABS_Y, 0, display_height - 1);
-    configure_abs(fd, ABS_MT_SLOT, 0, 0);
+    /* The slot range must be > 0: with 0..0 Android's EventHub reports the axis invalid and the
+       touch mapper falls back to multitouch protocol A, which forgets every coordinate after each
+       SYN_REPORT, while the kernel (protocol B bookkeeping) only re-emits changed values. Vertical
+       drags then reached Android at x=0 and repeated taps at (0,0). Only slot 0 is used. */
+    configure_abs(fd, ABS_MT_SLOT, 0, 9);
     configure_abs(fd, ABS_MT_TRACKING_ID, 0, 65535);
     configure_abs(fd, ABS_MT_POSITION_X, 0, display_width - 1);
     configure_abs(fd, ABS_MT_POSITION_Y, 0, display_height - 1);

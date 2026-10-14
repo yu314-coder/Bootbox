@@ -97,19 +97,24 @@ final class BridgeRouter: NSObject, WKScriptMessageHandler, UIGestureRecognizerD
     // scroll gesture — it never becomes a DOM 'wheel' event, so the terminal couldn't scroll with a
     // trackpad. This recognizer (added in HostView, maximumNumberOfTouches=0) fires ONLY for indirect
     // scroll (trackpad/mouse), never touchscreen, so it doesn't disturb the emulator's touch input.
-    private var scrollLast: CGFloat = 0
+    // Over the guest GUI (noVNC) the scroll goes to window.__bbPan instead (run.js): Android gets a
+    // finger drag under the pointer, the Linux desktop gets wheel clicks; it returns false elsewhere.
+    private var scrollLast: CGPoint = .zero
     @objc func handleTrackpadScroll(_ g: UIPanGestureRecognizer) {
+        let p = g.location(in: g.view)
         switch g.state {
         case .began:
-            scrollLast = 0
+            scrollLast = .zero
+            webView?.evaluateJavaScript("window.__bbPan&&window.__bbPan(0,\(p.x),\(p.y),0,0)", completionHandler: nil)
         case .changed:
-            let y = g.translation(in: g.view).y
-            let dy = y - scrollLast
-            scrollLast = y
+            let t = g.translation(in: g.view)
+            let dx = t.x - scrollLast.x, dy = t.y - scrollLast.y
+            scrollLast = t
             // natural scrolling: two fingers down (dy>0) → reveal older output (scroll toward history)
-            webView?.evaluateJavaScript("window.__trackpadScroll&&window.__trackpadScroll(\(-dy))", completionHandler: nil)
+            webView?.evaluateJavaScript("(window.__bbPan&&window.__bbPan(1,\(p.x),\(p.y),\(dx),\(dy)))||(window.__trackpadScroll&&window.__trackpadScroll(\(-dy)))", completionHandler: nil)
         default:
-            scrollLast = 0
+            scrollLast = .zero
+            webView?.evaluateJavaScript("window.__bbPan&&window.__bbPan(2,0,0,0,0)", completionHandler: nil)
         }
     }
 

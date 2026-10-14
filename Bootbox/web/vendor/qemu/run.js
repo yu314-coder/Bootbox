@@ -401,6 +401,169 @@
         }, 1000);
       }
     }
+    // --- Touch input for TOUCHSCREEN guests (Android). noVNC's gesture layer turns touches into
+    // mouse gestures: nothing moves until a finger travels 50 px, a hold becomes a right-click and
+    // a two-finger drag becomes wheel clicks - and Android's touchscreen ignores right-clicks and
+    // wheel. So here every touch on the screen goes straight to the guest as one finger (down /
+    // move / up where it really is): taps, long presses, drags, flings and edge swipes then behave
+    // as on a phone. Extra fingers are ignored (the guest touchscreen is single-touch).
+    function fbPoint(r, cx, cy) {
+      const cv = r._canvas, b = cv.getBoundingClientRect();
+      const w = r._fbWidth || cv.width, h = r._fbHeight || cv.height;
+      return {
+        x: Math.max(0, Math.min(w - 1, Math.round((cx - b.left) * w / (b.width || 1)))),
+        y: Math.max(0, Math.min(h - 1, Math.round((cy - b.top) * h / (b.height || 1)))),
+      };
+    }
+    // The Android guest's uinput touchscreen (ubuntu-build/android-vnc) declares ABS_MT_SLOT with the
+    // range 0..0, so Android reads it as a protocol-A device and forgets the finger's position after
+    // every frame - while the guest kernel, which still does slot bookkeeping, drops any coordinate
+    // equal to the previous one. A vertical drag therefore reached Android at x=0 and a second tap
+    // on the same spot landed at (0,0). Until the guest image is rebuilt with a real slot range,
+    // never send a pressed coordinate equal to the last pressed one: nudge it by 1 px (invisible),
+    // so every frame carries both X and Y. Wraps the shared pointerEvent once; only sockets marked
+    // __bbTouch (Android viewers) are touched, and it covers noVNC's own mouse path too.
+    function installPointerDither(R) {
+      if (!R || !R.messages || R.messages.__bbDither) return;
+      const orig = R.messages.pointerEvent;
+      R.messages.pointerEvent = function (sock, x, y, mask) {
+        const st = sock && sock.__bbTouch;
+        if (st && (mask & 1)) {
+          const w = (st.r && st.r._fbWidth) || 65536, h = (st.r && st.r._fbHeight) || 65536;
+          if (x === st.x) x = x + 1 < w ? x + 1 : x - 1;
+          if (y === st.y) y = y + 1 < h ? y + 1 : y - 1;
+          st.x = x; st.y = y;
+        }
+        return orig.call(this, sock, x, y, mask);
+      };
+      R.messages.__bbDither = true;
+    }
+    function sendPointer(r, p, mask) {
+      try { if (r && r._rfbConnectionState === "connected") r.constructor.messages.pointerEvent(r._sock, p.x, p.y, mask); } catch (e) {}
+    }
+    function makeFinger(r) {   // one guest finger; moves are coalesced to ~40 Hz (each one costs guest CPU)
+      let pos = null, sent = null, timer = 0;
+      const flush = () => {
+        timer = 0;
+        if (pos && (!sent || sent.x !== pos.x || sent.y !== pos.y)) { sendPointer(r, pos, 1); sent = pos; }
+      };
+      return {
+        get down() { return !!pos; },
+        get pos() { return pos; },
+        press(p) { pos = sent = p; sendPointer(r, p, 1); },
+        move(p) { if (!pos) return; pos = p; if (!timer) timer = setTimeout(flush, 25); },
+        release(p) {
+          if (!pos) return;
+          if (p) pos = p;
+          clearTimeout(timer); flush();
+          sendPointer(r, pos, 0); pos = sent = null;
+        },
+      };
+    }
+    function installDirectTouch(r) {
+      const cv = r._canvas;
+      if (!cv || cv.__bbTouch) return;
+      cv.__bbTouch = true;
+      const finger = makeFinger(r);
+      r.__bbFinger = finger;
+      let id = null;
+      const own = (e) => { e.preventDefault(); e.stopPropagation(); };
+      const opt = { capture: true, passive: false };
+      const find = (e) => {
+        for (let i = 0; i < e.changedTouches.length; i++) if (e.changedTouches[i].identifier === id) return e.changedTouches[i];
+        return null;
+      };
+      const host = r._screen || r._target;   // per-viewer element (a reconnect makes a new one)
+      // Capture phase on the canvas's container runs before noVNC's own listeners on the canvas;
+      // stopping the event there keeps noVNC's gesture handler (and its fake cursor) out of it.
+      host.addEventListener("touchstart", function (e) {
+        if (e.target !== cv) return;
+        own(e);
+        try { r.focus({ preventScroll: true }); } catch (x) {}   // hardware keyboard -> guest
+        if (id !== null || finger.down) return;
+        const t = e.changedTouches[0];
+        id = t.identifier;
+        finger.press(fbPoint(r, t.clientX, t.clientY));
+      }, opt);
+      host.addEventListener("touchmove", function (e) {
+        if (e.target !== cv) return;
+        own(e);
+        const t = find(e);
+        if (t) finger.move(fbPoint(r, t.clientX, t.clientY));
+      }, opt);
+      const end = function (e) {
+        if (e.target !== cv) return;
+        own(e);
+        const t = find(e);
+        if (!t) return;
+        id = null;
+        finger.release(fbPoint(r, t.clientX, t.clientY));
+      };
+      host.addEventListener("touchend", end, opt);
+      host.addEventListener("touchcancel", end, opt);
+      // A mouse/trackpad pointer just hovering does nothing on a touchscreen - don't make the guest
+      // process a stream of empty pointer events for it. Clicks and click-drags still go through.
+      host.addEventListener("mousemove", function (e) {
+        if (e.target === cv && !e.buttons) e.stopPropagation();
+      }, true);
+      // Desktop mouse wheel (Mac browsers) -> the same finger-drag scroll the iPad trackpad gets.
+      let wheelEnd = 0;
+      host.addEventListener("wheel", function (e) {
+        if (e.target !== cv) return;
+        own(e);
+        const k = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 400 : 1;
+        if (!pan) self.__bbPan(0, e.clientX, e.clientY, 0, 0);
+        self.__bbPan(1, e.clientX, e.clientY, -e.deltaX * k, -e.deltaY * k);
+        clearTimeout(wheelEnd);
+        wheelEnd = setTimeout(function () { self.__bbPan(2, 0, 0, 0, 0); }, 150);
+      }, opt);
+    }
+    // Trackpad / mouse-wheel scrolling over the GUI. HostView's indirect-scroll recognizer calls
+    // __bbPan(phase 0 begin / 1 change / 2 end, pointer x/y, dx/dy in CSS px, natural direction);
+    // it returns true when the scroll belongs to the GUI (else it goes to the terminal scrollback).
+    // Android: a finger drag that starts under the pointer and follows the fingers (so a quick
+    // swipe flings, exactly like touch). Linux desktop: wheel clicks, one per ~40 px.
+    let pan = null;
+    self.__bbPan = function (phase, x, y, dx, dy) {
+      try {
+        const r = rfb;
+        if (phase === 0) {
+          if (pan && pan.touch && pan.r.__bbFinger) pan.r.__bbFinger.release(null);   // never leave a finger down
+          pan = null;
+          if (!r || r._rfbConnectionState !== "connected" || !r._canvas) return false;
+          const el = document.elementFromPoint(x, y);
+          if (!el || !r._target.contains(el)) return false;
+          const b = r._canvas.getBoundingClientRect();
+          if (x < b.left || x >= b.right || y < b.top || y >= b.bottom) return false;
+          pan = { r, x, y, acc: 0, touch: !!(opts.touchGuest && r.__bbFinger) };
+          if (pan.touch) {
+            if (r.__bbFinger && r.__bbFinger.down) { pan = null; return true; }   // a real finger is down
+            r.__bbFinger.press(fbPoint(r, x, y));
+          }
+          return true;
+        }
+        if (!pan) return false;
+        if (pan.r !== r) { pan = null; return false; }
+        if (phase === 1) {
+          if (pan.touch) {
+            pan.x += dx; pan.y += dy;
+            r.__bbFinger.move(fbPoint(r, pan.x, pan.y));
+          } else {
+            pan.acc += dy;
+            const p = fbPoint(r, pan.x, pan.y), held = r._mouseButtonMask || 0;
+            while (Math.abs(pan.acc) >= 40) {
+              const bit = pan.acc > 0 ? 8 : 16;   // fingers down -> scroll up (button 4)
+              sendPointer(r, p, held | bit); sendPointer(r, p, held);
+              pan.acc -= pan.acc > 0 ? 40 : -40;
+            }
+          }
+          return true;
+        }
+        if (pan.touch) r.__bbFinger.release(null);
+        pan = null;
+        return true;
+      } catch (e) { pan = null; return false; }
+    };
     async function connectGui(guiHost, statusCb) {
       statusCb = statusCb || function () {};
       lastGuiHost = guiHost; lastStatusCb = statusCb;
@@ -423,6 +586,15 @@
         // enormously from compressed frames. The Linux Xvnc guest still uses
         // Bootbox's conservative Hextile-only compatibility list.
         rfb._bootboxCompressed = !!opts.compressedVnc;
+        try {   // frame-update heartbeat for the display HUD (panel.js)
+          const d = rfb._display, flip = d.flip;
+          d.flip = function () { self.__guiFrameT = Date.now(); return flip.apply(this, arguments); };
+        } catch (e) {}
+        if (opts.touchGuest) {
+          installPointerDither(RFB);
+          try { rfb._sock.__bbTouch = { r: rfb, x: -1, y: -1 }; } catch (e) {}
+          installDirectTouch(rfb);
+        }
         rfbBornAt = Date.now();   // stuck-connecting watchdog baseline
         try { self.__rfb = rfb; } catch (e) {}
         rfb.scaleViewport = true;
