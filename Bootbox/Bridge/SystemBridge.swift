@@ -25,6 +25,9 @@ final class SystemBridge: NSObject {
         case "log":
             print("[MiniOS] \(payload["message"] as? String ?? "")")
             respond(true, true)
+        case "appendLog":
+            BootLog.append(payload["text"] as? String ?? "")
+            respond(true, true)
         case "setBrightness":
             let v = (payload["value"] as? NSNumber)?.doubleValue ?? 1
             DispatchQueue.main.async { UIScreen.main.brightness = CGFloat(max(0.05, min(1, v))) }
@@ -86,5 +89,44 @@ final class SystemBridge: NSObject {
                                "width": image.size.width, "height": image.size.height])
             }
         }
+    }
+}
+
+/// Persistent app log: Documents/Logs/bootbox.log, rotated to bootbox.1.log past 1 MB. The page's
+/// console arrives here (bridge.js -> system "appendLog") along with native events (the WebContent
+/// process being killed, memory warnings, backgrounding), so a guest that dies on a real iPad leaves
+/// a readable trail (Files app, or `xcrun devicectl device copy from … --domain-type appDataContainer`).
+enum BootLog {
+    private static let queue = DispatchQueue(label: "bootbox.bootlog")
+    static var url: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Logs", isDirectory: true).appendingPathComponent("bootbox.log")
+    }
+
+    static func append(_ text: String) {
+        guard !text.isEmpty else { return }
+        queue.async {
+            let fm = FileManager.default, file = url
+            try? fm.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+            if let size = (try? fm.attributesOfItem(atPath: file.path))?[.size] as? Int, size > 1_000_000 {
+                let old = file.deletingLastPathComponent().appendingPathComponent("bootbox.1.log")
+                try? fm.removeItem(at: old)
+                try? fm.moveItem(at: file, to: old)
+            }
+            guard let data = (text.hasSuffix("\n") ? text : text + "\n").data(using: .utf8) else { return }
+            if let h = try? FileHandle(forWritingTo: file) {
+                defer { try? h.close() }
+                _ = try? h.seekToEnd()
+                try? h.write(contentsOf: data)
+            } else {
+                try? data.write(to: file)
+            }
+        }
+    }
+
+    /// A native event, timestamped.
+    static func native(_ message: String) {
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "?"
+        append("[native \(ISO8601DateFormatter().string(from: Date())) build \(build)] \(message)")
     }
 }

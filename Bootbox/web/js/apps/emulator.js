@@ -191,45 +191,253 @@
     return url;
   }
 
-  // Touch-as-mouse for v86 on iPad: drag = move (relative PS/2 mouse; v86 inverts Y),
-  // tap = left click + summon keyboard, two-finger tap = right click, hold-drag = drag.
-  // Verified against the bundled v86 API (emulator.bus / mouse_set_status / mouse-delta+click).
+  // Touch-as-mouse for v86 on iPad: the guest pointer goes WHERE THE FINGER IS. Tap = left click
+  // (+ summon the keyboard), press & drag = drag, two-finger tap = right click, two-finger drag =
+  // wheel. A Magic Keyboard trackpad / mouse drives the same absolute pointer.
+  //
+  // v86 only has a RELATIVE PS/2 mouse, so "put the cursor at (x, y)" = slam it into the top-left
+  // corner, then move by known amounts. Two guest facts make naive deltas land wrong (measured on
+  // Win98 in the simulator, 2026-10):
+  //   1. Windows drops a PS/2 packet that arrives while it is still handling the previous one, and
+  //      v86 delivers everything sent in one JS turn back-to-back in guest time: of a burst only the
+  //      FIRST packet counted. The old code sent the corner slam + the move + the button press in one
+  //      burst — taps landed near the corner and presses vanished ("cannot click"). So packets go out
+  //      one per guest time slice from a queue (pump() runs inside v86's tick, once the guest has
+  //      drained the previous packet).
+  //   2. Windows accelerates: a packet bigger than MouseThreshold1 moves 2x (4x past Threshold2), per
+  //      the user's mouse settings (this Win98 image: 1-2 px -> 1:1, 3..127 px -> 2x). So a one-time
+  //      calibration measures what each packet size really moves — it finds the cursor by diffing
+  //      the top rows of the framebuffer — and moves are composed from those measured sizes (cached
+  //      per disk image; one probe re-checks it each session).
+  // A packet axis is 9-bit (-256..255), so every packet stays within +-127.
   function installV86TouchMouse(emulator, opts) {
     opts = opts || {};
     const container = opts.container || document.getElementById(opts.containerId || "screen_container");
     if (!container || !emulator || !emulator.bus) return;
     const kbd = opts.keyboardInput || null;
-    const SENS = opts.sensitivity != null ? opts.sensitivity : 1.5;
-    const TAP_TOL = 10, TAP_MS = 250, HOLD_MS = 300;
-    // v86's PS/2 mouse packs a whole delta into ONE packet, and a packet axis is only 9-bit
-    // (-256..255): libv86 send_mouse_packet pushes the raw byte with NO multi-packet split.
-    // So a big motion (e.g. the -1104 corner-home slam in anchor()) is truncated to a tiny
-    // step and the cursor never lands where intended — THE cause of the touch misalignment.
-    // Emit motion in <=120px steps so every packet stays in range and the full distance is
-    // actually travelled. (Guest pointer accel is set flat, so the steps sum to 1:1.)
-    const sendStep = (dx, dy) => {
-      let rx = Math.round(dx), ry = Math.round(dy), guard = 0;
-      while ((rx !== 0 || ry !== 0) && guard++ < 200) {
-        const sx = rx > 120 ? 120 : rx < -120 ? -120 : rx;
-        const sy = ry > 120 ? 120 : ry < -120 ? -120 : ry;
-        try { emulator.bus.send("mouse-delta", [sx, sy]); } catch (e) {}
-        rx -= sx; ry -= sy;
+    const statusEl = opts.status || null;
+    const bus = emulator.bus;
+    const TAP_TOL = 10, TAP_MS = 250;
+    const say = (t, ms) => { if (!statusEl) return; try { statusEl._hold = nowMs() + (ms || 4000); statusEl.textContent = t; } catch (e) {} };
+
+    // v86 internals (guarded: without them we fall back to timer pacing).
+    const v86 = () => { try { return emulator.v86 || null; } catch (e) { return null; } };
+    const ps2 = () => { try { return emulator.v86.cpu.devices.ps2; } catch (e) { return null; } };
+    const screenCanvas = () => container.querySelector(":scope > canvas");
+    // v86's own mouse adapter would ALSO turn touch/trackpad motion into relative deltas (and send
+    // its own unpaced clicks/wheel) — double movement. All pointer input is driven from here.
+    try { emulator.mouse_set_status(false); } catch (e) {}
+    try { if (emulator.mouse_adapter) Object.defineProperty(emulator.mouse_adapter, "is_running", { get() { return false; }, set() {}, configurable: true }); } catch (e) {}
+
+    // ---- paced packet queue ----
+    // ops: {k:"slam"} corner-home | {k:"go",x,y} chase a guest pixel | {k:"btn",b:[l,m,r]} |
+    //      {k:"wheel",d} | {k:"raw",dx,dy} | {k:"fn",f} callback once everything before it is sent.
+    const ops = [];
+    let cur = null;                 // believed guest cursor position (guest px); null = unknown
+    let lastSentTick = -1, tick = 0, lastSentMs = 0, hooked = false, kickTimer = 0, lastDownMs = -1e9, homedMs = -1e9;
+    const size = () => { const cv = screenCanvas(); return cv && cv.width ? [cv.width, cv.height] : [800, 600]; };
+    const send = (dx, dy) => { try { bus.send("mouse-delta", [dx, dy]); } catch (e) {} };
+    function step() {
+      const p = ps2();
+      if (p && p.mouse_buffer && p.mouse_buffer.length) return;    // guest hasn't read the last packet yet
+      while (ops.length) {
+        const op = ops[0];
+        if (op.k === "fn") { ops.shift(); try { op.f(); } catch (e) {} continue; }
+        if (op.k === "go") {
+          if (ops[1] && ops[1].k === "go") { ops.shift(); continue; }      // only the latest target matters
+          if (!cur) { ops.unshift({ k: "slam" }); continue; }
+          const [w, h] = size();
+          const tx = Math.max(0, Math.min(w - 1, Math.round(op.x))), ty = Math.max(0, Math.min(h - 1, Math.round(op.y)));
+          // One axis per packet (Windows accelerates on the larger axis, so mixing them would skew
+          // the smaller one). A remainder no packet can make (e.g. 1 px when 1 px moves 2) is dropped.
+          const mx = tx !== cur.x ? pick(tx - cur.x) : null;
+          if (mx) { send(mx[0], 0); cur.x += mx[1]; return true; }
+          cur.x = tx;
+          const my = ty !== cur.y ? pick(ty - cur.y) : null;
+          if (my) { send(0, -my[0]); cur.y += my[1]; return true; }      // v86: +dy = up
+          cur.y = ty;
+          ops.shift();
+          continue;
+        }
+        if (op.k === "slam") {
+          if (op.n === undefined) { const [w, h] = size(); op.n = Math.ceil((Math.max(w, h) + 64) / 100); }
+          send(-100, 100);
+          if (--op.n <= 0) { ops.shift(); cur = { x: 0, y: 0 }; homedMs = nowMs(); }
+          return true;
+        }
+        if (op.k === "btn") {
+          // Hold a press >= 80 ms before releasing: Windows 2000 ignores a down/up that arrive in
+          // back-to-back slices (the button just takes focus), and a quick tap is shorter than that
+          // once the press has waited behind the cursor move.
+          const isDown = op.b[0] || op.b[1] || op.b[2];
+          if (!isDown && nowMs() - lastDownMs < 80) return false;
+          ops.shift();
+          try { bus.send("mouse-click", op.b); } catch (e) {}
+          if (isDown) lastDownMs = nowMs();
+          return true;
+        }
+        ops.shift();
+        if (op.k === "wheel") { try { bus.send("mouse-wheel", [op.d, 0]); } catch (e) {} return true; }
+        if (op.k === "raw") { send(op.dx, op.dy); return true; }
       }
-    };
-    const sendDelta = (dx, dy) => sendStep(dx * SENS, -(dy * SENS));
-    const sendButtons = (l, m, r) => { try { emulator.bus.send("mouse-click", [!!l, !!m, !!r]); } catch (e) {} };
-    const leftDown = () => sendButtons(1, 0, 0), leftUp = () => sendButtons(0, 0, 0);
-    const rightClick = () => { sendButtons(0, 0, 1); sendButtons(0, 0, 0); };
-    const leftClick = () => { leftDown(); leftUp(); };
-    // Absolute positioning so a tap lands WHERE the finger touches. v86 only exposes a
-    // RELATIVE PS/2 mouse, so we: (1) map the touch point to the guest pixel under it
-    // (accounting for object-fit:contain letterboxing), (2) slam the cursor to the
-    // top-left corner with an overshooting delta, (3) move it to that pixel. v86's dy is
-    // inverted (positive dy = up). Precise when the guest's pointer acceleration is OFF
-    // (shipped images set MouseSpeed/Threshold1/2 = 0); with accel on it still lands close.
-    const sendRaw = (dx, dy) => sendStep(dx, dy);
+      return false;
+    }
+    // One packet per v86 tick (= one guest time slice), so the guest finishes handling a packet
+    // before the next arrives. Hooked into v86's own loop; until that exists, a 6 ms timer paces.
+    function hook() {
+      if (hooked) return true;
+      const g = v86();
+      if (!g || typeof g.do_tick !== "function") return false;
+      const orig = g.do_tick;
+      g.do_tick = function () {
+        tick++;
+        // >= 1 whole guest slice AND >= 3 ms since the last packet (natural ticks are ~3.5 ms on an
+        // idle Win98 desktop; never force extra ticks — shorter slices = dropped packets again).
+        if (ops.length && tick - lastSentTick >= 1 && nowMs() - lastSentMs >= 3 && step()) { lastSentTick = tick; lastSentMs = nowMs(); }
+        return orig.apply(this, arguments);
+      };
+      hooked = true;
+      return true;
+    }
+    function kick() {
+      if (hook() || kickTimer) return;
+      kickTimer = setTimeout(function k3() {
+        kickTimer = 0;
+        if (hook()) { kick(); return; }
+        if (nowMs() - lastSentMs >= 6 && step()) lastSentMs = nowMs();
+        if (ops.length) kickTimer = setTimeout(k3, 6);
+      }, 6);
+    }
+    const push = (op) => { ops.push(op); kick(); };
+    const done = () => new Promise((r) => push({ k: "fn", f: r }));
+
+    // ---- acceleration curve: measured pairs [packet px, guest px moved], ascending ----
+    let curve = [[1, 1], [2, 2]];   // safe until calibrated (small packets are 1:1 under any usual setting)
+    let calibrated = false, calibrating = null, calibTries = 0, calibNote = "";
+    // Cached per disk image in the emulator config (the app's persistent VFS — localStorage would
+    // not survive a relaunch: LocalServer gets a new port, i.e. a new origin, every launch).
+    const key = String(opts.key || "default").slice(-120);
+    const savedCurves = () => { try { return cfg().v86curves || {}; } catch (e) { return {}; } };
+    const saveCurve = (c) => { try { const all = savedCurves(); if (c) all[key] = c; else delete all[key]; setCfg({ v86curves: all }); } catch (e) {} };
+    { const c = savedCurves()[key]; if (Array.isArray(c) && c.length >= 2) curve = c; }
+    // Largest packet whose measured (or same-ratio interpolated) movement doesn't overshoot |e|.
+    function pick(e) {
+      const a = Math.abs(e), sg = e < 0 ? -1 : 1;
+      let best = null;
+      for (let i = 0; i < curve.length; i++) {
+        const [p0, f0] = curve[i], r = f0 / p0;
+        let p1 = p0;   // extend through following points with the same ratio (Windows' curve is stepwise)
+        for (let j = i + 1; j < curve.length && Math.abs(curve[j][1] / curve[j][0] - r) < 1e-6; j++) p1 = curve[j][0];
+        const p = Math.min(p1, Math.floor(a / r + 1e-9));
+        if (p >= p0) { const mv = Math.round(r * p); if (mv > 0 && (!best || mv > best[1])) best = [p, mv]; }
+      }
+      return best ? [sg * best[0], sg * best[1]] : null;
+    }
+    // Find the cursor: probe moves along the top edge. Diff the top rows of the framebuffer just
+    // before (cursor in the corner, columns [0, cw)) and just after the probe (cursor at [f, f+cw)):
+    // the rightmost changed column is f + cw - 1. cw (the cursor's width) comes from a probe big
+    // enough that the two cursor images don't touch. Before/after are ~0.1 s apart, so desktop
+    // changes (an icon getting selected, the clock) don't leak into the measurement.
+    const ROWS = 16;
+    function strip() {
+      const cv = screenCanvas(); if (!cv || !cv.width) return null;
+      // Copy the guest framebuffer to the canvas now: v86 otherwise paints on animation frames, and
+      // WebKit pauses those briefly (e.g. while the iPad keyboard comes up after a tap) — two equal
+      // stale frames then looked "settled" and the probe saw no cursor at all.
+      try { const sa = emulator.screen_adapter; if (sa && typeof sa.update_graphical === "function") sa.update_graphical(); } catch (e) {}
+      try { return { w: cv.width, d: cv.getContext("2d").getImageData(0, 0, cv.width, ROWS).data }; } catch (e) { return null; }
+    }
+    function changedCols(a, b) {   // per column: does any of the top rows differ?
+      if (!a || !b || a.w !== b.w) return null;
+      const out = new Uint8Array(a.w);
+      for (let x = 0; x < a.w; x++) for (let y = 0; y < ROWS; y++) {
+        const i = (y * a.w + x) * 4;
+        if (Math.abs(a.d[i] - b.d[i]) + Math.abs(a.d[i + 1] - b.d[i + 1]) + Math.abs(a.d[i + 2] - b.d[i + 2]) > 24) { out[x] = 1; break; }
+      }
+      return out;
+    }
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    async function settled() {      // the strip once the guest has redrawn (two equal reads in a row)
+      for (let i = 0; i < 50; i++) { const p = ps2(); if (!p || !p.mouse_buffer || !p.mouse_buffer.length) break; await sleep(4); }
+      await sleep(90);              // guest handles the packet, Windows redraws, v86 paints (next frame)
+      let prev = strip();
+      for (let i = 0; i < 15; i++) {
+        await sleep(35);
+        const s2 = strip(), c = changedCols(prev, s2);
+        if (c && c.indexOf(1) < 0) return s2;
+        prev = s2;
+      }
+      return prev;
+    }
+    let cw = 0;
+    async function probe(px) {      // -> [movement of a +px packet, or -1; changed columns]
+      push({ k: "slam" }); await done();
+      const a = await settled();
+      push({ k: "raw", dx: px, dy: 0 }); await done();
+      const b = await settled();
+      cur = null;
+      const c = changedCols(a, b);
+      if (!c) return [-1, null];
+      const R = c.lastIndexOf(1);
+      if (R < 0 || !cw) return [-1, c];
+      return [R - (cw - 1), c];
+    }
+    async function calibrate() {
+      const [w] = size();
+      if (w < 320) { calibNote = "no desktop (" + w + " px wide)"; return false; }   // text mode / no desktop yet
+      say("Calibrating touch → Windows pointer (one-time)…", 6000);
+      // Cursor width: a 32 px probe moves 32..128 px, clear of a ~11 px arrow -> two runs of
+      // changed columns; the first run (from column 0) is the cursor that left the corner.
+      const c32 = (await probe(32))[1];
+      if (!c32 || !c32[0]) {
+        calibNote = "no cursor in the corner (" + (c32 ? "changed columns " + c32.reduce((n, v) => n + v, 0) + ", first " + c32.indexOf(1) + ", last " + c32.lastIndexOf(1) : "no frame") + ")";
+        return false;
+      }
+      let k = 0; while (k < c32.length && c32[k]) k++;
+      if (k < 4 || k > 40 || c32.indexOf(1, k) < 0) { calibNote = "cursor width " + k; return false; }
+      cw = k;
+      // Re-check a cached curve with one probe; otherwise measure the whole curve.
+      if (curve.length > 2) {
+        const want = curve.find((c) => c[0] === 64);
+        if (want && Math.abs((await probe(64))[0] - want[1]) <= 1) return true;
+      }
+      const sizes = [1, 2, 3, 4, 5, 6, 8, 12, 16, 24, 32, 64, 100, 127], got = [];
+      for (const p of sizes) {
+        const mv = (await probe(p))[0];
+        if (mv <= 0) { if (p <= 2) { calibNote = "probe " + p + " not seen"; return false; } break; }
+        if (got.length && mv < got[got.length - 1][1]) { calibNote = "not monotonic " + JSON.stringify(got.concat([[p, mv]])); return false; }
+        got.push([p, mv]);
+        if (mv >= w - 2 * cw) break;                                   // can't measure any further
+      }
+      if (got.length < 3 || got[0][1] < 1) { calibNote = "too few points " + JSON.stringify(got); return false; }
+      curve = got;
+      saveCurve(curve);
+      return true;
+    }
+    let calibLast = -1e9;
+    function ensureCalibrated() {
+      // Retry a failed calibration on a later touch (e.g. it ran while Windows still showed the
+      // animated "starting up" cursor) — at most every 8 s, 6 tries. Until then the safe curve
+      // (1-2 px packets) still lands taps exactly, just slower.
+      if (calibrated || calibrating || calibTries >= 6 || nowMs() - calibLast < 8000) return;
+      calibTries++; calibLast = nowMs();
+      calibrating = calibrate().then((ok) => {
+        calibrated = ok; calibrating = null; cur = null;
+        try { console.log("[pointer] calibration " + (ok ? "ok " + JSON.stringify(curve) : "failed: " + calibNote)); } catch (e) {}
+        if (ok) say("Pointer calibrated — taps land where you touch.", 2500);
+      }, () => { calibrating = null; cur = null; });
+    }
+    // Queue input behind a running calibration (it owns the pointer while it measures).
+    let pending = [];
+    function input(list) {
+      if (calibrating) { pending = pending.concat(list); calibrating.then(() => { const l = pending; pending = []; l.forEach(push); }); return; }
+      list.forEach(push);
+    }
+
+    // Map a client point to the guest pixel under it; the canvas is object-fit:contain, so the
+    // letterbox bars are excluded.
     const mapGuest = (clientX, clientY) => {
-      const cv = container.querySelector("canvas");
+      const cv = screenCanvas();
       if (!cv || !cv.width || !cv.height) return null;
       const r = cv.getBoundingClientRect();
       if (!r.width || !r.height) return null;
@@ -237,88 +445,92 @@
       return [
         Math.max(0, Math.min(cv.width - 1, (clientX - (r.left + (r.width - cv.width * scale) / 2)) / scale)),
         Math.max(0, Math.min(cv.height - 1, (clientY - (r.top + (r.height - cv.height * scale) / 2)) / scale)),
-        cv.width, cv.height,
       ];
     };
-    // Absolute positioning (with v86's mouse left ENABLED so clicks work). On each touch/press we
-    // anchor the cursor to the EXACT guest pixel under the finger via mapGuest, which already
-    // EXCLUDES the object-fit letterbox (the black side bars) so it isn't pushed toward centre.
-    // We can't read the guest cursor back, so we corner-slam then place (kills drift). DRAG motion
-    // is left to v86's own relative touch handler (touch), while the trackpad — which v86 doesn't
-    // handle — is driven by our own absolute tracking (track()).
-    let gCur = null;                          // our tracked guest-cursor position (guest px); null = unknown
-    const anchor = (clientX, clientY) => {    // re-establish a known position AT the pointer
-      const g = mapGuest(clientX, clientY); if (!g) return;
-      sendRaw(-(g[2] + 80), g[3] + 80);                 // slam into the top-left corner (overshoot)
-      sendRaw(Math.round(g[0]), -Math.round(g[1]));     // then to the exact guest pixel
-      gCur = { x: g[0], y: g[1] };
+    // fresh: re-home through the corner first (kills any drift) — unless that happened in the last
+    // 3 s with a measured curve, so a quick double-tap clicks twice in place (a real double-click).
+    const goTo = (clientX, clientY, fresh) => {
+      const g = mapGuest(clientX, clientY); if (!g) return [];
+      const home = fresh && !(calibrated && cur && nowMs() - homedMs < 3000);
+      return home ? [{ k: "slam" }, { k: "go", x: g[0], y: g[1] }] : [{ k: "go", x: g[0], y: g[1] }];
     };
-    const track = (clientX, clientY) => {     // follow the pointer with one cheap exact delta
-      const g = mapGuest(clientX, clientY); if (!g) return;
-      if (!gCur) { anchor(clientX, clientY); return; }
-      sendRaw(Math.round(g[0] - gCur.x), -Math.round(g[1] - gCur.y));
-      gCur = { x: g[0], y: g[1] };
-    };
-    let active = false, dragging = false, moved = false, twoFinger = false, scrolled = false;
+    const BTN_UP = { k: "btn", b: [false, false, false] }, LEFT_DOWN = { k: "btn", b: [true, false, false] };
+    const RIGHT_CLICK = [{ k: "btn", b: [false, false, true] }, BTN_UP];
+
+    let active = false, moved = false, twoFinger = false, scrolled = false, down = false;
     let startX = 0, startY = 0, startT = 0, scrollY = 0;
     const refocusKbd = () => { if (kbd && document.activeElement !== kbd) { try { kbd.focus({ preventScroll: true }); } catch (e) { try { kbd.focus(); } catch (e2) {} } } };
-    const twoAvgY = (e) => (e.touches[0].clientY + e.touches[1].clientY) / 2;
+    const twoAvg = (e) => [(e.touches[0].clientX + e.touches[1].clientX) / 2, (e.touches[0].clientY + e.touches[1].clientY) / 2];
     container.addEventListener("touchstart", (e) => {
       if (kbd && e.target === kbd) return; e.preventDefault();
+      ensureCalibrated();
       if (e.touches.length >= 2) {                       // two fingers = scroll / right-click (never a left press)
-        twoFinger = true; scrolled = false; scrollY = twoAvgY(e);
-        if (dragging) { leftUp(); dragging = false; }    // cancel the one-finger press the 2nd finger interrupts
-        anchor((e.touches[0].clientX + e.touches[1].clientX) / 2, scrollY);   // put the cursor under the fingers so the wheel scrolls THAT content
+        twoFinger = true; scrolled = false;
+        const m = twoAvg(e); scrollY = m[1];
+        const l = goTo(m[0], m[1], false);
+        if (down) { l.unshift(BTN_UP); down = false; }   // cancel the one-finger press the 2nd finger interrupts
+        input(l);                                        // cursor under the fingers so the wheel scrolls THAT content
         return;
       }
       const t = e.touches[0]; startX = t.clientX; startY = t.clientY; startT = nowMs();
       active = true; moved = false; twoFinger = false; scrolled = false;
-      // Direct touch: the finger IS the pointer. Anchor the cursor under it and press NOW — moving
-      // then drags (the cursor follows the finger via track()), a quick lift is a click.
-      anchor(t.clientX, t.clientY); leftDown(); dragging = true;
+      // Direct touch: the finger IS the pointer — home, go under it, press. Moving then drags;
+      // a quick lift is a click.
+      input(goTo(t.clientX, t.clientY, true).concat([LEFT_DOWN])); down = true;
     }, { passive: false });
     container.addEventListener("touchmove", (e) => {
       if (kbd && e.target === kbd) return; e.preventDefault();
-      if (e.touches.length >= 2) {                       // two-finger drag => mouse wheel (scroll)
+      if (e.touches.length >= 2) {                       // two-finger drag => mouse wheel
         twoFinger = true;
-        const y = twoAvgY(e); const STEP = 16; const n = ((y - scrollY) / STEP) | 0;   // whole wheel clicks since last move
-        if (n) { for (let i = 0; i < Math.abs(n); i++) { try { emulator.bus.send("mouse-wheel", [n > 0 ? -1 : 1, 0]); } catch (e2) {} } scrollY += n * STEP; scrolled = true; }
+        const y = twoAvg(e)[1]; const STEP = 16; const n = ((y - scrollY) / STEP) | 0;
+        if (n) { const l = []; for (let i = 0; i < Math.abs(n); i++) l.push({ k: "wheel", d: n > 0 ? -1 : 1 }); input(l); scrollY += n * STEP; scrolled = true; }
         return;
       }
       if (!active) return;
       const t = e.touches[0];
       if (Math.abs(t.clientX - startX) > TAP_TOL || Math.abs(t.clientY - startY) > TAP_TOL) moved = true;
-      track(t.clientX, t.clientY);                       // one-finger drag: cursor follows the finger (button held)
+      input(goTo(t.clientX, t.clientY, false));          // drag: the cursor chases the finger (button held)
     }, { passive: false });
     const endSeq = () => {
       if (!active && !twoFinger) return;
       const wasTwo = twoFinger, wasScroll = scrolled, wasTap = !moved && (nowMs() - startT) <= TAP_MS;
-      if (dragging) { leftUp(); dragging = false; }      // release the held button (ends a click or a drag)
+      if (down) { input([BTN_UP]); down = false; }       // release (ends a click or a drag)
       active = false; twoFinger = false; scrolled = false;
-      if (wasTwo) { if (!wasScroll) rightClick(); return; }   // two-finger tap (no scroll) = right-click
+      if (wasTwo) { if (!wasScroll) input(RIGHT_CLICK); return; }   // two-finger tap (no scroll) = right-click
       if (wasTap) refocusKbd();
     };
     container.addEventListener("touchend", (e) => { if (kbd && e.target === kbd) return; e.preventDefault(); if (e.touches.length === 0) endSeq(); }, { passive: false });
-    container.addEventListener("touchcancel", () => { if (dragging) leftUp(); active = false; dragging = false; twoFinger = false; scrolled = false; }, { passive: false });
+    container.addEventListener("touchcancel", () => { if (down) input([BTN_UP]); active = false; down = false; twoFinger = false; scrolled = false; }, { passive: false });
 
-    // --- Trackpad / hardware mouse: absolute tracking. iPad may deliver the trackpad as POINTER
-    // events (pointerType "mouse") OR as plain MOUSE events depending on the WKWebView, so we drive
-    // off BOTH, deduped (the mouse path skips if a pointer event just fired). Touch is unaffected:
-    // it fires pointerType "touch" (filtered out) and its compat mouse events are preventDefaulted.
-    // noteInput() briefly shows which path actually fires, so we can see what the trackpad sends.
-    let lastPtr = 0;
-    const noteInput = (k, e) => { try { status._hold = nowMs() + 4000; status.textContent = "input: " + k + " (" + (e.pointerType || "mouse") + ") — driving the cursor"; } catch (_e) {} };
-    const ptrMouse = (e) => e.pointerType && e.pointerType !== "touch";   // mouse/trackpad/pen only (not finger)
-    container.addEventListener("pointermove", (e) => { if (!ptrMouse(e)) return; lastPtr = nowMs(); track(e.clientX, e.clientY); });
-    container.addEventListener("pointerdown", (e) => { if (!ptrMouse(e)) return; lastPtr = nowMs(); noteInput("pointerdown", e); e.preventDefault(); anchor(e.clientX, e.clientY); if (e.button === 2) rightClick(); else { leftDown(); refocusKbd(); } });
-    container.addEventListener("pointerup", (e) => { if (!ptrMouse(e)) return; lastPtr = nowMs(); if (e.button !== 2) leftUp(); });
-    container.addEventListener("pointercancel", (e) => { if (!ptrMouse(e)) return; gCur = null; });
-    container.addEventListener("pointerleave", (e) => { if (!ptrMouse(e)) return; gCur = null; });
-    // Fallback for a trackpad/mouse that emits only MOUSE events (no pointer events):
-    const stale = () => nowMs() - lastPtr > 600;   // a pointer event isn't currently handling it
-    container.addEventListener("mousemove", (e) => { if (stale()) track(e.clientX, e.clientY); });
-    container.addEventListener("mousedown", (e) => { if (!stale()) return; noteInput("mousedown", e); e.preventDefault(); anchor(e.clientX, e.clientY); if (e.button === 2) rightClick(); else { leftDown(); refocusKbd(); } });
-    container.addEventListener("mouseup", (e) => { if (!stale()) return; if (e.button !== 2) leftUp(); });
+    // --- Trackpad / hardware mouse. iPad may deliver it as POINTER events (pointerType "mouse") or
+    // plain MOUSE events depending on the WKWebView, so drive off both, deduped (the mouse path
+    // skips while pointer events are arriving). Finger touches are pointerType "touch" (ignored here;
+    // their compat mouse events are suppressed by the touch handlers' preventDefault).
+    let lastPtr = 0, homed = false;
+    const ptrMouse = (e) => e.pointerType && e.pointerType !== "touch";
+    const hover = (x, y) => { input(goTo(x, y, !homed)); homed = true; };
+    const press = (e) => {
+      ensureCalibrated();
+      if (e.button === 2) input(goTo(e.clientX, e.clientY, true).concat(RIGHT_CLICK));
+      else { input(goTo(e.clientX, e.clientY, true).concat([LEFT_DOWN])); down = true; refocusKbd(); }
+      homed = true;
+    };
+    const release = (e) => { if (e.button !== 2 && down) { input([BTN_UP]); down = false; } };
+    container.addEventListener("pointermove", (e) => { if (!ptrMouse(e)) return; lastPtr = nowMs(); hover(e.clientX, e.clientY); });
+    container.addEventListener("pointerdown", (e) => { if (!ptrMouse(e)) return; lastPtr = nowMs(); e.preventDefault(); press(e); });
+    container.addEventListener("pointerup", (e) => { if (!ptrMouse(e)) return; lastPtr = nowMs(); release(e); });
+    container.addEventListener("pointerleave", (e) => { if (!ptrMouse(e)) return; homed = false; });
+    const stale = () => nowMs() - lastPtr > 600;   // no pointer event is currently handling it
+    container.addEventListener("mousemove", (e) => { if (stale()) hover(e.clientX, e.clientY); });
+    container.addEventListener("mousedown", (e) => { if (!stale()) return; e.preventDefault(); press(e); });
+    container.addEventListener("mouseup", (e) => { if (stale()) release(e); });
+    container.addEventListener("wheel", (e) => {   // trackpad two-finger scroll
+      e.preventDefault();
+      const n = Math.max(-3, Math.min(3, Math.round(e.deltaY / 40))) || (e.deltaY ? (e.deltaY > 0 ? 1 : -1) : 0);
+      if (n) { const l = []; for (let i = 0; i < Math.abs(n); i++) l.push({ k: "wheel", d: n > 0 ? -1 : 1 }); input(l); }   // v86: +1 = wheel up
+    }, { passive: false });
+    container.addEventListener("contextmenu", (e) => e.preventDefault());
+    try { window.__bbPointer = { ops, curve: () => curve, cur: () => cur, reset: () => { calibrated = false; calibTries = 0; calibLast = -1e9; }, calibrate: () => { calibrated = false; calibTries = 0; calibLast = -1e9; saveCurve(null); curve = [[1, 1], [2, 2]]; ensureCalibrated(); return calibrating; } }; } catch (e) {}
   }
   function nowMs() { return (window.performance && performance.now) ? performance.now() : (+new Date()); }
 
@@ -385,15 +597,21 @@
             #screen_container>div{white-space:pre;font:14px/1.05 "Cascadia Mono",Consolas,monospace;color:#19c37d;transform-origin:center center}
             /* Scale the v86 graphical display to FILL the iPad screen (keep aspect, no
                distortion). v86 sets the canvas to the guest's native pixel size inline,
-               so override with !important; object-fit:contain letterboxes as needed. */
-            #screen_container canvas{image-rendering:auto !important;position:absolute !important;
+               so override with !important; object-fit:contain letterboxes as needed.
+               ONLY v86's own canvas (a direct child): the 64-bit guests' noVNC canvas lives
+               deeper in this container, and stretching ITS box to the pane while the picture
+               is letterboxed inside made noVNC map every tap against the wrong rectangle —
+               X right, Y off by the letterbox bar (the "cursor not aligned" bug on the Linux
+               desktop and Android). noVNC sizes and centres its own canvas. */
+            #screen_container>canvas{image-rendering:auto !important;position:absolute !important;
               top:0 !important;left:0 !important;width:100% !important;height:100% !important;
               object-fit:contain !important}
-            /* Hide the iPad trackpad/host pointer over the screen: v86's mouse is
+            /* Hide the iPad trackpad/host pointer over the v86 screen: v86's mouse is
                RELATIVE, so a host pointer (absolute) drifts out of sync with the
                guest cursor. With it hidden, the guest cursor is the only one and you
-               drive it like a laptop trackpad. */
-            #screen_container, #screen_container *{cursor:none !important}
+               drive it like a laptop trackpad. (Not over the 64-bit panel: noVNC is
+               absolute, so there the iPad pointer IS the cursor.) */
+            #screen_container>canvas, #screen_container>div:not(.q64-wrap){cursor:none !important}
           </style>
           <div class="emu-bar">
             <button class="e-btn" id="exit" title="Power off & return to Bootbox BIOS">‹ BIOS</button>
@@ -605,6 +823,16 @@
                 ? netRelay : "wss://relay.widgetry.org/";
             }
             if (initialState) o.initial_state = { buffer: initialState };
+            // Windows 9x + v86's JIT: VMM patches each VxD call site (INT 20h + device/service dword
+            // -> direct call) the first time it runs, and v86's JIT sometimes re-runs the stale INT 20h
+            // after its operand was patched -> "Invalid VxD dynamic link call from VMM(06)+00001B6A to
+            // device C001" (0xC0010EA4 is the patched-in address) and "Windows protection error".
+            // Measured 2026-10: ~70% of Win98 boots failed, Chrome and WebKit alike; with the JIT off
+            // the same image booted every time, and the desktop was up just as fast. The patching
+            // happens while Windows boots, so boot on the interpreter and turn the JIT on once the
+            // desktop has been up for a while (a restored snapshot is past that point already).
+            const win9x = !kernelBoot && !initialState && (g.id === "win98" || /win\s*9[58x]|win98|w98|winme/i.test(String(img || "")));
+            if (win9x) o.disable_jit = true;
             if (kernelBoot) {
               // Fast path: boot the kernel + initrd directly (no BIOS/disk).
               o.bzimage = { url: g.bzimage };
@@ -618,6 +846,26 @@
               if (kind === "hda" || kind === "hdb") o.boot_order = 0x312;  // boot the installed system off the hard disk
             }
             emu = new Ctor(o);
+            if (win9x) {
+              const v86emu = emu, jitT0 = Date.now();
+              let gfxSince = 0;
+              const jitTimer = setInterval(() => {
+                try {
+                  if (emu !== v86emu) { clearInterval(jitTimer); return; }    // stopped / replaced
+                  const cv = body.querySelector("#screen_container > canvas");
+                  const gfx = cv && cv.width >= 640 && getComputedStyle(cv).display !== "none";
+                  gfxSince = gfx ? (gfxSince || Date.now()) : 0;
+                  if ((gfxSince && Date.now() - gfxSince > 15000) || Date.now() - jitT0 > 180000) {
+                    const cpu = v86emu.v86 && v86emu.v86.cpu;
+                    if (cpu && cpu.set_jit_config) {
+                      cpu.set_jit_config(0, 0);
+                      clearInterval(jitTimer);
+                      console.log("[v86] Windows is up — JIT on (" + Math.round((Date.now() - jitT0) / 1000) + " s after start)");
+                    }
+                  }
+                } catch (e) {}
+              }, 2000);
+            }
             // Scale the v86 TEXT-mode console to fill the screen too (CSS object-fit
             // only handles the graphical canvas). Re-fit on mode/size changes + resize.
             const fitText = () => {
@@ -648,12 +896,10 @@
                   if (++netTries < 5 && emu.network_adapter && !emu.network_adapter.socket) setTimeout(nudgeNet, 1200);
                 })();
               }
-              // Keep v86's built-in mouse ENABLED — it is LOAD-BEARING: with it off the guest never
-              // sees our clicks (bus.send mouse-click only reaches the guest while v86's mouse adapter
-              // is active — disabling it = "cannot click"). We still position ABSOLUTELY ourselves on
-              // each touch/press; v86's own relative handler does the drag movement.
-              try { emu.mouse_set_status && emu.mouse_set_status(true); } catch (e) {}
-              try { installV86TouchMouse(emu, { container: body.querySelector("#screen_container"), keyboardInput: body.querySelector("#kbd-capture") }); } catch (e) {}
+              // All pointer input (touch, trackpad, wheel) is driven by installV86TouchMouse: paced
+              // PS/2 packets + a measured acceleration curve, so taps land on the touched pixel. (The
+              // old "keep v86's adapter on or clicks die" was really the burst problem it describes.)
+              try { installV86TouchMouse(emu, { container: body.querySelector("#screen_container"), keyboardInput: body.querySelector("#kbd-capture"), status, key: img || g.id }); } catch (e) {}
               // Trackpad / Magic Keyboard: pointer-lock doesn't work on iPad, so rather than
               // capturing the pointer, installV86TouchMouse intercepts the mouse events and
               // absolutely tracks the system pointer — the guest cursor follows it like touch.

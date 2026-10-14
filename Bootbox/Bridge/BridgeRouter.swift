@@ -8,10 +8,12 @@ import UIKit
 ///   window.webkit.messageHandlers.host.postMessage({ id, bridge, action, payload })
 /// Reply (host -> guest):  window.__hostReply(id, ok, result)
 /// Event (host -> guest):  window.__hostEvent(name, payload)
-final class BridgeRouter: NSObject, WKScriptMessageHandler, UIGestureRecognizerDelegate {
+final class BridgeRouter: NSObject, WKScriptMessageHandler, UIGestureRecognizerDelegate, WKNavigationDelegate {
     weak var webView: WKWebView?
     /// Replaces the WKWebView with a brand-new one (set by WebHostView). See "freshReload" below.
     var onFreshReload: (() -> Void)?
+    /// Query string for the next page load (e.g. "bbnote=crash" after the WebContent process died).
+    var nextLoadQuery: String?
     // Let our trackpad-scroll pan run alongside the WebView's own recognizers (don't steal touches).
     func gestureRecognizer(_ g: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith other: UIGestureRecognizer) -> Bool { true }
 
@@ -29,6 +31,43 @@ final class BridgeRouter: NSObject, WKScriptMessageHandler, UIGestureRecognizerD
         super.init()
         NotificationCenter.default.addObserver(self, selector: #selector(onHostEvent(_:)),
                                                name: HostEvents.notification, object: nil)
+        let nc = NotificationCenter.default
+        nc.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { _ in
+            BootLog.native("memory warning (app footprint \(Self.footprintMB()) MB)")
+        }
+        nc.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { _ in
+            BootLog.native("app entered background")
+        }
+        nc.addObserver(forName: UIApplication.willEnterForegroundNotification, object: nil, queue: .main) { _ in
+            BootLog.native("app returning to foreground")
+        }
+        BootLog.native("app start (\(UIDevice.current.model), iOS \(UIDevice.current.systemVersion), " +
+                       "\(ProcessInfo.processInfo.physicalMemory >> 20) MB RAM)")
+    }
+
+    private static func footprintMB() -> Int {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<natural_t>.size)
+        let kr = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) { task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count) }
+        }
+        return kr == KERN_SUCCESS ? Int(info.phys_footprint >> 20) : -1
+    }
+
+    // MARK: - WKNavigationDelegate
+    // iOS kills the WebContent process when it uses too much memory (a big guest can). The web view
+    // then just sits there blank/black. Log it and start over in a fresh web view that tells the user
+    // what happened (boot.js shows the ?bbnote=crash banner).
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        BootLog.native("WebContent process terminated (iOS stopped the page; usually memory) — reloading")
+        nextLoadQuery = "bbnote=crash"
+        DispatchQueue.main.async { [weak self] in self?.onFreshReload?() }
+    }
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        BootLog.native("page load failed: \(error.localizedDescription)")
+    }
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        BootLog.native("page navigation failed: \(error.localizedDescription)")
     }
 
     // Trackpad / mouse two-finger scroll → forward to the active guest terminal. The WebView's scrollView

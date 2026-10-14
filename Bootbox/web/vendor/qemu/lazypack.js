@@ -59,9 +59,19 @@
     throw new Error("lazy pack: could not read " + start + "-" + end + " as binary");
   }
 
+  // Read progress, for the "loading…" status while a guest boots: the furthest byte read of each
+  // lazy file (a RAM snapshot is read front to back) and the total fetched.
+  const stats = { files: [], fetched: 0 };
+  function progress() {
+    const snap = stats.files.find((f) => /vm\.state$/.test(f.name));
+    return { snapshot: snap ? { read: snap.top, size: snap.size } : null, fetched: stats.fetched };
+  }
+
   // Turn MEMFS node `node` into a window [base, base + size) of the pack at `url`.
-  function makeLazy(node, url, base, size, cacheChunks) {
+  function makeLazy(node, url, base, size, cacheChunks, name) {
     const keep = cacheChunks || CACHE_CHUNKS;
+    const st = { name: name || "", size, top: 0 };
+    stats.files.push(st);
     const cache = new Map();     // chunk index -> clean bytes (Map order = LRU)
     const dirty = new Map();     // chunk index -> privately written bytes (never evicted)
     const chunk = (ci) => {
@@ -71,6 +81,7 @@
       if (c) { cache.delete(ci); cache.set(ci, c); return c; }
       const s = ci * CHUNK, e = Math.min(size, s + CHUNK);
       c = syncRange(url, base + s, base + e);
+      stats.fetched += c.length;
       cache.set(ci, c);
       if (cache.size > keep) cache.delete(cache.keys().next().value);
       return c;
@@ -84,6 +95,7 @@
       read(stream, buffer, offset, length, position) {
         if (position >= node.usedBytes) return 0;
         const n = Math.min(length, node.usedBytes - position);
+        if (position + n > st.top) st.top = position + n;
         const dst = new Uint8Array(buffer.buffer, buffer.byteOffset + offset, n);
         let done = 0;
         while (done < n) {
@@ -128,10 +140,10 @@
       } else {
         Module.FS_createDataFile(dir, name, new Uint8Array(0), true, true, true);
         // A RAM snapshot (vm.state) is read once, front to back: keep almost nothing of it cached.
-        makeLazy(FS.lookupPath(f.filename).node, url, f.start, size, /vm\.state$/.test(name) ? 2 : CACHE_CHUNKS);
+        makeLazy(FS.lookupPath(f.filename).node, url, f.start, size, /vm\.state$/.test(name) ? 2 : CACHE_CHUNKS, name);
       }
     }));
   }
 
-  self.BootboxLazyPack = { probe, install, makeLazy, SMALL, CHUNK };
+  self.BootboxLazyPack = { probe, install, makeLazy, progress, SMALL, CHUNK };
 })();

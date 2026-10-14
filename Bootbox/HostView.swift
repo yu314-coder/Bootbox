@@ -175,6 +175,7 @@ struct WebHostView: UIViewControllerRepresentable {
         webView.isOpaque = false
         webView.allowsBackForwardNavigationGestures = false
         coordinator.webView = webView
+        webView.navigationDelegate = coordinator
 
         // Trackpad / mouse two-finger scroll → guest terminal. scrollView.isScrollEnabled is off (so touch
         // reaches the emulator), which otherwise drops the Magic Keyboard's indirect scroll. maximumNumberOfTouches
@@ -190,9 +191,11 @@ struct WebHostView: UIViewControllerRepresentable {
         let dropper = WebDropDelegate(); WebDropDelegate.retained = dropper
         webView.addInteraction(UIDropInteraction(delegate: dropper))
 
+        let query = coordinator.nextLoadQuery.map { "?" + $0 } ?? ""
+        coordinator.nextLoadQuery = nil
         LocalServer.shared.start { base in
             DispatchQueue.main.async {
-                if let base = base, let url = URL(string: "index.html", relativeTo: base) {
+                if let base = base, let url = URL(string: "index.html" + query, relativeTo: base) {
                     webView.load(URLRequest(url: url))
                 } else if let url = URL(string: AppSchemeHandler.indexURL) {
                     webView.load(URLRequest(url: url))

@@ -140,4 +140,38 @@
   };
 
   window.Bridge = Bridge;
+
+  // Persistent app log: the page's console + uncaught errors are appended (batched every 2 s,
+  // repeats collapsed) to the app's Documents/Logs/bootbox.log via SystemBridge "appendLog", next to
+  // native events such as iOS killing the WebContent process. A black screen on a real iPad then
+  // leaves evidence that can be read back afterwards (Files app, or a paired Mac).
+  if (onDevice) (function () {
+    const t0 = Date.now();
+    let buf = [], last = "", rep = 0, timer = 0;
+    function flush() {
+      timer = 0;
+      if (rep) { buf.push("    (repeated " + rep + "x)"); rep = 0; last = ""; }
+      if (!buf.length) return;
+      const text = buf.slice(-300).join("\n"); buf = [];
+      try { window.webkit.messageHandlers.host.postMessage({ id: "log" + (++seq), bridge: "system", action: "appendLog", payload: { text } }); } catch (e) {}
+    }
+    function add(level, args) {
+      let s;
+      try { s = Array.prototype.map.call(args, (x) => x && x.stack ? x.stack : (x && typeof x === "object" ? JSON.stringify(x) : String(x))).join(" "); } catch (e) { s = "(unprintable)"; }
+      if (s.length > 800) s = s.slice(0, 800) + "…";
+      if (s === last) { rep++; return; }
+      if (rep) { buf.push("    (repeated " + rep + "x)"); rep = 0; }
+      last = s;
+      buf.push(((Date.now() - t0) / 1000).toFixed(1) + " " + level + " " + s);
+      if (!timer) timer = setTimeout(flush, 2000);
+    }
+    ["log", "info", "warn", "error"].forEach((l) => {
+      const orig = console[l];
+      console[l] = function () { add(l.charAt(0).toUpperCase(), arguments); return orig.apply(console, arguments); };
+    });
+    addEventListener("error", (e) => add("X", [e.message + " @" + (e.filename || "?") + ":" + e.lineno]));
+    addEventListener("unhandledrejection", (e) => add("X", ["unhandled rejection: " + ((e.reason && (e.reason.stack || e.reason.message)) || e.reason)]));
+    addEventListener("pagehide", flush);
+    add("I", ["=== page start " + new Date().toISOString() + " " + location.href + " | " + navigator.userAgent]);
+  })();
 })();

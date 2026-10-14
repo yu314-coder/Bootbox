@@ -362,19 +362,47 @@
         try { if (rfb && rfb._rfbConnectionState === "connected") { rfb.scaleViewport = false; rfb.scaleViewport = true; } } catch (e) {}
       });
     } catch (e) {}
+    // Until the display is up, keep the "Connecting…" line alive with what the guest is doing —
+    // RAM-snapshot progress (Android resumes a 1.3 GB saved state) or guest-disk data read so far,
+    // plus elapsed time — so a slow first boot on an iPad doesn't look like a dead black screen.
+    const guiT0 = Date.now();
+    let guiMsg = null, guiMsgCb = null, guiMsgTimer = 0;
+    function guiNote() {
+      let t = "";
+      try {
+        const p = self.BootboxLazyPack && self.BootboxLazyPack.progress();
+        if (p && p.snapshot && p.snapshot.read < p.snapshot.size) t = " Loading the saved state: " + Math.floor(100 * p.snapshot.read / p.snapshot.size) + "%.";
+        else if (p && p.fetched) t = " Guest data loaded so far: " + Math.round(p.fetched / 1048576) + " MB.";
+      } catch (e) {}
+      return t + " (" + Math.round((Date.now() - guiT0) / 1000) + " s)";
+    }
+    function guiStatus(cb, msg, live) {   // live: refresh msg + progress every second until replaced
+      guiMsgCb = cb; guiMsg = live ? msg : null;
+      if (!live && guiMsgTimer) { clearInterval(guiMsgTimer); guiMsgTimer = 0; }
+      cb(msg === null ? null : live ? msg + guiNote() : msg);
+      if (live && !guiMsgTimer) {
+        let n = 0;
+        guiMsgTimer = setInterval(function () {
+          if (guiMsg === null || !guiMsgCb) return;
+          const line = guiMsg + guiNote();
+          guiMsgCb(line);
+          if (++n % 10 === 0) console.log("[gui] " + line);   // leaves a trail in the app log
+        }, 1000);
+      }
+    }
     async function connectGui(guiHost, statusCb) {
       statusCb = statusCb || function () {};
       lastGuiHost = guiHost; lastStatusCb = statusCb;
       if (rfb) return rfb;
-      if (!opts.vnc) { statusCb("No VNC endpoint configured for this guest."); return null; }
-      statusCb("Connecting to " + (opts.vncLabel || "the Linux desktop") + "…");
+      if (!opts.vnc) { guiStatus(statusCb, "No VNC endpoint configured for this guest."); return null; }
+      guiStatus(statusCb, "Connecting to " + (opts.vncLabel || "the Linux desktop") + "…", true);
       let RFB = __RFB || (await __rfbWarm);   // use the pre-warmed viewer (loaded while memory was free)
       if (!RFB) {
         // Pre-warm didn't land — try a fresh import; if that fails too, retry on a timer (don't stick).
         try { RFB = __RFB = (await import(new URL("vendor/novnc/core/rfb.js?r=" + guiRetries, location.href).href)).default; }
         catch (e) {
-          if (guiRetries++ < 45) { statusCb("Loading the desktop viewer… (~" + (guiRetries * 4) + "s)"); setTimeout(() => connectGui(guiHost, statusCb), 4000); }
-          else { statusCb("noVNC failed to load: " + ((e && e.message) || e)); }
+          if (guiRetries++ < 45) { guiStatus(statusCb, "Loading the desktop viewer…", true); setTimeout(() => connectGui(guiHost, statusCb), 4000); }
+          else { guiStatus(statusCb, "noVNC failed to load: " + ((e && e.message) || e)); }
           return null;
         }
       }
@@ -391,7 +419,10 @@
         // Cheaper guest-side encode = faster first frame + snappier updates: Xvnc compresses
         // frames on the EMULATED CPU, so high zlib effort is pure lag. Level 1 measured-cheap.
         try { rfb.compressionLevel = 1; } catch (e) {}
-        rfb.addEventListener("connect", function () { guiRetries = 0; statusCb(null); });
+        rfb.addEventListener("connect", function () {
+          guiRetries = 0; guiStatus(statusCb, null);
+          console.log("[gui] display connected " + Math.round((Date.now() - guiT0) / 1000) + " s after start");
+        });
         rfb.addEventListener("disconnect", function () {
           rfb = null;
           // Auto-retry until the guest's X server (Xvnc) is up. FAST cadence for the first ~10s
@@ -399,12 +430,12 @@
           // every connect feel slow), then back off to 4s for the long cold-boot tail.
           if (guiRetries++ < 60) {
             var wait = guiRetries <= 8 ? 1200 : 4000;
-            statusCb("Connecting to " + (opts.vncLabel || "the Linux desktop") + "…" + (guiRetries > 8 ? " (~" + (guiRetries * 4) + "s)" : ""));
+            guiStatus(statusCb, "Connecting to " + (opts.vncLabel || "the Linux desktop") + "…", true);
             setTimeout(function () { connectGui(guiHost, statusCb); }, wait);
           }
-          else { statusCb("Desktop didn't come up. Tap 🖥️ GUI to retry."); }
+          else { guiStatus(statusCb, "Desktop didn't come up. Tap 🖥️ GUI to retry."); }
         });
-      } catch (e) { rfb = null; statusCb("VNC error: " + ((e && e.message) || e)); return null; }
+      } catch (e) { rfb = null; guiStatus(statusCb, "VNC error: " + ((e && e.message) || e)); return null; }
       return rfb;
     }
     opts.onReady && opts.onReady({ xterm, term: xterm, fs: shareFs, connectGui });
