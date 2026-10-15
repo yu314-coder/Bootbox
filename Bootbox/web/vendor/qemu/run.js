@@ -547,10 +547,10 @@
         if (e.target !== cv) return;
         own(e);
         const k = e.deltaMode === 1 ? 40 : e.deltaMode === 2 ? 400 : 1;
-        if (!pan) self.__bbPan(0, e.clientX, e.clientY, 0, 0);
-        self.__bbPan(1, e.clientX, e.clientY, -e.deltaX * k, -e.deltaY * k);
+        if (!pan) self.__bbPan(0, e.clientX, e.clientY, 0, 0, "dom");
+        self.__bbPan(1, e.clientX, e.clientY, -e.deltaX * k, -e.deltaY * k, "dom");
         clearTimeout(wheelEnd);
-        wheelEnd = setTimeout(function () { self.__bbPan(2, 0, 0, 0, 0); }, 150);
+        wheelEnd = setTimeout(function () { self.__bbPan(2, 0, 0, 0, 0, "dom"); }, 150);
       }, opt);
     }
     // Trackpad / mouse-wheel scrolling over the GUI. HostView's indirect-scroll recognizer calls
@@ -559,19 +559,39 @@
     // Android: a finger drag that starts under the pointer and follows the fingers (so a quick
     // swipe flings, exactly like touch). Linux desktop: wheel clicks, one per ~40 px.
     let pan = null;
-    self.__bbPan = function (phase, x, y, dx, dy) {
+    // Two ways a trackpad/mouse scroll can reach us, and which one fires depends on the iPadOS/WebKit
+    // version: (1) DOM wheel events (noVNC handles them itself for X desktops; installDirectTouch turns
+    // them into a finger drag for Android) and (2) HostView's native indirect-scroll recognizer calling
+    // __bbPan. Whichever path is live wins: native calls are ignored while DOM wheel events are flowing,
+    // so a scroll is never applied twice.
+    let lastDomWheel = 0, lastHover = null, wheelLogT = 0;
+    addEventListener("wheel", function (e) {
+      lastDomWheel = Date.now();
+      if (lastDomWheel - wheelLogT > 5000) { wheelLogT = lastDomWheel; console.log("[scroll] DOM wheel dy=" + e.deltaY + " mode=" + e.deltaMode); }
+    }, { capture: true, passive: true });
+    addEventListener("pointermove", function (e) {   // the trackpad pointer's position (it hovers)
+      if (e.pointerType === "mouse") lastHover = { x: e.clientX, y: e.clientY };
+    }, { capture: true, passive: true });
+    const WHEEL_STEP = 24;   // CSS px of scroll per X wheel click
+    self.__bbPan = function (phase, x, y, dx, dy, src) {
       try {
         const r = rfb;
+        const native = src !== "dom";
+        if (native && Date.now() - lastDomWheel < 500) {   // the DOM path is handling it
+          if (pan && pan.native) { if (pan.touch && pan.r.__bbFinger) pan.r.__bbFinger.release(null); pan = null; }
+          return true;
+        }
         if (phase === 0) {
           if (pan && pan.touch && pan.r.__bbFinger) pan.r.__bbFinger.release(null);   // never leave a finger down
           pan = null;
           if (!r || r._rfbConnectionState !== "connected" || !r._canvas) return false;
-          const el = document.elementFromPoint(x, y);
-          // (noVNC lays a page-wide capture <div> over everything while a mouse button is held)
-          if (!el || !(r._target.contains(el) || el.id === "noVNC_mouse_capture_elem")) return false;
           const b = r._canvas.getBoundingClientRect();
-          if (x < b.left || x >= b.right || y < b.top || y >= b.bottom) return false;
-          pan = { r, x, y, acc: 0, touch: !!(opts.touchGuest && r.__bbFinger) };
+          const inside = (X, Y) => X >= b.left && X < b.right && Y >= b.top && Y < b.bottom;
+          // The recognizer's location can miss (e.g. reported before the pointer moved); fall back to
+          // where the pointer last hovered. A hidden GUI pane has an empty rect, so it never matches.
+          if (!inside(x, y) && lastHover && inside(lastHover.x, lastHover.y)) { x = lastHover.x; y = lastHover.y; }
+          if (!inside(x, y)) { if (native) console.log("[scroll] not over the screen (" + Math.round(x) + "," + Math.round(y) + ")"); return false; }
+          pan = { r, x, y, acc: 0, clicks: 0, native, touch: !!(opts.touchGuest && r.__bbFinger) };
           if (pan.touch) {
             if (r.__bbFinger && r.__bbFinger.down) { pan = null; return true; }   // a real finger is down
             r.__bbFinger.press(fbPoint(r, x, y));
@@ -580,22 +600,22 @@
         }
         if (!pan) return false;
         if (pan.r !== r) { pan = null; return false; }
+        const wheel = (dir) => {   // dir > 0: fingers moved down = scroll up (X button 4)
+          const p = fbPoint(r, pan.x, pan.y), held = r._mouseButtonMask || 0, bit = dir > 0 ? 8 : 16;
+          sendPointer(r, p, held | bit); sendPointer(r, p, held); pan.clicks++;
+        };
         if (phase === 1) {
           if (pan.touch) {
             pan.x += dx; pan.y += dy;
             r.__bbFinger.move(fbPoint(r, pan.x, pan.y));
           } else {
             pan.acc += dy;
-            const p = fbPoint(r, pan.x, pan.y), held = r._mouseButtonMask || 0;
-            while (Math.abs(pan.acc) >= 40) {
-              const bit = pan.acc > 0 ? 8 : 16;   // fingers down -> scroll up (button 4)
-              sendPointer(r, p, held | bit); sendPointer(r, p, held);
-              pan.acc -= pan.acc > 0 ? 40 : -40;
-            }
+            while (Math.abs(pan.acc) >= WHEEL_STEP) { wheel(pan.acc); pan.acc -= pan.acc > 0 ? WHEEL_STEP : -WHEEL_STEP; }
           }
           return true;
         }
         if (pan.touch) r.__bbFinger.release(null);
+        else if (!pan.clicks && Math.abs(pan.acc) >= 2) wheel(pan.acc);   // a single mouse-wheel notch still scrolls
         pan = null;
         return true;
       } catch (e) { pan = null; return false; }
