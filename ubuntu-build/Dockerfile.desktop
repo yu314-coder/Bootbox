@@ -209,5 +209,12 @@ RUN set -eux; \
 
 # Boots straight into the full desktop (launcher menu + browser + file manager).
 COPY xstart-desktop.sh /usr/local/bin/xstart
-RUN chmod +x /usr/local/bin/xstart
+# Start the desktop's X server with xstart's EXACT command line and require its socket: an option this
+# Xvnc doesn't know (v9's -DeferUpdate) makes it exit at once and the desktop never appears.
+RUN set -eux; chmod +x /usr/local/bin/xstart; \
+    cmd=$(sed -e ':a' -e '/\\$/{N;s/\\\n//;ba' -e '}' /usr/local/bin/xstart | grep -o 'Xvnc :0[^>]*' | tr -s ' '); echo "$cmd"; \
+    (eval "timeout 20 $cmd" >/tmp/xvnc-test.log 2>&1 &); \
+    for i in $(seq 1 30); do [ -e /tmp/.X11-unix/X0 ] && break; sleep 0.5; done; \
+    test -e /tmp/.X11-unix/X0 || { cat /tmp/xvnc-test.log; exit 1; }; \
+    pkill Xvnc || true; rm -rf /tmp/.X11-unix /tmp/.X0-lock /tmp/xvnc-test.log; echo "XVNC-ARGS-OK"
 CMD ["/usr/local/bin/xstart"]

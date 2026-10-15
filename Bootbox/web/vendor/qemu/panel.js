@@ -207,7 +207,7 @@
       // Smart tap (build 72): OFF → connect; stuck CONNECTING → force a FRESH session (the old
       // handler called the idempotent connectGui, which returned the stuck object = dead button).
       var st = window.__guiState ? window.__guiState() : "no-rfb";
-      if (st !== "no-rfb" && st.indexOf("connected") !== 0 && window.__guiReconnect) {
+      if (st.indexOf("connected") !== 0 && window.__guiReconnect) {   // incl. "no-rfb": a fresh retry budget
         setGuiStatus("Reconnecting the desktop…"); window.__guiReconnect(); return;
       }
       try { if (typeof api.onGuiOpen === "function") api.onGuiOpen(guiEl); } catch (e) {}

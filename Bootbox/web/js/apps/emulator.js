@@ -84,8 +84,10 @@
     "vendor/qemu-desktop/": { files: [   // x86_64 engine shared from qemu-aload; only the rootfs downloads
       // desktop v9 (build 95): v8's openbox desktop + a Benchmarks section in the Apps menu - CPU-Z
       // (64-bit Wine, warmed prefix) and glmark2 on Mesa llvmpipe, preinstalled; Xvnc -DeferUpdate 10.
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v9/qemu-desktop9-rootfs.data.gz",
-        name: "qemu-desktop9-rootfs-1300120755.data.gz", mb: 410, size: 430297987 },
+      // 9b (build 96): v9 passed Xvnc an option it doesn't know (-DeferUpdate) - the display server
+      // exited at once and the desktop never came up. New file name so cached broken copies are replaced.
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v9/qemu-desktop9b-rootfs.data.gz",
+        name: "qemu-desktop9b-rootfs-1301136108.data.gz", mb: 411, size: 430815277 },
     ] },
     // Android is a full AOSP x86_64 userspace on Bootbox's QEMU guest kernel.
     // The rootfs is download-on-demand; the x86_64 engine is shared with Linux.

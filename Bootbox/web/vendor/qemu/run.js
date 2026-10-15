@@ -155,6 +155,7 @@
     // DOM 'wheel' event — the terminal couldn't scroll with a trackpad. HostView adds a UIPanGestureRecognizer
     // (indirect scroll only) that calls this with a pixel delta; we scroll the scrollback here. Skip
     // full-screen (alt-buffer) TUIs — they own the screen and use arrow keys, not scrollback.
+    try { self.__q64xterm = xterm; } catch (e) {}   // debugging handle (serial console)
     self.__trackpadScroll = function (dyPx) {
       try {
         if (xterm.buffer && xterm.buffer.active && xterm.buffer.active.type === "alternate") return;
@@ -327,9 +328,9 @@
         return (rfb._rfbConnectionState || "?") + "/ws=" + (ws ? ws.readyState : "?");
       } catch (e) { return "state-err"; }
     }
-    function forceReconnectGui() {
+    function forceReconnectGui(keepCount) {   // keepCount: a watchdog retry, not a user tap
       try { if (rfb) rfb.disconnect(); } catch (e) {}
-      rfb = null; guiRetries = 0;
+      rfb = null; if (!keepCount) guiRetries = 0;
       if (lastGuiHost) return connectGui(lastGuiHost, lastStatusCb);
       return null;
     }
@@ -356,7 +357,7 @@
           }
         } else if (rfbBornAt && Date.now() - rfbBornAt > 20000) {
           console.log("[gui] watchdog: stuck in '" + st + "' for >20s — reconnecting fresh");
-          forceReconnectGui();
+          forceReconnectGui(true);
         }
       } catch (e) {}
     }, 12000);
@@ -689,7 +690,12 @@
             guiStatus(statusCb, "Connecting to " + (opts.vncLabel || "the Linux desktop") + "…", true);
             setTimeout(function () { connectGui(guiHost, statusCb); }, wait);
           }
-          else { guiStatus(statusCb, "Desktop didn't come up. Tap 🖥️ GUI to retry."); }
+          else {
+            // ~4 min of refused connections: the guest's display server isn't running. Stop retrying
+            // (an endless reconnect loop only burns the iPad) and say so.
+            console.log("[gui] gave up: the guest's display server never accepted a connection");
+            guiStatus(statusCb, "The desktop's display server didn't start (the Linux guest itself is running - see the log). Tap the display bar to try again.");
+          }
         });
       } catch (e) { rfb = null; guiStatus(statusCb, "VNC error: " + ((e && e.message) || e)); return null; }
       return rfb;

@@ -14,7 +14,7 @@ if [ ! -e /tmp/.xstarted ]; then
   : > /tmp/.xstarted
   (
     Xvnc :0 -geometry 1024x768 -depth 16 -SecurityTypes None -rfbport 5900 -localhost no \
-         -desktop bootbox -AlwaysShared -DeferUpdate 10 >/tmp/xvnc.log 2>&1 &
+         -desktop bootbox -AlwaysShared >/tmp/xvnc.log 2>&1 &
     n=0; while [ "$n" -lt 80 ] && [ ! -e /tmp/.X11-unix/X0 ]; do sleep 0.25; n=$((n+1)); done
     export DISPLAY=:0
     export HOME=/root
@@ -22,10 +22,25 @@ if [ ! -e /tmp/.xstarted ]; then
     xwallpaper --zoom /usr/share/bootbox-wallpaper.png 2>/dev/null
     openbox >/tmp/openbox.log 2>&1 &
     ob=$!
-    sleep 3
+    # Start the panel and terminal only once openbox is really managing (its "Openbox" check window
+    # exists). Started during openbox's slow startup on the emulated CPU they could stay unmapped
+    # forever - desktop v9 showed only the wallpaper. Fall back to twm if openbox dies.
+    n=0
+    while [ "$n" -lt 240 ] && ! xwininfo -root -children 2>/dev/null | grep -q '"Openbox"'; do
+      kill -0 "$ob" 2>/dev/null || break
+      sleep 0.5; n=$((n+1))
+    done
     if ! kill -0 "$ob" 2>/dev/null; then twm >/tmp/twm.log 2>&1 & fi   # fallback window manager
     tint2 >/tmp/tint2.log 2>&1 &
     bxterm -geometry 82x22+120+90 >/tmp/xterm.log 2>&1 &
+    # Self-heal: if the panel still isn't on screen after 2 minutes, start it again.
+    (
+      sleep 120
+      w=$(xwininfo -root -tree 2>/dev/null | grep '"tint2"' | head -1 | awk '{print $1}')
+      if [ -z "$w" ] || ! xwininfo -id "$w" 2>/dev/null | grep -q IsViewable; then
+        pkill -x tint2; sleep 1; tint2 >>/tmp/tint2.log 2>&1 &
+      fi
+    ) &
   ) &
 fi
 export DISPLAY=:0
