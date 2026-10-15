@@ -1034,7 +1034,12 @@
             // Wasm tail calls (the engine's TB-to-TB chaining) crash the page on the iPad (iPadOS 27.2
             // WebKit, arm64e) the moment the guest starts running - found by the ladder on the user's
             // iPad Air M3 (TestFlight 90). On iOS the engine chains with ordinary nested calls instead.
-            const iosBase = (window.Bridge && Bridge.onDevice) ? { chain: 2 } : {};
+            // jit=10000 (build 98): WebKit makes every freshly compiled block pay a costly module compile
+            // and start in its own wasm interpreter, so compiling after QEMU's default 1500 runs made
+            // first-run code (opening an app, a menu, booting) far slower than in Chrome. Measured in a
+            // WKWebView on the Mac (same engine): first terminal 17-23 s -> 5.5 s, panel at boot 78-89 s
+            // -> 64-71 s, python3 start 7.1 -> 3.1 s; hot loops unchanged. (jit=300 was catastrophic.)
+            const iosBase = (window.Bridge && Bridge.onDevice) ? { chain: 2, jit: 10000 } : {};
             const tune = Object.assign({}, g.tune || {}, iosBase, level.tune || {});
             if (g.tune && g.tune.max && level.tune && level.tune.max) tune.max = Math.min(g.tune.max, level.tune.max);
             await window.QEMU_WASM.run({
