@@ -1,0 +1,131 @@
+// bbweb (launcher) - what the panel, menu and `web` run. Starting WebKit takes ~15-30 s on the emulated
+// CPU (the engine's libraries alone load for seconds before main()), so this tiny Xlib program:
+//   * hands the URL to an already running browser over /tmp/.bbweb.sock (it opens a tab and comes to
+//     the front) instead of starting a second ~340 MB copy;
+//   * otherwise shows an "Opening..." card at once, starts /usr/libexec/bbweb-engine and closes the card
+//     when the engine's window is drawn (the engine writes to BBWEB_READY_FD) or the engine exits;
+//   * a second tap while the engine is still starting does nothing (the engine holds /tmp/.bbweb.lock).
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+#include <errno.h>
+#include <fcntl.h>
+#include <signal.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/file.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <sys/wait.h>
+#include <time.h>
+#include <unistd.h>
+
+#define SOCK_PATH "/tmp/.bbweb.sock"
+#define LOCK_PATH "/tmp/.bbweb.lock"
+#define ENGINE "/usr/libexec/bbweb-engine"
+
+static int send_to_running(const char *url) {
+  int s = socket(AF_UNIX, SOCK_STREAM, 0);
+  if (s < 0) return 0;
+  struct sockaddr_un a = { .sun_family = AF_UNIX };
+  strncpy(a.sun_path, SOCK_PATH, sizeof a.sun_path - 1);
+  if (connect(s, (struct sockaddr *)&a, sizeof a) != 0) { close(s); return 0; }
+  dprintf(s, "%s\n", url);
+  close(s);
+  return 1;
+}
+
+static unsigned long rgb(Display *d, const char *spec) {
+  XColor c, exact;
+  return XAllocNamedColor(d, DefaultColormap(d, DefaultScreen(d)), spec, &c, &exact) ? c.pixel : 0;
+}
+
+int main(int argc, char **argv) {
+  // The URL / search words, joined (the engine treats "" as the start page).
+  char url[4096] = "";
+  for (int i = 1; i < argc; i++) {
+    if (i > 1) strncat(url, " ", sizeof url - strlen(url) - 1);
+    strncat(url, argv[i], sizeof url - strlen(url) - 1);
+  }
+  for (char *p = url; *p; p++) if (*p == '\n') *p = ' ';
+  if (send_to_running(url)) return 0;
+
+  int lock = open(LOCK_PATH, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
+  if (lock >= 0 && flock(lock, LOCK_EX | LOCK_NB) != 0) return 0;   // an engine is starting already
+  if (lock >= 0) fcntl(lock, F_SETFD, 0);                             // the engine inherits (keeps) the lock
+
+  int ready[2];
+  if (pipe(ready) != 0) ready[0] = ready[1] = -1;
+  pid_t pid = fork();
+  if (pid == 0) {
+    if (ready[0] >= 0) close(ready[0]);
+    char fd[16];
+    snprintf(fd, sizeof fd, "%d", ready[1]);
+    setenv("BBWEB_READY_FD", fd, 1);
+    setsid();
+    argv[0] = (char *)ENGINE;
+    execv(ENGINE, argv);
+    _exit(127);
+  }
+  if (ready[1] >= 0) close(ready[1]);
+  if (lock >= 0) close(lock);
+  if (pid < 0) return 1;
+
+  // The card: an undecorated box in the middle of the screen, drawn with a core font.
+  Display *d = XOpenDisplay(NULL);
+  Window w = 0;
+  GC gc = 0;
+  XFontStruct *f = NULL, *fs = NULL;
+  int W = 380, H = 104;
+  unsigned long fg = 0, dim = 0, bg = 0;
+  if (d) {
+    int scr = DefaultScreen(d);
+    bg = rgb(d, "#121a27"); fg = rgb(d, "#e6eefa"); dim = rgb(d, "#7f8ea6");
+    XSetWindowAttributes at = { .override_redirect = True, .background_pixel = bg,
+                                .border_pixel = rgb(d, "#3d8bfd") };
+    w = XCreateWindow(d, RootWindow(d, scr), (DisplayWidth(d, scr) - W) / 2, (DisplayHeight(d, scr) - H) / 2 - 40,
+                      W, H, 2, CopyFromParent, InputOutput, CopyFromParent,
+                      CWOverrideRedirect | CWBackPixel | CWBorderPixel, &at);
+    XSelectInput(d, w, ExposureMask);
+    gc = XCreateGC(d, w, 0, NULL);
+    f = XLoadQueryFont(d, "9x15bold");
+    if (!f) f = XLoadQueryFont(d, "fixed");
+    fs = XLoadQueryFont(d, "6x13");
+    if (!fs) fs = f;
+    XMapRaised(d, w);
+    XFlush(d);
+  }
+  const char *title = "Opening the web browser";
+  const char *sub = "The first start takes a little while.";
+  int dots = 0;
+  time_t t0 = time(NULL);
+  for (;;) {
+    if (d && w) {
+      XClearWindow(d, w);
+      char line[64];
+      snprintf(line, sizeof line, "%s%.*s", title, dots, "...");
+      if (f) { XSetFont(d, gc, f->fid); }
+      XSetForeground(d, gc, fg);
+      XDrawString(d, w, gc, 24, 44, line, strlen(line));
+      if (fs) { XSetFont(d, gc, fs->fid); }
+      XSetForeground(d, gc, dim);
+      XDrawString(d, w, gc, 24, 72, sub, strlen(sub));
+      XFlush(d);
+      while (XPending(d)) { XEvent e; XNextEvent(d, &e); }
+    }
+    dots = (dots + 1) % 4;
+    fd_set rf;
+    FD_ZERO(&rf);
+    int mx = -1;
+    if (ready[0] >= 0) { FD_SET(ready[0], &rf); mx = ready[0]; }
+    struct timeval tv = { 0, 500000 };
+    int r = select(mx + 1, &rf, NULL, NULL, &tv);
+    if (r > 0) break;                                   // the window is up (a byte) or the engine died (EOF)
+    if (r < 0 && errno != EINTR) break;
+    if (time(NULL) - t0 > 240) break;
+    if (waitpid(pid, NULL, WNOHANG) == pid) break;
+  }
+  if (d) XCloseDisplay(d);
+  return 0;
+}

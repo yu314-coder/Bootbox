@@ -1,0 +1,2 @@
+# login bash: the profile, then the interactive setup
+[ -r ~/.bashrc ] && . ~/.bashrc

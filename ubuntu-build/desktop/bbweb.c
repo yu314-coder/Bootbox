@@ -1,0 +1,324 @@
+// bbweb-engine - the Bootbox desktop's web browser: WebKitGTK (a current engine with full JavaScript)
+// behind a plain toolbar (back, forward, reload, home, address/search bar, new tab) and tabs. Tuned for
+// the emulated CPU: no GPU paths (no compositing / WebGL, and Mesa is hidden from it - just probing EGL
+// loaded LLVM + the llvmpipe driver, ~100 MB of libraries), no smooth-scroll animation, no autoplay.
+// Started by the `bbweb` launcher (bbweb-launch.c), which shows a card until BBWEB_READY_FD is written.
+// Single instance: later launches send their URL over /tmp/.bbweb.sock -> a new tab, window to front.
+//   bbweb [URL]        URL or search words; no argument = the local start page
+//   BBWEB_LOG=1        print page titles + start-up phases to stdout (the image build's smoke test)
+#include <gtk/gtk.h>
+#include <gio/gunixsocketaddress.h>
+#include <webkit2/webkit2.h>
+#include <fcntl.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+
+#define SOCK_PATH "/tmp/.bbweb.sock"
+
+#define HOME_URI "file:///usr/share/bootbox/start.html"
+#define SEARCH_URI "https://lite.duckduckgo.com/lite/?q="
+
+static GtkWidget *win, *nb, *entry, *back_btn, *fwd_btn, *reload_btn;
+static WebKitSettings *settings;
+static gboolean log_titles;
+
+// BBWEB_LOG: phase timestamps on the guest's uptime clock (compare with `cat /proc/uptime` at launch).
+static void phase(const char *what) {
+  if (!log_titles) return;
+  char b[64] = "";
+  FILE *f = fopen("/proc/uptime", "r");
+  if (f) { if (!fgets(b, sizeof b, f)) b[0] = 0; fclose(f); }
+  char *sp = strchr(b, ' ');
+  if (sp) *sp = 0;
+  printf("phase %s %s\n", b, what);
+  fflush(stdout);
+}
+static void on_load_changed(WebKitWebView *v, WebKitLoadEvent e, gpointer d) {
+  (void)v; (void)d;
+  phase(e == WEBKIT_LOAD_STARTED ? "load-started" : e == WEBKIT_LOAD_COMMITTED ? "load-committed" :
+        e == WEBKIT_LOAD_FINISHED ? "load-finished" : "load-redirected");
+}
+
+static WebKitWebView *current_view(void) {
+  int i = gtk_notebook_get_current_page(GTK_NOTEBOOK(nb));
+  return i < 0 ? NULL : WEBKIT_WEB_VIEW(gtk_notebook_get_nth_page(GTK_NOTEBOOK(nb), i));
+}
+
+// Typed text -> URI: keep real URIs, add https:// to bare host names, search everything else.
+static gchar *to_uri(const char *t) {
+  while (*t == ' ') t++;
+  if (!*t) return g_strdup(HOME_URI);
+  if (strstr(t, "://") || g_str_has_prefix(t, "about:") || g_str_has_prefix(t, "file:")) return g_strdup(t);
+  if (!strchr(t, ' ') && (strchr(t, '.') || g_str_has_prefix(t, "localhost")))
+    return g_strdup_printf("%s://%s", g_str_has_prefix(t, "localhost") ? "http" : "https", t);
+  gchar *q = g_uri_escape_string(t, NULL, TRUE), *u = g_strconcat(SEARCH_URI, q, NULL);
+  g_free(q);
+  return u;
+}
+
+static void sync_toolbar(void) {
+  WebKitWebView *v = current_view();
+  if (!v) return;
+  const char *u = webkit_web_view_get_uri(v), *t = webkit_web_view_get_title(v);
+  if (!gtk_widget_has_focus(entry))
+    gtk_entry_set_text(GTK_ENTRY(entry), u && strcmp(u, HOME_URI) ? u : "");
+  gtk_widget_set_sensitive(back_btn, webkit_web_view_can_go_back(v));
+  gtk_widget_set_sensitive(fwd_btn, webkit_web_view_can_go_forward(v));
+  gboolean loading = webkit_web_view_is_loading(v);
+  gtk_button_set_image(GTK_BUTTON(reload_btn), gtk_image_new_from_icon_name(
+      loading ? "process-stop-symbolic" : "view-refresh-symbolic", GTK_ICON_SIZE_LARGE_TOOLBAR));
+  gtk_entry_set_progress_fraction(GTK_ENTRY(entry), loading ? webkit_web_view_get_estimated_load_progress(v) : 0.0);
+  gchar *wt = g_strdup_printf("%s - Web", t && *t ? t : "New tab");
+  gtk_window_set_title(GTK_WINDOW(win), wt);
+  g_free(wt);
+}
+
+static void tab_label_update(WebKitWebView *v) {
+  GtkWidget *box = gtk_notebook_get_tab_label(GTK_NOTEBOOK(nb), GTK_WIDGET(v));
+  if (!box) return;
+  GtkWidget *label = g_object_get_data(G_OBJECT(box), "label");
+  const char *t = webkit_web_view_get_title(v);
+  gtk_label_set_text(GTK_LABEL(label), t && *t ? t : "New tab");
+}
+
+static void on_view_changed(WebKitWebView *v, GParamSpec *ps, gpointer d) {
+  (void)d;
+  if (!strcmp(ps->name, "title")) {
+    tab_label_update(v);
+    const char *t = webkit_web_view_get_title(v);
+    if (log_titles && t && *t) { printf("title: %s\n", t); fflush(stdout); }
+  }
+  if (v == current_view()) sync_toolbar();
+}
+
+static void close_tab(WebKitWebView *v) {
+  int i = gtk_notebook_page_num(GTK_NOTEBOOK(nb), GTK_WIDGET(v));
+  if (i < 0) return;
+  if (gtk_notebook_get_n_pages(GTK_NOTEBOOK(nb)) == 1) { gtk_main_quit(); return; }
+  gtk_notebook_remove_page(GTK_NOTEBOOK(nb), i);
+}
+static void on_close_clicked(GtkButton *b, gpointer v) { (void)b; close_tab(WEBKIT_WEB_VIEW(v)); }
+static void on_view_close(WebKitWebView *v, gpointer d) { (void)d; close_tab(v); }
+
+static WebKitWebView *add_tab(WebKitWebView *related, const char *uri, gboolean focus);
+
+// window.open() / target=_blank: a new tab sharing the opener's web process.
+static GtkWidget *on_create(WebKitWebView *v, WebKitNavigationAction *a, gpointer d) {
+  (void)a; (void)d;
+  return GTK_WIDGET(add_tab(v, NULL, TRUE));
+}
+
+static gboolean on_load_failed_tls(WebKitWebView *v, gchar *uri, GTlsCertificate *c, GTlsCertificateFlags e, gpointer d) {
+  (void)c; (void)e; (void)d;
+  gchar *html = g_strdup_printf("<body style='font:16px sans-serif;background:#0b0f17;color:#d6e2f2;padding:40px'>"
+      "<h2>Not a secure connection</h2><p>The certificate of <b>%s</b> could not be verified, so the page was not loaded.</p></body>", uri);
+  webkit_web_view_load_alternate_html(v, html, uri, NULL);
+  g_free(html);
+  return TRUE;
+}
+
+static WebKitWebView *add_tab(WebKitWebView *related, const char *uri, gboolean focus) {
+  WebKitWebView *v = related
+      ? WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW, "related-view", related, "settings", settings, NULL))
+      : WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW, "settings", settings, NULL));
+  GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
+  GtkWidget *label = gtk_label_new("New tab");
+  gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+  gtk_label_set_width_chars(GTK_LABEL(label), 16);
+  gtk_label_set_max_width_chars(GTK_LABEL(label), 16);
+  GtkWidget *x = gtk_button_new_from_icon_name("window-close-symbolic", GTK_ICON_SIZE_MENU);
+  gtk_button_set_relief(GTK_BUTTON(x), GTK_RELIEF_NONE);
+  g_signal_connect(x, "clicked", G_CALLBACK(on_close_clicked), v);
+  gtk_box_pack_start(GTK_BOX(box), label, TRUE, TRUE, 0);
+  gtk_box_pack_start(GTK_BOX(box), x, FALSE, FALSE, 0);
+  g_object_set_data(G_OBJECT(box), "label", label);
+  gtk_widget_show_all(box);
+  for (const char **p = (const char *[]){ "notify::uri", "notify::title", "notify::estimated-load-progress",
+                                          "notify::is-loading", NULL }; *p; p++)
+    g_signal_connect(v, *p, G_CALLBACK(on_view_changed), NULL);
+  g_signal_connect(v, "create", G_CALLBACK(on_create), NULL);
+  g_signal_connect(v, "close", G_CALLBACK(on_view_close), NULL);
+  g_signal_connect(v, "load-failed-with-tls-errors", G_CALLBACK(on_load_failed_tls), NULL);
+  g_signal_connect(v, "load-changed", G_CALLBACK(on_load_changed), NULL);
+  gtk_widget_show(GTK_WIDGET(v));
+  int i = gtk_notebook_append_page(GTK_NOTEBOOK(nb), GTK_WIDGET(v), box);
+  gtk_notebook_set_tab_reorderable(GTK_NOTEBOOK(nb), GTK_WIDGET(v), TRUE);
+  gtk_notebook_set_show_tabs(GTK_NOTEBOOK(nb), gtk_notebook_get_n_pages(GTK_NOTEBOOK(nb)) > 1);
+  if (focus) gtk_notebook_set_current_page(GTK_NOTEBOOK(nb), i);
+  if (uri) { gchar *u = to_uri(uri); webkit_web_view_load_uri(v, u); g_free(u); }
+  return v;
+}
+
+static void on_page_removed(GtkNotebook *n, GtkWidget *c, guint i, gpointer d) {
+  (void)c; (void)i; (void)d;
+  gtk_notebook_set_show_tabs(n, gtk_notebook_get_n_pages(n) > 1);
+}
+static void on_switch_page(GtkNotebook *n, GtkWidget *p, guint i, gpointer d) {
+  (void)n; (void)p; (void)i; (void)d;
+  g_idle_add_once((GSourceOnceFunc)sync_toolbar, NULL);
+}
+
+static void on_entry_activate(GtkEntry *e, gpointer d) {
+  (void)d;
+  WebKitWebView *v = current_view();
+  gchar *u = to_uri(gtk_entry_get_text(e));
+  if (v) { webkit_web_view_load_uri(v, u); gtk_widget_grab_focus(GTK_WIDGET(v)); }
+  g_free(u);
+}
+static void on_back(GtkButton *b, gpointer d) { (void)b; (void)d; if (current_view()) webkit_web_view_go_back(current_view()); }
+static void on_fwd(GtkButton *b, gpointer d) { (void)b; (void)d; if (current_view()) webkit_web_view_go_forward(current_view()); }
+static void on_reload(GtkButton *b, gpointer d) {
+  (void)b; (void)d;
+  WebKitWebView *v = current_view();
+  if (!v) return;
+  if (webkit_web_view_is_loading(v)) webkit_web_view_stop_loading(v); else webkit_web_view_reload(v);
+}
+static void on_home(GtkButton *b, gpointer d) { (void)b; (void)d; if (current_view()) webkit_web_view_load_uri(current_view(), HOME_URI); }
+static void on_new_tab(GtkButton *b, gpointer d) { (void)b; (void)d; add_tab(NULL, HOME_URI, TRUE); gtk_widget_grab_focus(entry); }
+
+static void zoom(double f) {
+  WebKitWebView *v = current_view();
+  if (v) webkit_web_view_set_zoom_level(v, f == 0 ? 1.0 : CLAMP(webkit_web_view_get_zoom_level(v) * f, 0.3, 4.0));
+}
+
+static gboolean on_key(GtkWidget *w, GdkEventKey *ev, gpointer d) {
+  (void)w; (void)d;
+  guint k = gdk_keyval_to_lower(ev->keyval);
+  gboolean ctrl = ev->state & GDK_CONTROL_MASK, alt = ev->state & GDK_MOD1_MASK;
+  if (ctrl && k == GDK_KEY_l) { gtk_widget_grab_focus(entry); gtk_editable_select_region(GTK_EDITABLE(entry), 0, -1); return TRUE; }
+  if (ctrl && k == GDK_KEY_t) { on_new_tab(NULL, NULL); return TRUE; }
+  if (ctrl && k == GDK_KEY_w) { if (current_view()) close_tab(current_view()); return TRUE; }
+  if ((ctrl && k == GDK_KEY_r) || k == GDK_KEY_F5) { on_reload(NULL, NULL); return TRUE; }
+  if (alt && k == GDK_KEY_Left) { on_back(NULL, NULL); return TRUE; }
+  if (alt && k == GDK_KEY_Right) { on_fwd(NULL, NULL); return TRUE; }
+  if (ctrl && (k == GDK_KEY_plus || k == GDK_KEY_equal)) { zoom(1.1); return TRUE; }
+  if (ctrl && k == GDK_KEY_minus) { zoom(1 / 1.1); return TRUE; }
+  if (ctrl && k == GDK_KEY_0) { zoom(0); return TRUE; }
+  if (ctrl && k == GDK_KEY_Tab) {
+    int n = gtk_notebook_get_n_pages(GTK_NOTEBOOK(nb));
+    gtk_notebook_set_current_page(GTK_NOTEBOOK(nb), (gtk_notebook_get_current_page(GTK_NOTEBOOK(nb)) + 1) % n);
+    return TRUE;
+  }
+  return FALSE;
+}
+
+static GtkWidget *tool_button(const char *icon, const char *tip, GCallback cb) {
+  GtkWidget *b = gtk_button_new_from_icon_name(icon, GTK_ICON_SIZE_LARGE_TOOLBAR);
+  gtk_widget_set_tooltip_text(b, tip);
+  gtk_button_set_relief(GTK_BUTTON(b), GTK_RELIEF_NONE);
+  gtk_widget_set_can_focus(b, FALSE);
+  g_signal_connect(b, "clicked", cb, NULL);
+  return b;
+}
+
+static gboolean on_first_draw(GtkWidget *w, cairo_t *cr, gpointer d) {
+  (void)cr; (void)d;
+  phase("window-drawn");
+  g_signal_handlers_disconnect_by_func(w, on_first_draw, NULL);
+  const char *fd = getenv("BBWEB_READY_FD");   // tell the launcher to take its card down
+  if (fd) { int n = atoi(fd); if (n > 2) { if (write(n, "1", 1) < 0) {} close(n); } unsetenv("BBWEB_READY_FD"); }
+  return FALSE;
+}
+
+// Another `bbweb [URL]`: open the URL in a new tab (none: just bring the window up).
+static gboolean on_incoming(GSocketService *svc, GSocketConnection *c, GObject *src, gpointer d) {
+  (void)svc; (void)src; (void)d;
+  GDataInputStream *in = g_data_input_stream_new(g_io_stream_get_input_stream(G_IO_STREAM(c)));
+  gchar *line = g_data_input_stream_read_line(in, NULL, NULL, NULL);
+  if (line && *g_strstrip(line)) add_tab(NULL, line, TRUE);
+  g_free(line);
+  g_object_unref(in);
+  gtk_window_present_with_time(GTK_WINDOW(win), GDK_CURRENT_TIME);
+  return TRUE;
+}
+
+static void listen_for_launches(void) {
+  unlink(SOCK_PATH);   // only the engine holding /tmp/.bbweb.lock gets here, so a leftover is stale
+  GSocketService *svc = g_socket_service_new();
+  GSocketAddress *a = g_unix_socket_address_new(SOCK_PATH);
+  if (g_socket_listener_add_address(G_SOCKET_LISTENER(svc), a, G_SOCKET_TYPE_STREAM, G_SOCKET_PROTOCOL_DEFAULT,
+                                    NULL, NULL, NULL)) {
+    g_signal_connect(svc, "incoming", G_CALLBACK(on_incoming), NULL);
+    g_socket_service_start(svc);
+  }
+  g_object_unref(a);
+}
+
+int main(int argc, char **argv) {
+  log_titles = getenv("BBWEB_LOG") != NULL;
+  phase("main");
+  setenv("LIBGL_DRIVERS_PATH", "/nonexistent", 0);   // no Mesa: see the header
+  setenv("WEBKIT_DISABLE_COMPOSITING_MODE", "1", 0);
+  setenv("WEBKIT_DISABLE_DMABUF_RENDERER", "1", 0);
+  setenv("NO_AT_BRIDGE", "1", 0);
+  for (int fd = 3; fd < 64; fd++) fcntl(fd, F_SETFD, FD_CLOEXEC);   // the launcher's lock/ready fds stay ours
+  gtk_init(&argc, &argv);
+  phase("gtk-init");
+  g_set_prgname("bbweb");
+  settings = webkit_settings_new_with_settings(
+      "enable-javascript", TRUE,
+      "javascript-can-open-windows-automatically", FALSE,
+      "enable-smooth-scrolling", FALSE,
+      "enable-webgl", FALSE,
+      "enable-webaudio", FALSE,
+      "enable-media-stream", FALSE,
+      "media-playback-requires-user-gesture", TRUE,
+      "hardware-acceleration-policy", WEBKIT_HARDWARE_ACCELERATION_POLICY_NEVER,
+      "enable-back-forward-navigation-gestures", FALSE,
+      "enable-site-specific-quirks", TRUE,
+      "enable-dns-prefetching", TRUE,
+      "default-font-size", 15,
+      NULL);
+  phase("settings");
+  WebKitWebContext *ctx = webkit_web_context_get_default();
+  webkit_web_context_set_cache_model(ctx, WEBKIT_CACHE_MODEL_DOCUMENT_BROWSER);
+
+  win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+  gtk_window_set_default_size(GTK_WINDOW(win), 980, 660);
+  gtk_window_set_icon_from_file(GTK_WINDOW(win), "/usr/share/bootbox/icons/browser.png", NULL);
+  g_signal_connect(win, "destroy", G_CALLBACK(gtk_main_quit), NULL);
+  g_signal_connect(win, "key-press-event", G_CALLBACK(on_key), NULL);
+
+  GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+  GtkWidget *bar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 2);
+  gtk_container_set_border_width(GTK_CONTAINER(bar), 4);
+  back_btn = tool_button("go-previous-symbolic", "Back (Alt+Left)", G_CALLBACK(on_back));
+  fwd_btn = tool_button("go-next-symbolic", "Forward (Alt+Right)", G_CALLBACK(on_fwd));
+  reload_btn = tool_button("view-refresh-symbolic", "Reload (Ctrl+R) / Stop", G_CALLBACK(on_reload));
+  GtkWidget *home_btn = tool_button("go-home-symbolic", "Start page", G_CALLBACK(on_home));
+  GtkWidget *tab_btn = tool_button("tab-new-symbolic", "New tab (Ctrl+T)", G_CALLBACK(on_new_tab));
+  entry = gtk_entry_new();
+  gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "Search or type a web address");
+  gtk_entry_set_input_purpose(GTK_ENTRY(entry), GTK_INPUT_PURPOSE_URL);
+  g_signal_connect(entry, "activate", G_CALLBACK(on_entry_activate), NULL);
+  gtk_box_pack_start(GTK_BOX(bar), back_btn, FALSE, FALSE, 0);
+  gtk_box_pack_start(GTK_BOX(bar), fwd_btn, FALSE, FALSE, 0);
+  gtk_box_pack_start(GTK_BOX(bar), reload_btn, FALSE, FALSE, 0);
+  gtk_box_pack_start(GTK_BOX(bar), home_btn, FALSE, FALSE, 0);
+  gtk_box_pack_start(GTK_BOX(bar), entry, TRUE, TRUE, 4);
+  gtk_box_pack_start(GTK_BOX(bar), tab_btn, FALSE, FALSE, 0);
+
+  nb = gtk_notebook_new();
+  gtk_notebook_set_scrollable(GTK_NOTEBOOK(nb), TRUE);
+  gtk_notebook_set_show_border(GTK_NOTEBOOK(nb), FALSE);
+  g_signal_connect(nb, "switch-page", G_CALLBACK(on_switch_page), NULL);
+  g_signal_connect(nb, "page-removed", G_CALLBACK(on_page_removed), NULL);
+
+  gtk_box_pack_start(GTK_BOX(vbox), bar, FALSE, FALSE, 0);
+  gtk_box_pack_start(GTK_BOX(vbox), nb, TRUE, TRUE, 0);
+  gtk_container_add(GTK_CONTAINER(win), vbox);
+
+  gchar *joined = argc > 1 ? g_strjoinv(" ", argv + 1) : NULL;
+  WebKitWebView *v = add_tab(NULL, joined ? joined : HOME_URI, TRUE);
+  g_free(joined);
+  g_signal_connect(win, "draw", G_CALLBACK(on_first_draw), NULL);
+  phase("tab-created");
+  gtk_widget_show_all(win);
+  phase("window-shown");
+  gtk_widget_grab_focus(GTK_WIDGET(v));
+  listen_for_launches();
+  gtk_main();
+  unlink(SOCK_PATH);
+  return 0;
+}

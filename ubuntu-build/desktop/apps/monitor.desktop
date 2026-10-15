@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=System monitor
+Comment=Processes, CPU and memory (htop)
+Icon=/usr/share/bootbox/icons/monitor.png
+Exec=bxterm -T "System monitor" -geometry 100x30 -e htop
+Terminal=false

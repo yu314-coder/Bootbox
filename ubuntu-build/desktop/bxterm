@@ -4,6 +4,7 @@
 # (6x13); xterm exits at once if the X server lacks a font, so fall back to `fixed` in that case.
 # -u8 keeps UTF-8 correct; -ls makes it a login shell so `help`, aliases and PATH are set.
 FONT=9x15
+[ -x /bin/bash ] && export SHELL=/bin/bash   # v10: the terminal's shell is bash (completion, history search)
 if [ "$1" = "--font-fixed" ]; then FONT=fixed; shift; fi
 t0=$(date +%s)
 xterm -fn "$FONT" -u8 -ls -sl 4000 -b 10 -cr '#3d8bfd' \

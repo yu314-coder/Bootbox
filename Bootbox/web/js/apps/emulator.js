@@ -37,8 +37,8 @@
     // least-recently-run blocks past it, and lowers the cap itself if the host refuses a compile.
     { id: "x64pw",     name: "Linux (Terminal)",  boot: "q64",
       base: "vendor/qemu-aload/", url: "", ram: 1536, tune: { max: 40000 } },
-    // Lightweight graphical desktop: its OWN image (no Wine). openbox/tint2 (v8) + terminal, PCManFM,
-    // Dillo, Claude Code, Python, mc. Reuses the x86_64 engine (wasm shared from
+    // Lightweight graphical desktop: its OWN image. openbox/tint2 + a bash terminal, PCManFM, the bbweb
+    // browser (WebKitGTK, v10) + Dillo, Python, mc, CPU-Z/glmark2 (v9). Reuses the x86_64 engine (wasm shared from
     // qemu-aload — no duplication). The image auto-starts the desktop, so boot64 sends no start-desktop.
     { id: "x64pwd",    name: "Linux (Desktop)",  boot: "q64",
       base: "vendor/qemu-desktop/", wasm: "../qemu-aload/qemu-system-x86_64.wasm", url: "", ram: 1536, gui: true,
@@ -86,8 +86,11 @@
       // (64-bit Wine, warmed prefix) and glmark2 on Mesa llvmpipe, preinstalled; Xvnc -DeferUpdate 10.
       // 9b (build 96): v9 passed Xvnc an option it doesn't know (-DeferUpdate) - the display server
       // exited at once and the desktop never came up. New file name so cached broken copies are replaced.
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v9/qemu-desktop9b-rootfs.data.gz",
-        name: "qemu-desktop9b-rootfs-1301136108.data.gz", mb: 411, size: 430815277 },
+      // v10 (build 98): bash terminal (completion, history search, htop/ncdu/nano/vim/tmux/jq/fastfetch...),
+      // bbweb = a WebKitGTK browser with full JavaScript (Dillo stays as the lite one), Claude Code and
+      // Node.js removed, Apps-menu helper without xdotool, lazy bash completion (new terminal 1.4 -> 0.15 s).
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v10/qemu-desktop10-rootfs.data.gz",
+        name: "qemu-desktop10-rootfs-1262146190.data.gz", mb: 415, size: 434554548 },
     ] },
     // Android is a full AOSP x86_64 userspace on Bootbox's QEMU guest kernel.
     // The rootfs is download-on-demand; the x86_64 engine is shared with Linux.
@@ -1062,7 +1065,7 @@
                   try { panel64.showGui(); } catch (e) {}   // the desktop IS the GUI → connect immediately
                   status.textContent = g.android
                     ? "Running — full Android 12 AOSP (64-bit x86_64) in QEMU. This is a warm-boot image: it resumes to the home screen in a few seconds (no cold boot). Touch the screen directly and use ⌨ Type for text."
-                    : "Running — x86_64 Linux desktop. The panel appears ~1–2 min after the first boot. Tap Apps (bottom-left) or right-click/long-press the desktop for programs and the CPU-Z / GPU benchmarks; ⌨ Type or the Magic Keyboard types into the focused window.";
+                    : "Running — x86_64 Linux desktop. The panel appears ~1–2 min after the first boot. Tap Apps (bottom-left) or right-click/long-press the desktop for the terminal, web browser, files and the CPU-Z / GPU benchmarks; ⌨ Type or the Magic Keyboard types into the focused window.";
                 } else {        // [ terminal | GUI ]: blank GUI until you launch an X program from the terminal
                   // LAZY DISPLAY (power/heat): do NOT connect noVNC on boot — a connected viewer renders
                   // the (blank) Xvnc framebuffer continuously = wasted CPU/GPU even with nothing on screen.

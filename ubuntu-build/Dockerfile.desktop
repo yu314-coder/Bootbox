@@ -1,6 +1,7 @@
-# Bootbox DESKTOP guest (x86_64) — a lightweight graphical desktop. NO Wine (that stays in the console
-# guest). v2 (build 73): graphical browser (Dillo) + file manager (PCManFM) + Claude Code CLI + a real
-# wallpaper. HISTORY: dillo/BadWolf "flooded the single-threaded Xvnc until the GUI froze" — but that
+# Bootbox DESKTOP guest (x86_64) — a lightweight graphical desktop. v10: bbweb (a small WebKitGTK
+# browser with full JavaScript, built below) + Dillo as the no-JS lite browser, PCManFM, a bash terminal
+# with the common tools, CPU-Z/glmark2 benchmarks (v9). Claude Code is no longer bundled (v10).
+# v2 (build 73): graphical browser (Dillo) + file manager (PCManFM) + a real wallpaper. HISTORY: dillo/BadWolf "flooded the single-threaded Xvnc until the GUI froze" — but that
 # was tested BEFORE the cx16 engine fix, when every guest allocation took a stop-the-world exclusive
 # section (kernel SLUB uses lock cmpxchg16b). With the spinlock engine those light GUI apps get
 # RE-TESTED in the Mac harness before shipping. `links` (text, terminal) stays as fallback.
@@ -22,15 +23,25 @@ RUN apk add --no-cache imagemagick ttf-dejavu rsvg-convert papirus-icon-theme 2>
       -ordered-dither o8x8,32,64,32 /wallpaper.png && \
     mkdir -p /icons && P=/usr/share/icons/Papirus/48x48/apps && \
     for m in terminal:utilities-terminal files:system-file-manager browser:web-browser python:python \
-             mc:mc help:help-browser editor:accessories-text-editor cpuz:cpu-x gpu:GPU_Viewer; do \
+             mc:mc help:help-browser editor:accessories-text-editor cpuz:cpu-x gpu:GPU_Viewer \
+             monitor:utilities-system-monitor; do \
       rsvg-convert -w 48 -h 48 "$P/${m#*:}.svg" -o "/icons/${m%%:*}.png"; done && \
     rsvg-convert -w 22 -h 18 /arch.svg -o /icons/start-raw.png && \
     magick -size 22x22 xc:none /icons/start-raw.png -gravity center -composite -channel RGB -fill white -colorize 100 /icons/start.png && \
     rm /icons/start-raw.png && \
-    magick -size 48x48 xc:none -fill '#d97757' -draw 'roundrectangle 2,2 45,45 11,11' \
-      -fill white -font /usr/share/fonts/dejavu/DejaVuSans-Bold.ttf -pointsize 34 -gravity center -annotate +0+1 '*' /icons/claude.png && \
     magick /icons/terminal.png -background '#1b2433' -flatten /icons/terminal.xpm && \
     ls -la /wallpaper.png /icons
+
+# -- side stage (desktop v10): the browser (bbweb, WebKitGTK 4.1) and the XTEST key helper (bbkey),
+#    compiled against the same Alpine release as the image so the runtime libraries match. --
+FROM alpine:3.20 AS tools
+RUN apk add --no-cache build-base pkgconf webkit2gtk-4.1-dev gtk+3.0-dev libx11-dev libxtst-dev 2>&1 | tail -1
+COPY desktop/bbweb.c desktop/bbweb-launch.c desktop/bbkey.c /src/
+RUN set -eux; cd /src; \
+    gcc -O2 -Wall -Wextra -o bbweb-engine bbweb.c $(pkg-config --cflags --libs webkit2gtk-4.1 gtk+-3.0 gio-unix-2.0); \
+    gcc -O2 -Wall -Wextra -o bbweb bbweb-launch.c -lX11; \
+    gcc -O2 -Wall -o bbkey bbkey.c -lX11 -lXtst; \
+    strip bbweb-engine bbweb bbkey; ls -la bbweb-engine bbweb bbkey
 
 FROM alpine:3.20
 
@@ -63,31 +74,31 @@ RUN set -eux; \
 RUN set -eux; \
     apk add --no-cache tigervnc twm tint2 xsetroot xterm font-misc-misc ttf-dejavu mc links openbox xdotool; \
     echo "DESKTOP-LAYER $(apk info 2>/dev/null | wc -l) pkgs twm=$(command -v twm)"
-
-# 3b) v2 (build 73): graphical browser + file manager + Claude Code CLI + wallpaper tools.
-#     dillo = FLTK (light, CSS, no JS) · pcmanfm = the standard light GTK file manager ·
-#     claude = @anthropic-ai/claude-code on node 20 (apk ripgrep so the musl guest never needs
-#     the bundled glibc rg; git for repo work). npm cache cleaned (would bloat the rootfs).
+# 3a) v10 terminal: bash (completion, history search) + the tools `help` lists. busybox keeps providing
+#     the rest; each of these is small. Completion is loaded on the first Tab (~/.bashrc): Alpine's
+#     /etc/bash/bash_completion.sh hook sourced it in every new terminal - ~0.7 s each on the emulated CPU.
 RUN set -eux; \
-    apk add --no-cache dillo pcmanfm xwallpaper nodejs npm ripgrep git 2>&1 | tail -1; \
-    npm install -g @anthropic-ai/claude-code 2>&1 | tail -2; \
-    npm cache clean --force 2>&1 | tail -1 || true; \
-    claude --version; \
-    echo "DESKTOP-V2-OK dillo=$(command -v dillo) pcmanfm=$(command -v pcmanfm) claude=$(claude --version 2>/dev/null | head -c 40) nm=$(du -sm /usr/lib/node_modules 2>/dev/null | cut -f1)MB"
+    apk add --no-cache bash bash-completion less htop ncdu nano vim tmux file jq bc zip unzip xz rsync \
+      openssh-client sqlite fastfetch tree git-bash-completion 2>&1 | tail -1; \
+    rm -f /etc/bash/bash_completion.sh; \
+    for c in bash htop ncdu nano vim tmux jq fastfetch sqlite3 ssh rsync tree; do command -v $c >/dev/null; done; \
+    echo "TERMINAL-TOOLS-OK"
+
+# 3b) browsers + file manager + wallpaper tools. bbweb = WebKitGTK 4.1 (built in the tools stage;
+#     glib-networking gives it TLS) · dillo = FLTK lite browser (CSS, no JS) · pcmanfm = light GTK
+#     file manager · ripgrep + git for the terminal. (v10: Node.js + Claude Code removed.)
+RUN set -eux; \
+    apk add --no-cache webkit2gtk-4.1 glib-networking dillo pcmanfm xwallpaper ripgrep git 2>&1 | tail -1; \
+    echo "DESKTOP-APPS-OK dillo=$(command -v dillo) pcmanfm=$(command -v pcmanfm)"
 COPY --from=wall /wallpaper.png /usr/share/bootbox-wallpaper.png
 
-# 3b2) official Claude CLI + icon theme. Try Anthropic's native installer first; if its binary runs on
-#      musl it wins, otherwise the npm @anthropic-ai/claude-code (also the official CLI) stays.
-#      adwaita-icon-theme gives GTK apps (PCManFM) real icons. libfm: single-click opens.
+# 3b2) icon theme: adwaita-icon-theme gives GTK apps (PCManFM, bbweb's toolbar) real icons.
+#      libfm: single-click opens.
 RUN set -eux; \
-    (curl -fsSL https://claude.ai/install.sh | sh 2>&1 | tail -2 && \
-     /root/.local/bin/claude --version && ln -sf /root/.local/bin/claude /usr/local/bin/claude && echo "CLAUDE-NATIVE-OK") \
-    || echo "CLAUDE-NATIVE-SKIP (musl — the npm official CLI stays)"; \
-    claude --version; \
     apk add --no-cache adwaita-icon-theme 2>&1 | tail -1; \
     mkdir -p /root/.config/libfm; \
     printf '[config]\nsingle_click=1\nquick_exec=1\n' > /root/.config/libfm/libfm.conf; \
-    echo "CLAUDE-ICONTHEME-OK"
+    echo "ICONTHEME-OK"
 # 3b3) locale + `help`: alias in BOTH /etc/profile (login shells) AND $ENV=/etc/ashrc (every
 #      interactive ash). Terminals use the `fixed` bitmap font (desktop/bxterm) - Xft TrueType in a
 #      terminal is too slow on the emulated CPU.
@@ -108,8 +119,16 @@ COPY desktop/openbox-theme/ /usr/share/themes/Bootbox/openbox-3/
 COPY desktop/rc.xml desktop/menu.xml /root/.config/openbox/
 COPY desktop/tint2rc /root/.config/tint2/tint2rc
 COPY desktop/bxterm desktop/bootbox-menu /usr/local/bin/
+COPY --from=tools /src/bbweb /src/bbkey /usr/local/bin/
+COPY --from=tools /src/bbweb-engine /usr/libexec/bbweb-engine
+COPY desktop/start.html /usr/share/bootbox/start.html
+COPY desktop/bashrc /root/.bashrc
+COPY desktop/bash_profile /root/.bash_profile
 RUN set -eux; \
     chmod +x /usr/local/bin/bxterm /usr/local/bin/bootbox-menu /usr/share/bootbox-apps/*.desktop; \
+    sed -i 's#^root:x:0:0:root:/root:/bin/sh$#root:x:0:0:root:/root:/bin/bash#' /etc/passwd; grep '^root:.*/bin/bash$' /etc/passwd; \
+    printf 'export WEBKIT_DISABLE_COMPOSITING_MODE=1\nexport WEBKIT_DISABLE_DMABUF_RENDERER=1\nexport NO_AT_BRIDGE=1\n' > /etc/profile.d/10desktop.sh; \
+    for b in /usr/libexec/bbweb-engine /usr/local/bin/bbweb /usr/local/bin/bbkey; do ldd $b | grep -iE "not found|Error relocating" && exit 1; done; \
     mkdir -p /root/.config/gtk-3.0; \
     printf '[Settings]\ngtk-application-prefer-dark-theme=1\ngtk-theme-name=Adwaita\ngtk-icon-theme-name=Adwaita\ngtk-font-name=DejaVu Sans 10\ngtk-enable-animations=0\n' > /root/.config/gtk-3.0/settings.ini; \
     printf 'gtk-theme-name="Adwaita"\ngtk-font-name="DejaVu Sans 10"\n' > /root/.gtkrc-2.0; \
@@ -161,10 +180,9 @@ RUN set -eux; \
     for f in cpuz_x64.exe cpuz.ini; do \
       curl -fsSL --retry 3 -o "$f" "https://github.com/yu314-coder/Bootbox/releases/download/cpuz-v1/$f"; done; \
     ls -la /opt/cpuz; \
-    rm -rf /usr/lib/libgstreamer* /usr/lib/gstreamer-1.0 /usr/lib/libgst* /usr/lib/sane /usr/lib/libsane* \
-           /etc/sane.d /usr/lib/libOpenCL* /etc/OpenCL; \
+    rm -rf /usr/lib/sane /usr/lib/libsane* /etc/sane.d /usr/lib/libOpenCL* /etc/OpenCL; \
     rm -rf /usr/lib/wine/i386-windows /usr/lib/wine/i386-unix; \
-    echo "CPUZ-OK (64-bit Wine only: the 32-bit side is 209 MB; full Wine stays in the Linux Terminal image)"
+    echo "CPUZ-OK (64-bit Wine only: the 32-bit side is 209 MB; full Wine stays in the Linux Terminal image; GStreamer stays: WebKit links it)"
 COPY desktop/bench/cpuz-bench desktop/bench/gpu-bench /usr/local/bin/
 # Warm Wine's first-GUI-run and CPU-Z's first start (font caches, registry, DLL loads) at native
 # speed; on the device the first CPU-Z start then skips minutes of one-time setup.
@@ -196,7 +214,20 @@ RUN set -eux; \
     (Xvfb :9 -screen 0 640x480x16 >/tmp/xvfb.log 2>&1 &); sleep 3; \
     (DISPLAY=:9 timeout 60 pcmanfm >/tmp/warm-pc.log 2>&1 &); sleep 20; \
     (DISPLAY=:9 timeout 40 dillo about:blank >/tmp/warm-d.log 2>&1 &); sleep 12; \
-    pkill pcmanfm 2>/dev/null || true; pkill dillo 2>/dev/null || true; pkill Xvfb || true; \
+    pkill pcmanfm 2>/dev/null || true; pkill dillo 2>/dev/null || true; \
+    apk add --no-cache gstreamer-tools 2>&1 | tail -1; gst-inspect-1.0 >/dev/null 2>&1 || true; apk del gstreamer-tools 2>&1 | tail -1; \
+    . /etc/profile.d/10desktop.sh; \
+    (DISPLAY=:9 BBWEB_LOG=1 timeout 60 bbweb >/tmp/warm-w.log 2>&1 &); sleep 25; \
+    test -S /tmp/.bbweb.sock; DISPLAY=:9 bbweb; DISPLAY=:9 bbweb https://example.org; sleep 8; \
+    test "$(pgrep bbweb-engine | wc -l)" = 1; grep -q "title: Example Domain" /tmp/warm-w.log; echo "BBWEB-SINGLE-INSTANCE-OK"; \
+    pkill bbweb-engine 2>/dev/null || true; pkill -f WebKit 2>/dev/null || true; sleep 2; \
+    (DISPLAY=:9 BBWEB_LOG=1 timeout 45 /usr/libexec/bbweb-engine https://example.com >/tmp/warm-w2.log 2>&1 &); sleep 30; \
+    pkill bbweb-engine 2>/dev/null || true; pkill -f WebKit 2>/dev/null || true; sleep 2; pkill Xvfb || true; \
+    rm -f /tmp/.bbweb.sock /tmp/.bbweb.lock; \
+    cat /tmp/warm-w.log /tmp/warm-w2.log | grep -v "^$" | tail -12; \
+    grep -q "title: Start$" /tmp/warm-w.log; \
+    (grep -q "title: Example Domain" /tmp/warm-w2.log && echo "BBWEB-HTTPS-OK") || echo "BBWEB-HTTPS-NOT-VERIFIED (build network?)"; \
+    rm -rf /root/.cache/bbweb /root/.local/share/bbweb /root/.local/share/webkitgtk; \
     apk del xvfb 2>&1 | tail -1; \
     echo "DESKTOP-WARM-OK"
 

@@ -10,6 +10,10 @@
 export LANG=C.UTF-8
 export LC_ALL=C.UTF-8
 export ENV=/etc/ashrc
+# v10: terminals run bash; WebKit paints in software (no GL/DMA-BUF probing - Mesa under emulation is
+# far slower) and GTK apps skip the accessibility bus they would otherwise wait for.
+export SHELL=/bin/bash
+export WEBKIT_DISABLE_COMPOSITING_MODE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 NO_AT_BRIDGE=1
 if [ ! -e /tmp/.xstarted ]; then
   : > /tmp/.xstarted
   (

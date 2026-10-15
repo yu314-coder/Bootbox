@@ -1,4 +1,5 @@
 #!/bin/sh
 # Opens the openbox app menu at the pointer (the panel's Apps button / a desktop right-click).
-# openbox has no menu IPC, so press its W-space keybind (rc.xml) through XTEST.
-exec xdotool key --clearmodifiers super+space
+# openbox has no menu IPC, so press its W-space keybind (rc.xml) through XTEST. (The Bootbox app
+# itself turns a tap on the Apps button into that key directly - this is the in-guest path.)
+exec bbkey Super_L space

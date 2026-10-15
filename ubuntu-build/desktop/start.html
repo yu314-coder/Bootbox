@@ -1,0 +1,36 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Bootbox Web</title>
+<style>
+  body { margin: 0; background: #0b0f17; color: #d6e2f2; font: 16px "DejaVu Sans", sans-serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 56px 24px; }
+  h1 { font-size: 30px; letter-spacing: 2px; color: #8fbdec; margin: 0 0 22px; text-align: center; }
+  form { display: flex; gap: 8px; margin-bottom: 34px; }
+  input { flex: 1; font-size: 18px; padding: 11px 14px; border-radius: 10px; border: 1px solid #2c3a52;
+          background: #121a27; color: #fff; outline: none; }
+  input:focus { border-color: #3d8bfd; }
+  button { font-size: 16px; padding: 0 20px; border: 0; border-radius: 10px; background: #3d8bfd; color: #fff; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  a.tile { display: block; padding: 16px; border-radius: 12px; background: #121a27; border: 1px solid #1f2a3c;
+           color: #d6e2f2; text-decoration: none; }
+  a.tile:hover { border-color: #3d8bfd; }
+  a.tile b { display: block; color: #fff; margin-bottom: 4px; }
+  a.tile span { font-size: 13px; color: #7f8ea6; }
+  p.note { margin-top: 30px; font-size: 13px; color: #5d6b82; text-align: center; }
+</style></head>
+<body><main>
+  <h1>BOOTBOX WEB</h1>
+  <form action="https://lite.duckduckgo.com/lite/" method="get">
+    <input name="q" placeholder="Search the web" autofocus><button>Search</button>
+  </form>
+  <div class="grid">
+    <a class="tile" href="https://en.m.wikipedia.org/"><b>Wikipedia</b><span>mobile edition</span></a>
+    <a class="tile" href="https://lite.duckduckgo.com/lite/"><b>DuckDuckGo</b><span>lite search</span></a>
+    <a class="tile" href="https://news.ycombinator.com/"><b>Hacker News</b><span>tech news</span></a>
+    <a class="tile" href="https://github.com/"><b>GitHub</b><span>code</span></a>
+    <a class="tile" href="https://docs.python.org/3/"><b>Python docs</b><span>reference</span></a>
+    <a class="tile" href="https://text.npr.org/"><b>NPR Text</b><span>light news</span></a>
+  </div>
+  <p class="note" id="note">Pages run on the emulated CPU - light sites load fastest.</p>
+</main>
+<script>document.title = "Start"; document.getElementById("note").dataset.js = "1";</script>
+</body></html>

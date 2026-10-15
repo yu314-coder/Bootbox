@@ -1,4 +1,4 @@
-# Bootbox desktop v8 panel: [Apps] start button · pinned launchers · window list · clock.
+# Bootbox desktop v10 panel: [Apps] start button · pinned launchers · window list · clock.
 # Solid colours only (alpha is blended by tint2 itself, no compositor needed).
 
 # --- backgrounds -----------------------------------------------------------------------------------
@@ -124,8 +124,8 @@ launcher_tooltip = 1
 startup_notifications = 0
 launcher_item_app = /usr/share/bootbox-apps/terminal.desktop
 launcher_item_app = /usr/share/bootbox-apps/files.desktop
-launcher_item_app = /usr/share/bootbox-apps/dillo.desktop
-launcher_item_app = /usr/share/bootbox-apps/claude.desktop
+launcher_item_app = /usr/share/bootbox-apps/web.desktop
+launcher_item_app = /usr/share/bootbox-apps/monitor.desktop
 launcher_item_app = /usr/share/bootbox-apps/python.desktop
 
 # --- open windows ----------------------------------------------------------------------------------

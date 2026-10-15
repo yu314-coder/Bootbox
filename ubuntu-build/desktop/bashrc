@@ -1,0 +1,20 @@
+# Bootbox terminal: bash with completion, a colour prompt, shared history and the usual aliases.
+case $- in *i*) ;; *) return ;; esac
+# Completion loads on the first Tab: sourcing bash-completion at start-up cost ~0.7 s per new
+# terminal on the emulated CPU (the image drops Alpine's /etc/bash/bash_completion.sh hook for this).
+if [ -r /usr/share/bash-completion/bash_completion ]; then
+  _bb_completion_init() { complete -r -D; . /usr/share/bash-completion/bash_completion; return 124; }
+  complete -D -F _bb_completion_init
+fi
+HISTSIZE=5000; HISTFILESIZE=10000; HISTCONTROL=ignoreboth
+shopt -s histappend checkwinsize cdspell 2>/dev/null
+PS1='\[\e[1;32m\]\u@bootbox\[\e[0m\]:\[\e[1;34m\]\w\[\e[0m\]\$ '
+alias ls='ls --color=auto' ll='ls -lh' la='ls -A' l='ls -CF' grep='grep --color=auto' ..='cd ..'
+alias help=/usr/local/bin/bootbox-help web=bbweb
+# Up/Down search the history for what is already typed.
+bind '"\e[A": history-search-backward' 2>/dev/null
+bind '"\e[B": history-search-forward' 2>/dev/null
+command_not_found_handle() {
+  printf 'bash: %s: command not found\n  install it:  apk add %s     (find it: apk search %s)\n' "$1" "$1" "$1" >&2
+  return 127
+}

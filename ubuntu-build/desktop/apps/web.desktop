@@ -1,7 +1,7 @@
 [Desktop Entry]
 Type=Application
-Name=Web (Dillo)
-Comment=Light web browser
+Name=Web
+Comment=Web browser (full JavaScript)
 Icon=/usr/share/bootbox/icons/browser.png
-Exec=dillo https://example.com
+Exec=bbweb
 Terminal=false

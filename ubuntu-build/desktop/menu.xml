@@ -1,20 +1,21 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Bootbox desktop v8 start menu (opened by the panel's start button or a right-click on the desktop). -->
+<!-- Bootbox desktop v10 start menu (opened by the panel's Apps button or a right-click on the desktop). -->
 <openbox_menu xmlns="http://openbox.org/3.4/menu">
   <menu id="root-menu" label="Bootbox">
     <separator label="Bootbox Linux"/>
     <item label="Terminal" icon="/usr/share/bootbox/icons/terminal.png"><action name="Execute"><command>bxterm</command></action></item>
+    <item label="Web browser" icon="/usr/share/bootbox/icons/browser.png"><action name="Execute"><command>bbweb</command></action></item>
     <item label="Files" icon="/usr/share/bootbox/icons/files.png"><action name="Execute"><command>pcmanfm</command></action></item>
-    <item label="Web browser" icon="/usr/share/bootbox/icons/browser.png"><action name="Execute"><command>dillo https://example.com</command></action></item>
-    <item label="Claude Code" icon="/usr/share/bootbox/icons/claude.png"><action name="Execute"><command>bxterm -T "Claude Code" -geometry 100x30 -e sh -lc claude</command></action></item>
     <item label="Python" icon="/usr/share/bootbox/icons/python.png"><action name="Execute"><command>bxterm -T Python -e python3</command></action></item>
+    <item label="System monitor" icon="/usr/share/bootbox/icons/monitor.png"><action name="Execute"><command>bxterm -T "System monitor" -geometry 100x30 -e htop</command></action></item>
     <item label="Midnight Commander" icon="/usr/share/bootbox/icons/mc.png"><action name="Execute"><command>bxterm -T "Midnight Commander" -geometry 100x30 -e mc</command></action></item>
+    <item label="Lite browser (no JavaScript)" icon="/usr/share/bootbox/icons/browser.png"><action name="Execute"><command>dillo https://lite.duckduckgo.com/lite/</command></action></item>
     <separator label="Benchmarks"/>
     <item label="CPU-Z benchmark" icon="/usr/share/bootbox/icons/cpuz.png"><action name="Execute"><command>bxterm -T "CPU-Z benchmark" -geometry 80x22 -e sh -c "cpuz-bench; echo; printf 'Press Enter to close'; read x"</command></action></item>
     <item label="CPU-Z (window)" icon="/usr/share/bootbox/icons/cpuz.png"><action name="Execute"><command>sh -c "mkdir -p /root/cpuz; cp -n /opt/cpuz/* /root/cpuz/; cd /root/cpuz; LIBGL_ALWAYS_SOFTWARE=1 WINEESYNC=1 WINEDEBUG=-all exec wine cpuz_x64.exe"</command></action></item>
     <item label="GPU benchmark (glmark2)" icon="/usr/share/bootbox/icons/gpu.png"><action name="Execute"><command>bxterm -T "GPU benchmark" -geometry 90x24 -e sh -c "gpu-bench; echo; printf 'Press Enter to close'; read x"</command></action></item>
     <separator/>
-    <item label="Help" icon="/usr/share/bootbox/icons/help.png"><action name="Execute"><command>bxterm -T Help -geometry 90x30 -e sh -c "bootbox-help; echo; printf 'Press Enter to close'; read x"</command></action></item>
+    <item label="Help" icon="/usr/share/bootbox/icons/help.png"><action name="Execute"><command>bxterm -T Help -geometry 90x34 -e sh -c "bootbox-help; echo; printf 'Press Enter to close'; read x"</command></action></item>
     <item label="Show desktop"><action name="ToggleShowDesktop"/></item>
     <item label="Restart desktop"><action name="Restart"/></item>
   </menu>
