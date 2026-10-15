@@ -1049,6 +1049,7 @@
               compressedVnc: !!g.android,
               touchGuest: !!g.android,   // touches go straight to Android's touchscreen (run.js installDirectTouch)
               vncLabel: g.android ? "Android" : undefined,
+              appsKey: g.id === "x64pwd",   // desktop panel's Apps button -> openbox's menu key (run.js installAppsKey)
               onStatus: (m) => { try { status.textContent = m; } catch (e) {} },
               onReady: (r) => {
                 setState("Running");

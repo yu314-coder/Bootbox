@@ -2140,6 +2140,10 @@ export default class RFB extends EventTargetMixin {
         encs.push(encodings.encodingHextile);
         encs.push(encodings.encodingRaw);
         encs.push(encodings.pseudoEncodingQEMUExtendedKeyEvent);
+        // Bootbox: let the viewer draw the X cursor (opt-in, re-tested on the fixed engine) - otherwise
+        // every pointer move makes Xvnc redraw + re-encode the cursor area in the emulated guest and the
+        // guest-side arrow trails the iPad pointer.
+        if (this._bootboxCursor) encs.push(encodings.pseudoEncodingCursor);
 
         RFB.messages.clientEncodings(this._sock, encs);
     }

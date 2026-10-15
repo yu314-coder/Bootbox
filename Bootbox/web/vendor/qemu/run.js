@@ -441,6 +441,42 @@
       };
       R.messages.__bbDither = true;
     }
+    // Linux desktop: the panel's Apps button runs tint2 -> sh -> xdotool -> openbox, ~1.2 s on the
+    // emulated CPU; openbox opens the same menu in ~0.25 s straight from its W-space keybinding (rc.xml).
+    // So a left press on the button becomes that key (its release is swallowed), and a second press
+    // while the menu is (probably) still open closes it with Escape. Any other press or key clears that.
+    function installAppsKey(R) {
+      if (!R || !R.messages || R.messages.__bbApps) return;
+      const ptr = R.messages.pointerEvent, key = R.messages.keyEvent, qkey = R.messages.QEMUExtendedKeyEvent;
+      const onButton = (st, x, y) => st.r._fbWidth === 1024 && st.r._fbHeight === 768 && x < 104 && y >= 724;
+      const keys = (st, seq) => {
+        st.sending = true;
+        try { for (const [ks, down] of seq) st.r.sendKey(ks, null, down); } catch (e) {}
+        st.sending = false;
+      };
+      R.messages.pointerEvent = function (sock, x, y, mask) {
+        const st = sock && sock.__bbApps;
+        if (!st) return ptr.call(this, sock, x, y, mask);
+        const pressed = (mask & 1) && !(st.mask & 1);
+        st.mask = mask;
+        if (pressed && onButton(st, x, y)) {
+          st.swallow = true;
+          ptr.call(this, sock, x, y, mask & ~1);   // pointer onto the button: openbox opens the menu there
+          if (st.open) { st.open = false; keys(st, [[0xff1b, true], [0xff1b, false]]); }
+          else { st.open = true; keys(st, [[0xffeb, true], [0x20, true], [0x20, false], [0xffeb, false]]); }
+          return;
+        }
+        if (st.swallow) {
+          if (mask & 1) return ptr.call(this, sock, x, y, mask & ~1);
+          st.swallow = false;
+        } else if (pressed || (mask & 6)) st.open = false;   // any other click picks an item / closes the menu
+        return ptr.call(this, sock, x, y, mask);
+      };
+      const clear = (sock, down) => { const st = sock && sock.__bbApps; if (st && down && !st.sending) st.open = false; };
+      if (key) R.messages.keyEvent = function (sock, keysym, down) { clear(sock, down); return key.apply(this, arguments); };
+      if (qkey) R.messages.QEMUExtendedKeyEvent = function (sock, keysym, down) { clear(sock, down); return qkey.apply(this, arguments); };
+      R.messages.__bbApps = true;
+    }
     function sendPointer(r, p, mask) {
       try { if (r && r._rfbConnectionState === "connected") r.constructor.messages.pointerEvent(r._sock, p.x, p.y, mask); } catch (e) {}
     }
@@ -651,6 +687,7 @@
         // enormously from compressed frames. The Linux Xvnc guest still uses
         // Bootbox's conservative Hextile-only compatibility list.
         rfb._bootboxCompressed = !!opts.compressedVnc;
+        rfb._bootboxCursor = !opts.touchGuest && (self.__bbVncCursor !== false);   // X guests: viewer-drawn cursor
         try {   // frame-update heartbeat for the display HUD (panel.js)
           const d = rfb._display, flip = d.flip;
           d.flip = function () { self.__guiFrameT = Date.now(); return flip.apply(this, arguments); };
@@ -668,6 +705,10 @@
           installPointerDither(RFB);
           try { rfb._sock.__bbTouch = { r: rfb, x: -1, y: -1 }; } catch (e) {}
           installDirectTouch(rfb);
+        }
+        if (opts.appsKey) {
+          installAppsKey(RFB);
+          try { rfb._sock.__bbApps = { r: rfb, mask: 0, open: false, swallow: false, sending: false }; } catch (e) {}
         }
         rfbBornAt = Date.now();   // stuck-connecting watchdog baseline
         try { self.__rfb = rfb; } catch (e) {}
