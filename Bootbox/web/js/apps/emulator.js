@@ -82,19 +82,20 @@
         name: "qemu-aarch64-rootfs-265519785.data.gz", mb: 57, size: 60000998 },
     ] },
     "vendor/qemu-desktop/": { files: [   // x86_64 engine shared from qemu-aload; only the rootfs downloads
-      // desktop v8 (build 93): openbox + flat dark theme + tint2 panel (Apps menu, pinned apps, window
-      // list, clock) - replaces twm, which asked you to click to place every window (the stray grid).
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v8/qemu-desktop8-rootfs.data.gz",
-        name: "qemu-desktop8-rootfs-693375940.data.gz", mb: 223, size: 233310496 },
+      // desktop v9 (build 95): v8's openbox desktop + a Benchmarks section in the Apps menu - CPU-Z
+      // (64-bit Wine, warmed prefix) and glmark2 on Mesa llvmpipe, preinstalled; Xvnc -DeferUpdate 10.
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v9/qemu-desktop9-rootfs.data.gz",
+        name: "qemu-desktop9-rootfs-1300120755.data.gz", mb: 410, size: 430297987 },
     ] },
     // Android is a full AOSP x86_64 userspace on Bootbox's QEMU guest kernel.
     // The rootfs is download-on-demand; the x86_64 engine is shared with Linux.
     "vendor/qemu-android/": { files: [
-      // v5 (build 93): the VNC bridge exposes a plain touchscreen (protocol B) + a separate keyboard,
-      // the visible apps and System UI are AOT-compiled, idle CPU wasters (BT HAL, traceur, print
-      // spooler) are off. Same quad-core layout and settings as v4.
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v5/qemu-android64-warm5-2161126625.data.gz",
-        name: "qemu-android64-warm5-2161126625.data.gz", mb: 956, size: 1002880222 },
+      // v6 (build 95): 800x600 @125 dpi (same layout, ~40% fewer pixels to render and compose) with HWUI
+      // on Skia/Vulkan instead of ANGLE GL (cold app launches ~2x faster); Settings, Files, the WebView
+      // browser, Gallery, Contacts, Clock and Calendar were launched before the snapshot so the ones
+      // still in memory resume instead of cold-starting; plain touchscreen + keyboard (v5), no bg dexopt.
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v6/qemu-android64-warm6-2141954248.data.gz",
+        name: "qemu-android64-warm6-2141954248.data.gz", mb: 911, size: 954588021 },
     ] },
   };
   // Ensure the guest's rootfs is present before booting: trigger the native download (BinaryBridge
@@ -1058,7 +1059,7 @@
                   try { panel64.showGui(); } catch (e) {}   // the desktop IS the GUI → connect immediately
                   status.textContent = g.android
                     ? "Running — full Android 12 AOSP (64-bit x86_64) in QEMU. This is a warm-boot image: it resumes to the home screen in a few seconds (no cold boot). Touch the screen directly and use ⌨ Type for text."
-                    : "Running — x86_64 Linux desktop. The panel appears ~1–2 min after the first boot. Tap Apps (bottom-left) or right-click/long-press the desktop for programs; ⌨ Type or the Magic Keyboard types into the focused window.";
+                    : "Running — x86_64 Linux desktop. The panel appears ~1–2 min after the first boot. Tap Apps (bottom-left) or right-click/long-press the desktop for programs and the CPU-Z / GPU benchmarks; ⌨ Type or the Magic Keyboard types into the focused window.";
                 } else {        // [ terminal | GUI ]: blank GUI until you launch an X program from the terminal
                   // LAZY DISPLAY (power/heat): do NOT connect noVNC on boot — a connected viewer renders
                   // the (blank) Xvnc framebuffer continuously = wasted CPU/GPU even with nothing on screen.

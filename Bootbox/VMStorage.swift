@@ -74,7 +74,11 @@ enum VMStorage {
         "qemu-android64-warm-2163449947.data",
         "qemu-desktop7-rootfs-711887616.data.gz",   // desktop v7 (twm) → v8 openbox (build 93)
         "qemu-desktop7-rootfs-711887616.data",      //   expanded form (lazy packs, build 87+)
+        "qemu-desktop8-rootfs-693375940.data.gz",   // desktop v8 → v9 (build 95)
+        "qemu-desktop8-rootfs-693375940.data",
         "qemu-android64-warm4-2038076444.data.gz",  // Android v4 → v5 (build 93)
         "qemu-android64-warm4-2038076444.data",
+        "qemu-android64-warm5-2161126625.data.gz",  // Android v5 → v6 (build 95)
+        "qemu-android64-warm5-2161126625.data",
     ]
 }

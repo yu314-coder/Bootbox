@@ -99,8 +99,8 @@ final class LocalServer {
         // Until a pack is expanded, the .gz mappings below keep the old whole-file path working.
         let expandedPacks: [String: String] = [
             "vendor/qemu-aload/qemu-system-x86_64.data": "qemu64-v5-rootfs-945742898.data",
-            "vendor/qemu-desktop/qemu-system-x86_64.data": "qemu-desktop8-rootfs-693375940.data",
-            "vendor/qemu-android/qemu-system-x86_64.data": "qemu-android64-warm5-2161126625.data",
+            "vendor/qemu-desktop/qemu-system-x86_64.data": "qemu-desktop9-rootfs-1300120755.data",
+            "vendor/qemu-android/qemu-system-x86_64.data": "qemu-android64-warm6-2141954248.data",
             "vendor/qemu-aarch64/qemu-system-aarch64.data": "qemu-aarch64-rootfs-265519785.data",
         ]
         if let name = expandedPacks[rel] {
@@ -129,14 +129,14 @@ final class LocalServer {
         // Desktop guest (x86_64, no Wine/browser): rootfs download-on-demand; engine wasm shared from
         // qemu-aload (the page requests ../qemu-aload/...wasm, which normalizes to the bundled one).
         if rel == "vendor/qemu-desktop/qemu-system-x86_64.data.gz" {
-            let cached = VMStorage.importsDir().appendingPathComponent("qemu-desktop8-rootfs-693375940.data.gz")
+            let cached = VMStorage.importsDir().appendingPathComponent("qemu-desktop9-rootfs-1300120755.data.gz")
             return FileManager.default.fileExists(atPath: cached.path) ? cached : nil
         }
         // Full Android 12 AOSP x86_64 guest. Its QEMU engine is shared with qemu-aload, while this
         // size-tagged guest pack (system/vendor/product + prepared ext4 userdata) is downloaded once.
         // Keep the filename in sync with emulator.js ROOTFS_REMOTE and qemu-android/load.js.
         if rel == "vendor/qemu-android/qemu-system-x86_64.data.gz" {
-            let cached = VMStorage.importsDir().appendingPathComponent("qemu-android64-warm5-2161126625.data.gz")
+            let cached = VMStorage.importsDir().appendingPathComponent("qemu-android64-warm6-2141954248.data.gz")
             return FileManager.default.fileExists(atPath: cached.path) ? cached : nil
         }
         guard let root = LocalServer.webRoot else { return nil }

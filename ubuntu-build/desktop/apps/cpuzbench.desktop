@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=CPU-Z benchmark
+Comment=CPU-Z single/multi-thread score (Wine)
+Icon=/usr/share/bootbox/icons/cpuz.png
+Exec=bxterm -T 'CPU-Z benchmark' -geometry 80x22 -e sh -c 'cpuz-bench; echo; printf "Press Enter to close"; read x'
+Terminal=false

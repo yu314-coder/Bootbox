@@ -9,6 +9,10 @@
     <item label="Claude Code" icon="/usr/share/bootbox/icons/claude.png"><action name="Execute"><command>bxterm -T "Claude Code" -geometry 100x30 -e sh -lc claude</command></action></item>
     <item label="Python" icon="/usr/share/bootbox/icons/python.png"><action name="Execute"><command>bxterm -T Python -e python3</command></action></item>
     <item label="Midnight Commander" icon="/usr/share/bootbox/icons/mc.png"><action name="Execute"><command>bxterm -T "Midnight Commander" -geometry 100x30 -e mc</command></action></item>
+    <separator label="Benchmarks"/>
+    <item label="CPU-Z benchmark" icon="/usr/share/bootbox/icons/cpuz.png"><action name="Execute"><command>bxterm -T "CPU-Z benchmark" -geometry 80x22 -e sh -c "cpuz-bench; echo; printf 'Press Enter to close'; read x"</command></action></item>
+    <item label="CPU-Z (window)" icon="/usr/share/bootbox/icons/cpuz.png"><action name="Execute"><command>sh -c "mkdir -p /root/cpuz; cp -n /opt/cpuz/* /root/cpuz/; cd /root/cpuz; LIBGL_ALWAYS_SOFTWARE=1 WINEESYNC=1 WINEDEBUG=-all exec wine cpuz_x64.exe"</command></action></item>
+    <item label="GPU benchmark (glmark2)" icon="/usr/share/bootbox/icons/gpu.png"><action name="Execute"><command>bxterm -T "GPU benchmark" -geometry 90x24 -e sh -c "gpu-bench; echo; printf 'Press Enter to close'; read x"</command></action></item>
     <separator/>
     <item label="Help" icon="/usr/share/bootbox/icons/help.png"><action name="Execute"><command>bxterm -T Help -geometry 90x30 -e sh -c "bootbox-help; echo; printf 'Press Enter to close'; read x"</command></action></item>
     <item label="Show desktop"><action name="ToggleShowDesktop"/></item>

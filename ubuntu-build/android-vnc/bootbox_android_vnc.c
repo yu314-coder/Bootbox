@@ -21,6 +21,7 @@
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <sys/un.h>
+#include <sys/system_properties.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -422,9 +423,22 @@ static void handle_signal(int signal_number) {
     _exit(0);
 }
 
+/* The display size redroid was booted with (androidboot.redroid_width/height), so the bridge always
+   matches the composer's frames; env overrides, then the compiled-in default. */
+static int prop_int(const char *name, int fallback, int min, int max) {
+    char value[PROP_VALUE_MAX] = {0};
+    if (__system_property_get(name, value) <= 0) return fallback;
+    char *end = NULL;
+    long parsed = strtol(value, &end, 10);
+    if (!end || *end || parsed < min || parsed > max) return fallback;
+    return (int)parsed;
+}
+
 int main(int argc, char **argv) {
-    display_width = env_int("BOOTBOX_ANDROID_WIDTH", DEFAULT_WIDTH, 320, 4096);
-    display_height = env_int("BOOTBOX_ANDROID_HEIGHT", DEFAULT_HEIGHT, 240, 4096);
+    display_width = env_int("BOOTBOX_ANDROID_WIDTH",
+                            prop_int("ro.boot.redroid_width", DEFAULT_WIDTH, 320, 4096), 320, 4096);
+    display_height = env_int("BOOTBOX_ANDROID_HEIGHT",
+                             prop_int("ro.boot.redroid_height", DEFAULT_HEIGHT, 240, 4096), 240, 4096);
     int port = env_int("BOOTBOX_VNC_PORT", 5900, 1, 65535);
 
     signal(SIGINT, handle_signal);

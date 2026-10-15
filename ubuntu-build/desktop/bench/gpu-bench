@@ -1,0 +1,22 @@
+#!/bin/sh
+# gpu-bench - glmark2 (the standard OpenGL ES benchmark) on Mesa's software rasterizer (llvmpipe).
+# There is no GPU in an iPad's WebAssembly sandbox: every pixel is computed by the emulated CPU, so
+# this measures engine speed x cores, which is what any graphical app here gets.
+#   gpu-bench        -> quick: 2 scenes (clear 8 s + build 30 s - its first ~10 s compile shaders), 320x240
+#   gpu-bench full   -> the whole glmark2 suite (long)
+export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER="${GPU:-llvmpipe}"
+LP_NUM_THREADS=$(nproc); export LP_NUM_THREADS
+# glmark2 gets its own X server: presenting to the desktop's Xvnc while it is busy can stall frames.
+pkill -f "Xvnc :1 " 2>/dev/null
+(Xvnc :1 -geometry 640x480 -depth 24 -SecurityTypes None -rfbport 5901 -localhost yes -desktop gpubench >/tmp/xvnc-gpu.log 2>&1 &)
+for i in 1 2 3 4 5 6 7 8 9 10; do timeout 5 xwininfo -display :1 -root >/dev/null 2>&1 && break; sleep 1; done
+trap 'pkill -f "Xvnc :1 " 2>/dev/null' EXIT
+VIS="red=1:green=1:blue=1:alpha=0:depth=1:stencil=0"
+echo "glmark2-es2 on Mesa $GALLIUM_DRIVER ($LP_NUM_THREADS render threads). Shaders compile on the emulated CPU first."
+S=$(date +%s)
+if [ "$1" = "full" ]; then
+  DISPLAY=:1 glmark2-es2 --visual-config "$VIS" --size 320x240
+else
+  DISPLAY=:1 glmark2-es2 --visual-config "$VIS" --size 320x240 -b clear:duration=8 -b build:use-vbo=true:duration=30
+fi
+echo "(took $(( $(date +%s) - S )) s)"

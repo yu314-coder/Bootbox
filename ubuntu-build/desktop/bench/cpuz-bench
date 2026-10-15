@@ -1,0 +1,34 @@
+#!/bin/sh
+# cpuz-bench - the real CPU-Z (Windows) benchmark under Wine, headless; prints the CPU-Z scores.
+#   cpuz-bench      -> 64-bit benchmark (single- + multi-thread)
+#   cpuz-bench info -> CPU-Z's CPU report
+# CPU-Z is baked into the image (/opt/cpuz) with a driver-off cpuz.ini; LIBGL_ALWAYS_SOFTWARE keeps it
+# from probing a GPU that does not exist (it hangs otherwise).
+export WINEPREFIX=/root/.wine WINEARCH=win64 WINEESYNC=1 WINEDEBUG=-all LIBGL_ALWAYS_SOFTWARE=1
+export WINEDLLOVERRIDES="winemenubuilder.exe=d"
+export DISPLAY="${DISPLAY:-:0}"
+echo disable > "$WINEPREFIX/.update-timestamp" 2>/dev/null   # the prefix is current; skip wineboot
+W=/root/cpuz; mkdir -p "$W"; cp -n /opt/cpuz/* "$W"/ 2>/dev/null; cd "$W" || exit 1
+MODE="${1:-64}"
+if [ "$MODE" = "info" ]; then
+  rm -f report.txt; timeout 300 wine cpuz_x64.exe -txt=report 2>/dev/null
+  [ -f report.txt ] && grep -iE "Name|Specification|Cores|Threads|Instructions" report.txt | head -20 || echo "no report"
+  exit 0
+fi
+EXE=cpuz_x64.exe
+echo "CPU-Z $MODE-bit benchmark: single thread, then all $(nproc) cores."
+echo "Every x86 instruction is translated to WebAssembly in software - this takes a few minutes."
+rm -f ./*.txt; S=$(date +%s)
+timeout 1200 wine "$EXE" -bench 2>/dev/null
+R=$(ls -t ./*.txt 2>/dev/null | grep -v report | head -1)
+if [ -n "$R" ]; then
+  SC=$(cat "$R" | tr -d '\r')
+  echo ""
+  echo "=========== CPU-Z $MODE-bit ==========="
+  echo "  Single-thread : $(echo "$SC" | cut -d',' -f1 | tr -d '"')"
+  echo "  Multi-thread  : $(echo "$SC" | cut -d',' -f2 | tr -d '"')   ($(nproc) cores)"
+  echo "  took $(( $(date +%s) - S )) s"
+  echo "======================================="
+else
+  echo "CPU-Z produced no result (Wine did not finish under emulation)."
+fi

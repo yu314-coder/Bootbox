@@ -56,6 +56,7 @@ FROM debian:bookworm-slim AS propedit
 COPY --from=redroid /system/build.prop /work/system.build.prop
 COPY --from=redroid /vendor/build.prop /work/vendor.build.prop
 RUN printf '\n# Bootbox: slow-host timeout scaling (survives boot without -icount)\nro.hw_timeout_multiplier=50\n' >> /work/system.build.prop && \
+    printf '# Bootbox v6: Skia on Vulkan (SwiftShader) for app rendering - app launches ~2x faster than ANGLE GL\ndebug.hwui.renderer=skiavk\n# no background dexopt (it burns CPU; the visible apps are AOT-compiled at capture)\npm.dexopt.disable_bg_dexopt=true\ndalvik.vm.dex2oat64.enabled=true\n' >> /work/system.build.prop && \
     printf '\n# Bootbox: slow-host timeout scaling\nro.hw_timeout_multiplier=50\n' >> /work/vendor.build.prop && \
     grep -c hw_timeout_multiplier /work/system.build.prop /work/vendor.build.prop
 
@@ -82,9 +83,9 @@ ENTRYPOINT ["/init", \
   "androidboot.hardware=redroid", \
   "androidboot.use_memfd=true", \
   "androidboot.redroid_gpu_mode=guest", \
-  "androidboot.redroid_width=1024", \
-  "androidboot.redroid_height=768", \
-  "androidboot.redroid_dpi=160", \
+  "androidboot.redroid_width=800", \
+  "androidboot.redroid_height=600", \
+  "androidboot.redroid_dpi=125", \
   "androidboot.redroid_fps=15", \
   "androidboot.use_redroid_stream=1", \
   "androidboot.use_redroid_vnc=1", \

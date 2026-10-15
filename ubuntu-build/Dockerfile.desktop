@@ -22,7 +22,7 @@ RUN apk add --no-cache imagemagick ttf-dejavu rsvg-convert papirus-icon-theme 2>
       -ordered-dither o8x8,32,64,32 /wallpaper.png && \
     mkdir -p /icons && P=/usr/share/icons/Papirus/48x48/apps && \
     for m in terminal:utilities-terminal files:system-file-manager browser:web-browser python:python \
-             mc:mc help:help-browser editor:accessories-text-editor; do \
+             mc:mc help:help-browser editor:accessories-text-editor cpuz:cpu-x gpu:GPU_Viewer; do \
       rsvg-convert -w 48 -h 48 "$P/${m#*:}.svg" -o "/icons/${m%%:*}.png"; done && \
     rsvg-convert -w 22 -h 18 /arch.svg -o /icons/start-raw.png && \
     magick -size 22x22 xc:none /icons/start-raw.png -gravity center -composite -channel RGB -fill white -colorize 100 /icons/start.png && \
@@ -115,6 +115,75 @@ RUN set -eux; \
     printf 'gtk-theme-name="Adwaita"\ngtk-font-name="DejaVu Sans 10"\n' > /root/.gtkrc-2.0; \
     printf 'RandomPlacement\nOpaqueMove\nNoGrabServer\nBorderWidth 2\nTitleFont "fixed"\nMenuFont "fixed"\nNoTitle { "tint2" }\nButton3 = : root : f.menu "apps"\nmenu "apps" {\n "Terminal" !"bxterm &"\n "Files" !"pcmanfm &"\n}\n' > /root/.twmrc; \
     openbox --version | head -1; ls /usr/share/bootbox/icons; echo "DESKTOP-V8-OK"
+
+# 3d) v9 (build 95): benchmarks built in. CPU-Z (real Windows app) runs under Wine; glmark2 measures
+#      the software GPU (Mesa llvmpipe). Same Wine recipe as the Linux Terminal image (Dockerfile.pw):
+#      wine-staging + esync (the build that works under the wasm engine), a prefix baked and warmed
+#      here at native speed (first-run wineboot takes minutes on the emulated CPU), debug channels off.
+#      Mesa's gallium drivers + GLES (Alpine 3.20 stable: Mesa 24 + LLVM 17 - edge Mesa 26 drags in
+#      newer libdrm/wayland and fails to load) + glmark2 (edge/testing) are installed here instead of
+#      on first use (~65 MB that took minutes to fetch and unpack in the guest every boot).
+RUN set -eux; \
+    apk add --no-cache \
+      -X https://dl-cdn.alpinelinux.org/alpine/edge/main \
+      -X https://dl-cdn.alpinelinux.org/alpine/edge/community \
+      -X https://dl-cdn.alpinelinux.org/alpine/edge/testing \
+      wine-staging xwininfo 2>&1 | tail -3; \
+    apk add --no-cache mesa-dri-gallium mesa-gles 2>&1 | tail -1; \
+    apk add --no-cache -X https://dl-cdn.alpinelinux.org/alpine/edge/testing glmark2 2>&1 | tail -1; \
+    for l in /usr/lib/libEGL.so.1 /usr/lib/libGLESv2.so.2 /usr/lib/libgbm.so.1 /usr/lib/xorg/modules/dri/swrast_dri.so; do \
+      test -e "$l"; ! ldd "$l" 2>&1 | grep -iE "not found|Error relocating"; done; \
+    wine --version; command -v glmark2-es2; \
+    python3 -c "import requests; print('python-ok')"; \
+    echo "WINE-MESA-OK $(wine --version) wine=$(du -sm /usr/lib/wine | cut -f1)MB"
+ENV WINEPREFIX=/root/.wine WINEARCH=win64
+RUN set -eux; \
+    timeout 900 wineboot --init 2>&1 | tail -4 || true; \
+    (timeout 120 wineserver -w 2>/dev/null || true); \
+    rm -f /root/.wine/drive_c/windows/core; \
+    for d in system32 syswow64; do \
+      for f in /root/.wine/drive_c/windows/$d/*.dll; do \
+        [ -f "$f" ] || continue; b=$(basename "$f"); \
+        for src in /usr/lib/wine/x86_64-windows /usr/lib/wine/i386-windows; do \
+          if [ -f "$src/$b" ] && [ "$(du -k "$f" | cut -f1)" = "$(du -k "$src/$b" | cut -f1)" ]; then ln -sf "$src/$b" "$f"; break; fi; \
+        done; \
+      done; \
+    done; \
+    test -f /root/.wine/drive_c/windows/system32/kernel32.dll; \
+    printf 'export WINEPREFIX=/root/.wine\nexport WINEARCH=win64\nexport WINEESYNC=1\nexport WINEDEBUG=-all\n' > /etc/profile.d/wine.sh; \
+    printf '#!/bin/sh\nexport WINEESYNC="${WINEESYNC:-1}"\nexport WINEDEBUG="${WINEDEBUG:--all}"\nexec /usr/bin/wine "$@"\n' > /usr/local/bin/wine; \
+    chmod +x /usr/local/bin/wine; \
+    timeout 120 wine reg add "HKCU\\Control Panel\\Desktop" /v FontSmoothing /t REG_SZ /d 0 /f; \
+    (timeout 60 wineserver -w || true); \
+    echo "WINE-PREFIX-OK prefix=$(du -sh /root/.wine | cut -f1)"
+RUN set -eux; \
+    mkdir -p /opt/cpuz; cd /opt/cpuz; \
+    for f in cpuz_x64.exe cpuz.ini; do \
+      curl -fsSL --retry 3 -o "$f" "https://github.com/yu314-coder/Bootbox/releases/download/cpuz-v1/$f"; done; \
+    ls -la /opt/cpuz; \
+    rm -rf /usr/lib/libgstreamer* /usr/lib/gstreamer-1.0 /usr/lib/libgst* /usr/lib/sane /usr/lib/libsane* \
+           /etc/sane.d /usr/lib/libOpenCL* /etc/OpenCL; \
+    rm -rf /usr/lib/wine/i386-windows /usr/lib/wine/i386-unix; \
+    echo "CPUZ-OK (64-bit Wine only: the 32-bit side is 209 MB; full Wine stays in the Linux Terminal image)"
+COPY desktop/bench/cpuz-bench desktop/bench/gpu-bench /usr/local/bin/
+# Warm Wine's first-GUI-run and CPU-Z's first start (font caches, registry, DLL loads) at native
+# speed; on the device the first CPU-Z start then skips minutes of one-time setup.
+RUN set -eux; \
+    chmod +x /usr/local/bin/cpuz-bench /usr/local/bin/gpu-bench; \
+    apk add --no-cache xvfb 2>&1 | tail -1; \
+    (Xvfb :9 -screen 0 800x600x16 >/tmp/xvfb.log 2>&1 &); sleep 3; \
+    export DISPLAY=:9 WINEESYNC=1 WINEDEBUG=-all LIBGL_ALWAYS_SOFTWARE=1; \
+    mkdir -p /root/cpuz; cp /opt/cpuz/* /root/cpuz/; \
+    (cd /root/cpuz && timeout 240 wine cpuz_x64.exe -txt=warm >/dev/null 2>&1 || true); \
+    LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe timeout 300 glmark2-es2 --visual-config red=1:green=1:blue=1:alpha=0:depth=1:stencil=0 \
+      --size 160x120 -b clear:duration=2 2>&1 | grep -E "FPS|Error" ; \
+    LIBGL_ALWAYS_SOFTWARE=1 timeout 300 glmark2-es2 --visual-config red=1:green=1:blue=1:alpha=0:depth=1:stencil=0 \
+      --size 160x120 -b clear:duration=2 2>&1 | grep -q "FPS"; \
+    ls /root/cpuz; \
+    (timeout 60 wineserver -k || true); sleep 2; pkill Xvfb || true; \
+    rm -f /root/.wine/drive_c/windows/core /root/cpuz/warm.txt; \
+    apk del xvfb 2>&1 | tail -1; \
+    echo "BENCH-WARM-OK"
 
 # 3c) First-run warm-up (the wine lesson applied to the desktop): GTK's first start builds icon
 #     and mime caches — minutes on the emulated CPU that make PCManFM look hung. Run both GUI

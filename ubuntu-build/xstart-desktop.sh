@@ -14,7 +14,7 @@ if [ ! -e /tmp/.xstarted ]; then
   : > /tmp/.xstarted
   (
     Xvnc :0 -geometry 1024x768 -depth 16 -SecurityTypes None -rfbport 5900 -localhost no \
-         -desktop bootbox -AlwaysShared >/tmp/xvnc.log 2>&1 &
+         -desktop bootbox -AlwaysShared -DeferUpdate 10 >/tmp/xvnc.log 2>&1 &
     n=0; while [ "$n" -lt 80 ] && [ ! -e /tmp/.X11-unix/X0 ]; do sleep 0.25; n=$((n+1)); done
     export DISPLAY=:0
     export HOME=/root

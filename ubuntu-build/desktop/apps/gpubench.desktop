@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=GPU benchmark
+Comment=glmark2 on the software GPU
+Icon=/usr/share/bootbox/icons/gpu.png
+Exec=bxterm -T 'GPU benchmark' -geometry 90x24 -e sh -c 'gpu-bench; echo; printf "Press Enter to close"; read x'
+Terminal=false

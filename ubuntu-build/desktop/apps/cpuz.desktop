@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=CPU-Z
+Comment=CPU-Z window (Wine)
+Icon=/usr/share/bootbox/icons/cpuz.png
+Exec=sh -c 'cd /root/cpuz 2>/dev/null || { mkdir -p /root/cpuz; cp /opt/cpuz/* /root/cpuz/; cd /root/cpuz; }; LIBGL_ALWAYS_SOFTWARE=1 WINEESYNC=1 WINEDEBUG=-all exec wine cpuz_x64.exe'
+Terminal=false
