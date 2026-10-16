@@ -26,6 +26,12 @@ final class SystemBridge: NSObject {
             let at = d.double(forKey: "BootboxLastPageCrash"), code = d.integer(forKey: "BootboxLastPageCrashCode")
             d.removeObject(forKey: "BootboxLastPageCrash")
             respond(true, ["at": at, "code": code])
+        case "power":
+            // Low Power Mode and heat both cap the CPU clock - the emulator's speed follows directly
+            // (the toolbar's speed badge says so instead of the user guessing). thermal: 0 nominal,
+            // 1 fair, 2 serious, 3 critical.
+            let p = ProcessInfo.processInfo
+            respond(true, ["lowPower": p.isLowPowerModeEnabled, "thermal": p.thermalState.rawValue])
         case "memLimit":
             // Waits (up to ~20 s) for the one-time probe if it is still running.
             MemoryProbe.shared.whenDone { respond(true, ["limitMB": $0 ?? 0, "how": MemoryProbe.lastHow]) }

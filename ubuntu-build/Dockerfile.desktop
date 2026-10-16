@@ -183,11 +183,11 @@ RUN set -eux; \
     rm -rf /usr/lib/sane /usr/lib/libsane* /etc/sane.d /usr/lib/libOpenCL* /etc/OpenCL; \
     rm -rf /usr/lib/wine/i386-windows /usr/lib/wine/i386-unix; \
     echo "CPUZ-OK (64-bit Wine only: the 32-bit side is 209 MB; full Wine stays in the Linux Terminal image; GStreamer stays: WebKit links it)"
-COPY desktop/bench/cpuz-bench desktop/bench/gpu-bench /usr/local/bin/
+COPY desktop/bench/cpuz-bench desktop/bench/gpu-bench desktop/bench/cpuz-gui /usr/local/bin/
 # Warm Wine's first-GUI-run and CPU-Z's first start (font caches, registry, DLL loads) at native
 # speed; on the device the first CPU-Z start then skips minutes of one-time setup.
 RUN set -eux; \
-    chmod +x /usr/local/bin/cpuz-bench /usr/local/bin/gpu-bench; \
+    chmod +x /usr/local/bin/cpuz-bench /usr/local/bin/gpu-bench /usr/local/bin/cpuz-gui; \
     apk add --no-cache xvfb 2>&1 | tail -1; \
     (Xvfb :9 -screen 0 800x600x16 >/tmp/xvfb.log 2>&1 &); sleep 3; \
     export DISPLAY=:9 WINEESYNC=1 WINEDEBUG=-all LIBGL_ALWAYS_SOFTWARE=1; \
@@ -198,6 +198,10 @@ RUN set -eux; \
     LIBGL_ALWAYS_SOFTWARE=1 timeout 300 glmark2-es2 --visual-config red=1:green=1:blue=1:alpha=0:depth=1:stencil=0 \
       --size 160x120 -b clear:duration=2 2>&1 | grep -q "FPS"; \
     ls /root/cpuz; \
+    (timeout 60 wineserver -k || true); sleep 2; \
+    (cpuz-gui >/tmp/cpuz-gui.log 2>&1 &); sleep 50; \
+    xwininfo -root -tree | grep -E '"CPU-Z' | head -4; \
+    ! xwininfo -root -tree | grep -q '"CPU-Z Error"'; xwininfo -root -tree | grep -qE '"CPU-Z ?"'; echo "CPUZ-GUI-DIALOG-ANSWERED"; \
     (timeout 60 wineserver -k || true); sleep 2; pkill Xvfb || true; \
     rm -f /root/.wine/drive_c/windows/core /root/cpuz/warm.txt; \
     apk del xvfb 2>&1 | tail -1; \

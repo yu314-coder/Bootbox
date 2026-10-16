@@ -244,6 +244,10 @@
       else if (t.chain !== 0 && wasmTailCalls()) tune += "chain=1\n";
       if (t.fpinline === 0) tune += "fpinline=0\n";
       if (t.regloc === 0) tune += "regloc=0\n";
+      // tsc=1: lock-free guest RDTSC; hotshare=1: a TB compiled on one vCPU compiles sooner on the
+      // others (build 100 engine; older engines ignore both). Multi-threaded Linux guests only.
+      if (t.tsc) tune += "tsc=1\n";
+      if (t.hotshare) tune += "hotshare=1\n";
       if (tune) mod.FS.writeFile("/bootbox-tune", tune);
     });
     let cbs = [];

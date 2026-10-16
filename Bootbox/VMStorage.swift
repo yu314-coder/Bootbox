@@ -80,6 +80,8 @@ enum VMStorage {
         "qemu-desktop9-rootfs-1300120755.data",
         "qemu-desktop9b-rootfs-1301136108.data.gz", // desktop 9b → v10 (bash terminal, WebKit browser, no Claude Code)
         "qemu-desktop9b-rootfs-1301136108.data",
+        "qemu-desktop10-rootfs-1262146190.data.gz", // desktop v10 → v11 (CPU-Z driver dialog answered)
+        "qemu-desktop10-rootfs-1262146190.data",
         "qemu-android64-warm4-2038076444.data.gz",  // Android v4 → v5 (build 93)
         "qemu-android64-warm4-2038076444.data",
         "qemu-android64-warm5-2161126625.data.gz",  // Android v5 → v6 (build 95)

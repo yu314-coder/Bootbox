@@ -1,0 +1,22 @@
+#!/bin/sh
+# cpuz-gui - CPU-Z's window under Wine (Apps menu > CPU-Z (window)).
+# CPU-Z installs its own kernel driver for hardware access; Wine can't host it (ZwLoadDriver ...
+# cpuz160: c0000142), so CPU-Z stops at "The error code 0x45A (1114) occured during initialization.
+# Do you want to display the error log file?" and only continues once someone answers. Answer No
+# for the user: CPU-Z then runs normally on what it can read without the driver (CPUID, caches,
+# clocks, benchmark). xdotool --sync waits inside one process (no polling spawns on the slow CPU).
+mkdir -p /root/cpuz && cp -n /opt/cpuz/* /root/cpuz/ 2>/dev/null; cd /root/cpuz || exit 1
+export LIBGL_ALWAYS_SOFTWARE=1 WINEESYNC=1 WINEDEBUG=-all WINEDLLOVERRIDES="winemenubuilder.exe=d"
+(
+  w=$(timeout 300 xdotool search --sync --limit 1 --name '^CPU-Z Error$' 2>/dev/null | head -1)
+  [ -n "$w" ] || exit 0
+  sleep 0.5
+  xdotool windowactivate --sync "$w" 2>/dev/null
+  xdotool key --clearmodifiers n 2>/dev/null
+  sleep 2   # still there (focus went elsewhere)? click its No button instead: 2nd of 2, centred
+  if xdotool search --name '^CPU-Z Error$' >/dev/null 2>&1; then
+    eval "$(xdotool getwindowgeometry --shell "$w")"
+    xdotool mousemove --window "$w" $((WIDTH * 63 / 100)) $((HEIGHT - 20)) click 1 2>/dev/null
+  fi
+) &
+exec wine cpuz_x64.exe "$@"

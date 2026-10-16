@@ -36,13 +36,18 @@
     // the working set (Mac-measured: no recompiles, growth ~5 MB/s); the engine still evicts the
     // least-recently-run blocks past it, and lowers the cap itself if the host refuses a compile.
     { id: "x64pw",     name: "Linux (Terminal)",  boot: "q64",
-      base: "vendor/qemu-aload/", url: "", ram: 1536, tune: { max: 40000 } },
+      base: "vendor/qemu-aload/", url: "", ram: 1536, tune: { max: 40000, tsc: 1 } },
     // Lightweight graphical desktop: its OWN image. openbox/tint2 + a bash terminal, PCManFM, the bbweb
     // browser (WebKitGTK, v10) + Dillo, Python, mc, CPU-Z/glmark2 (v9). Reuses the x86_64 engine (wasm shared from
     // qemu-aload — no duplication). The image auto-starts the desktop, so boot64 sends no start-desktop.
     { id: "x64pwd",    name: "Linux (Desktop)",  boot: "q64",
       base: "vendor/qemu-desktop/", wasm: "../qemu-aload/qemu-system-x86_64.wasm", url: "", ram: 1536, gui: true,
-      tune: { max: 40000 } },   // same reason as x64pw
+      tune: { max: 40000, tsc: 1 } },   // same reason as x64pw
+    // tsc=1 (build 100 engine): every guest RDTSC used to take one global lock around a JavaScript
+    // clock call - 4 threads reading the clock ran 22x slower per call than 1. Lock-free now (Linux
+    // guests; Android keeps the old path until verified there). CPU-Z itself isn't clock-bound: its
+    // scores didn't change (WebKit, 4 vCPUs, ~11 / ~21 either way). hotshare=1 exists in the engine but
+    // measured no gain, so it stays off.
     { id: "android64", name: "Android", boot: "q64",
       base: "vendor/qemu-android/", engineBase: "vendor/qemu-aload/", wasm: "qemu-system-x86_64.wasm",   // shared x86_64 engine
       url: "", ram: 1280, minRam: 1280, maxRam: 1280, cores: 4, minCores: 4, maxCores: 4, gui: true, android: true,   // RAM + cores fixed by the warm snapshot
@@ -89,8 +94,10 @@
       // v10 (build 98): bash terminal (completion, history search, htop/ncdu/nano/vim/tmux/jq/fastfetch...),
       // bbweb = a WebKitGTK browser with full JavaScript (Dillo stays as the lite one), Claude Code and
       // Node.js removed, Apps-menu helper without xdotool, lazy bash completion (new terminal 1.4 -> 0.15 s).
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v10/qemu-desktop10-rootfs.data.gz",
-        name: "qemu-desktop10-rootfs-1262146190.data.gz", mb: 415, size: 434554548 },
+      // v11 (build 100): CPU-Z (window) answers CPU-Z's "error code 0x45A (1114) during initialization"
+      // dialog itself - its kernel driver can't load under Wine; CPU-Z runs fine without it.
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v11/qemu-desktop11-rootfs.data.gz",
+        name: "qemu-desktop11-rootfs-1262582457.data.gz", mb: 415, size: 434669517 },
     ] },
     // Android is a full AOSP x86_64 userspace on Bootbox's QEMU guest kernel.
     // The rootfs is download-on-demand; the x86_64 engine is shared with Linux.
@@ -701,6 +708,22 @@
           perfEl.title = "Emulation benchmark: " + p.ms + "ms. " +
             (p.tier === "slow" ? "Sideload (AltStore/TrollStore) or attach Xcode to enable full JIT for big speedups." :
              "WASM JIT active — x86 is translated to native ARM by WebKit.");
+          // Low Power Mode / heat cap the CPU clock: an iPad Air M3 that should score ~50 ms here showed
+          // "Medium" and ran CPU-Z ~2.5x below the same software on a Mac. Say why, on the badge itself.
+          if (window.Bridge && Bridge.onDevice) {
+            Bridge.call("system", "power").then((pw) => {
+              if (!pw) return;
+              try { console.log("[perf] lowPower=" + pw.lowPower + " thermal=" + pw.thermal + " js=" + p.ms + "ms"); } catch (e) {}
+              const why = pw.lowPower ? "Low Power Mode on — about half speed" :
+                          pw.thermal >= 2 ? "iPad is hot — CPU throttled" : "";
+              if (!why) return;
+              perfEl.className = "emu-perf slow";
+              perfEl.textContent = (pw.lowPower ? "🔋 " : "🌡 ") + why;
+              perfEl.title = why + ". The emulator runs every guest instruction on the CPU, so it slows down with it. " +
+                (pw.lowPower ? "Turn Low Power Mode off (Settings › Battery) for full speed." : "Let the iPad cool down (or plug it in and remove the case).") +
+                " JS benchmark: " + p.ms + " ms.";
+            }).catch(() => {});
+          }
         })();
 
         function syncGuest() {

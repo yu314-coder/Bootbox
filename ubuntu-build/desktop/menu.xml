@@ -12,7 +12,7 @@
     <item label="Lite browser (no JavaScript)" icon="/usr/share/bootbox/icons/browser.png"><action name="Execute"><command>dillo https://lite.duckduckgo.com/lite/</command></action></item>
     <separator label="Benchmarks"/>
     <item label="CPU-Z benchmark" icon="/usr/share/bootbox/icons/cpuz.png"><action name="Execute"><command>bxterm -T "CPU-Z benchmark" -geometry 80x22 -e sh -c "cpuz-bench; echo; printf 'Press Enter to close'; read x"</command></action></item>
-    <item label="CPU-Z (window)" icon="/usr/share/bootbox/icons/cpuz.png"><action name="Execute"><command>sh -c "mkdir -p /root/cpuz; cp -n /opt/cpuz/* /root/cpuz/; cd /root/cpuz; LIBGL_ALWAYS_SOFTWARE=1 WINEESYNC=1 WINEDEBUG=-all exec wine cpuz_x64.exe"</command></action></item>
+    <item label="CPU-Z (window)" icon="/usr/share/bootbox/icons/cpuz.png"><action name="Execute"><command>cpuz-gui</command></action></item>
     <item label="GPU benchmark (glmark2)" icon="/usr/share/bootbox/icons/gpu.png"><action name="Execute"><command>bxterm -T "GPU benchmark" -geometry 90x24 -e sh -c "gpu-bench; echo; printf 'Press Enter to close'; read x"</command></action></item>
     <separator/>
     <item label="Help" icon="/usr/share/bootbox/icons/help.png"><action name="Execute"><command>bxterm -T Help -geometry 90x34 -e sh -c "bootbox-help; echo; printf 'Press Enter to close'; read x"</command></action></item>
