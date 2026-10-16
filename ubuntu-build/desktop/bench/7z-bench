@@ -1,0 +1,18 @@
+#!/bin/sh
+# 7z-bench - 7-Zip's built-in compression/decompression benchmark (native x86-64 Linux 7-Zip), one
+# core then all cores. Rating = 7-Zip "MIPS" (the number 7-Zip prints as Tot). One pass with a 64 KB
+# dictionary keeps it to a few minutes on the emulated CPU (the default run takes ~20x longer).
+N=$(nproc)
+echo "7-Zip benchmark: 1 core, then all $N cores (about 2-4 minutes each on the emulated CPU)."
+# 7-Zip's own table streams to the terminal (stderr) while it runs; the Tot rating is captured.
+run() { 7zz b 1 -md16 -mmt"$1" 2>&1 | tee /tmp/7z-bench.out >&2; grep "^Tot:" /tmp/7z-bench.out | awk '{print $NF}'; }
+S=$(date +%s)
+echo; echo "--- 1 thread ---";  R1=$(run 1)
+echo; echo "--- $N threads ---"; RN=$(run "$N")
+echo
+echo "============ 7-Zip benchmark ============"
+echo "  Single-thread : ${R1:-?} MIPS"
+echo "  Multi-thread  : ${RN:-?} MIPS   ($N cores)"
+echo "  took $(( $(date +%s) - S )) s"
+echo "========================================="
+bbresult 7zip "7-Zip (1 pass, 64 KB dict)" single="$R1" multi="$RN"

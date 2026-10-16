@@ -1,0 +1,34 @@
+#!/bin/sh
+# bootbox-conky - the desktop's system widget (top right): one bar per emulated core, memory, load,
+# uptime and the busiest process - watch multi-threaded work spread across the cores. Bitmap fonts
+# (no Xft) and a 3 s refresh keep its own cost small on the emulated CPU.
+N=$(nproc); C=/tmp/bootbox-conky.conf
+{
+cat <<'EOF'
+conky.config = {
+  alignment = 'top_right', gap_x = 18, gap_y = 18, update_interval = 3,
+  own_window = true, own_window_type = 'desktop', own_window_class = 'Conky',
+  own_window_hints = 'undecorated,below,sticky,skip_taskbar,skip_pager',
+  own_window_colour = '101826', double_buffer = true, use_xft = false, font = '7x13',
+  default_color = 'd6e2f2', color1 = '8fbdec', color2 = '5b9dff',
+  minimum_width = 236, maximum_width = 236, border_inner_margin = 10,
+  draw_shades = false, draw_outline = false, draw_borders = false, draw_graph_borders = false,
+  cpu_avg_samples = 1, no_buffers = true, default_bar_height = 6, top_name_width = 14,
+};
+conky.text = [[
+${color1}BOOTBOX LINUX${color}${alignr}up ${uptime_short}
+${color1}CPU${color} ${cpu cpu0}%${alignr}load ${loadavg 1}
+EOF
+i=1
+while [ "$i" -le "$N" ]; do
+  echo "\${color2}core $i\${color} \${cpu cpu$i}%\${alignr}\${cpubar cpu$i 6,130}"
+  i=$((i + 1))
+done
+cat <<'EOF'
+${color1}RAM${color} $mem / $memmax
+${membar 6}
+${color1}busiest${color}${alignr}${top name 1} ${top cpu 1}%
+]]
+EOF
+} > "$C"
+exec conky -q -c "$C"

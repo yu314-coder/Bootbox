@@ -15,8 +15,10 @@ VIS="red=1:green=1:blue=1:alpha=0:depth=1:stencil=0"
 echo "glmark2-es2 on Mesa $GALLIUM_DRIVER ($LP_NUM_THREADS render threads). Shaders compile on the emulated CPU first."
 S=$(date +%s)
 if [ "$1" = "full" ]; then
-  DISPLAY=:1 glmark2-es2 --visual-config "$VIS" --size 320x240
+  DISPLAY=:1 glmark2-es2 --visual-config "$VIS" --size 320x240 | tee /tmp/gpu-bench.out
 else
-  DISPLAY=:1 glmark2-es2 --visual-config "$VIS" --size 320x240 -b clear:duration=8 -b build:use-vbo=true:duration=30
+  DISPLAY=:1 glmark2-es2 --visual-config "$VIS" --size 320x240 -b clear:duration=8 -b build:use-vbo=true:duration=30 | tee /tmp/gpu-bench.out
 fi
 echo "(took $(( $(date +%s) - S )) s)"
+SC=$(grep -o "glmark2 Score: [0-9]*" /tmp/gpu-bench.out | grep -o "[0-9]*$")
+[ -n "$SC" ] && bbresult gpu "glmark2 ${1:-quick} (software GPU)" score="$SC"

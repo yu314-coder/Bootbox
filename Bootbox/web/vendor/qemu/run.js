@@ -79,6 +79,14 @@
       const a = self.Module.arguments, i = a.indexOf("-m");
       if (i >= 0 && a[i + 1] != null) a[i + 1] = opts.ram + "M";
     }
+    // CPU name (build 101): the CPUID brand string guests and CPU-Z show ("Specification"). qemu64's
+    // default, "QEMU Virtual CPU version 2.5+", reads like real hardware; say what it is. Cold-boot
+    // guests only (a resumed snapshot keeps its CPU definition). QEMU caps it at 48 characters.
+    if (opts.cpuModelId && self.Module && self.Module.arguments) {
+      const a = self.Module.arguments, i = a.indexOf("-cpu");
+      if (i >= 0 && a[i + 1] != null && a[i + 1].indexOf("model-id=") < 0)
+        a[i + 1] += ",model-id=" + String(opts.cpuModelId).replace(/,/g, " ").slice(0, 48);
+    }
     // CPU cores: opts.smp overrides the baked "-smp" (the x64 console guest ships dual-core;
     // 1 = battery saver — each vCPU worker costs ~1 host core even at an idle prompt).
     if (opts.smp && self.Module && self.Module.arguments) {

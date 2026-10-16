@@ -1,0 +1,14 @@
+#!/bin/sh
+# sysbench-bench - sysbench's CPU test (prime numbers), 10 s on one core then 10 s on all cores.
+# Quick and steady: the clearest single- vs multi-core comparison on this machine.
+N=$(nproc)
+echo "sysbench CPU: 10 s on 1 core, then 10 s on all $N cores."
+run() { sysbench cpu --threads="$1" --time=10 run 2>/dev/null | awk '/events per second/ {print $NF}'; }
+R1=$(run 1); RN=$(run "$N")
+echo
+echo "============ sysbench CPU ============"
+echo "  Single-thread : ${R1:-?} events/s"
+echo "  Multi-thread  : ${RN:-?} events/s   ($N cores)"
+[ -n "$R1" ] && [ -n "$RN" ] && echo "  Scaling       : $(echo "$R1 $RN" | awk '{printf "%.2fx", $2/$1}')"
+echo "======================================"
+bbresult sysbench "sysbench CPU (primes)" single="$R1" multi="$RN"

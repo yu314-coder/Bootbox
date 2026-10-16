@@ -1,5 +1,5 @@
 #!/bin/sh
-# Bootbox DESKTOP guest v8 — openbox + tint2.
+# Bootbox DESKTOP guest v8+ (v12) — openbox + tint2 + conky widget, browser pre-started.
 #   * openbox: flat dark "Bootbox" theme, smart+centred placement (twm asked you to click to place
 #     every new window - the "grid of lines" the old desktop showed), proper title-bar buttons,
 #     drag to move/resize, double-click to maximise, right-click the desktop for the app menu.
@@ -37,6 +37,13 @@ if [ ! -e /tmp/.xstarted ]; then
     if ! kill -0 "$ob" 2>/dev/null; then twm >/tmp/twm.log 2>&1 & fi   # fallback window manager
     tint2 >/tmp/tint2.log 2>&1 &
     bxterm -geometry 82x22+120+90 >/tmp/xterm.log 2>&1 &
+    # v12: per-core CPU / memory widget (top right) - a few seconds later, so its start-up doesn't
+    # race the terminal above (bash then drew its first prompt one character per line) - and the
+    # browser pre-started hidden once the desktop has settled, so the first Web tap opens it at once
+    # (WebKit takes ~20-50 s to start on the emulated CPU). Normal priority: the guest container
+    # can't raise a nice'd process back, which left the pre-started browser slow for good.
+    ( sleep 6; bootbox-conky >/tmp/conky.log 2>&1 ) &
+    ( sleep 120; bbweb --prewarm >/tmp/bbweb-prewarm.log 2>&1 ) &
     # Self-heal: if the panel still isn't on screen after 2 minutes, start it again.
     (
       sleep 120

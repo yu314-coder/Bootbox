@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Benchmarks
+Comment=CPU-Z, 7-Zip, sysbench, GPU and web benchmarks, with results
+Icon=/usr/share/bootbox/icons/bench.png
+Exec=bbweb bootbox://app/hub
+Terminal=false

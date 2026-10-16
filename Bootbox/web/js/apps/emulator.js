@@ -36,13 +36,14 @@
     // the working set (Mac-measured: no recompiles, growth ~5 MB/s); the engine still evicts the
     // least-recently-run blocks past it, and lowers the cap itself if the host refuses a compile.
     { id: "x64pw",     name: "Linux (Terminal)",  boot: "q64",
-      base: "vendor/qemu-aload/", url: "", ram: 1536, tune: { max: 40000, tsc: 1 } },
+      base: "vendor/qemu-aload/", url: "", ram: 1536, tune: { max: 40000, tsc: 1 },
+      cpuModelId: "Bootbox x86-64 (emulated in WebAssembly)" },   // CPU-Z "Specification" (run.js)
     // Lightweight graphical desktop: its OWN image. openbox/tint2 + a bash terminal, PCManFM, the bbweb
     // browser (WebKitGTK, v10) + Dillo, Python, mc, CPU-Z/glmark2 (v9). Reuses the x86_64 engine (wasm shared from
     // qemu-aload — no duplication). The image auto-starts the desktop, so boot64 sends no start-desktop.
     { id: "x64pwd",    name: "Linux (Desktop)",  boot: "q64",
       base: "vendor/qemu-desktop/", wasm: "../qemu-aload/qemu-system-x86_64.wasm", url: "", ram: 1536, gui: true,
-      tune: { max: 40000, tsc: 1 } },   // same reason as x64pw
+      tune: { max: 40000, tsc: 1 }, cpuModelId: "Bootbox x86-64 (emulated in WebAssembly)" },   // same reason as x64pw
     // tsc=1 (build 100 engine): every guest RDTSC used to take one global lock around a JavaScript
     // clock call - 4 threads reading the clock ran 22x slower per call than 1. Lock-free now (Linux
     // guests; Android keeps the old path until verified there). CPU-Z itself isn't clock-bound: its
@@ -96,8 +97,11 @@
       // Node.js removed, Apps-menu helper without xdotool, lazy bash completion (new terminal 1.4 -> 0.15 s).
       // v11 (build 100): CPU-Z (window) answers CPU-Z's "error code 0x45A (1114) during initialization"
       // dialog itself - its kernel driver can't load under Wine; CPU-Z runs fine without it.
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v11/qemu-desktop11-rootfs.data.gz",
-        name: "qemu-desktop11-rootfs-1262582457.data.gz", mb: 415, size: 434669517 },
+      // v12 (build 101): Benchmarks hub (CPU-Z, 7-Zip, sysbench, GPU, web benchmark, saved results),
+      // categorized menu + text editor / calculator / image viewer / archiver, per-core CPU widget,
+      // browser pre-started after boot and kept running when closed, Lite mode, clearer CPU name.
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v12/qemu-desktop12-rootfs.data.gz",
+        name: "qemu-desktop12-rootfs-1276181587.data.gz", mb: 419, size: 438535811 },
     ] },
     // Android is a full AOSP x86_64 userspace on Bootbox's QEMU guest kernel.
     // The rootfs is download-on-demand; the x86_64 engine is shared with Linux.
@@ -645,7 +649,7 @@
               <option value="8">8 cores</option>
             </select>
             <span class="grow"></span>
-            <span class="emu-perf" id="perf" title="Emulation speed of this device (WASM JIT benchmark)">⏱ testing…</span>
+            <span class="emu-perf" id="perf" title="Emulation speed of this device (WASM JIT benchmark). Tap: web benchmark on this iPad.">⏱ testing…</span>
             <span class="emu-pill"><span class="led"></span><span id="state">Idle</span></span>
           </div>
           <div id="screen_container" style="flex:1;background:#000;overflow:hidden;position:relative;display:flex;align-items:center;justify-content:center">
@@ -699,6 +703,20 @@
           cachedPerf = { tier, ms: Math.round(ms), jit: ms < 380 };
           try { console.log("[perf] JS benchmark " + Math.round(ms) + " ms (" + tier + "), " + (navigator.hardwareConcurrency || "?") + " cores"); } catch (e) {}
         }
+        // Tap the speed badge: the web benchmark (JS / DOM / canvas) natively in this iPad's own
+        // WebView - the same page the Linux desktop's browser runs emulated, same scale (1000 = M4).
+        perfEl.style.cursor = "pointer";
+        perfEl.addEventListener("click", () => {
+          if (document.getElementById("bb-webbench")) return;
+          const ov = document.createElement("div");
+          ov.id = "bb-webbench";
+          ov.style.cssText = "position:fixed;inset:0;z-index:99999;background:rgba(5,8,14,.86);display:flex;align-items:center;justify-content:center;padding:18px";
+          ov.innerHTML = '<div style="position:relative;width:min(820px,100%);height:min(720px,100%);border-radius:14px;overflow:hidden;box-shadow:0 20px 60px rgba(0,0,0,.5)">' +
+            '<iframe src="webbench.html" style="width:100%;height:100%;border:0;background:#0b0f17"></iframe>' +
+            '<button style="position:absolute;top:10px;right:10px;font:600 14px -apple-system,sans-serif;padding:7px 14px;border:0;border-radius:8px;background:#1d2a40;color:#fff">Close</button></div>';
+          ov.querySelector("button").onclick = () => ov.remove();
+          document.body.appendChild(ov);
+        });
         (function showPerf() {
           const p = cachedPerf;
           const icon = p.tier === "fast" ? "⚡" : p.tier === "slow" ? "🐢" : "⏱";
@@ -719,7 +737,7 @@
               if (!why) return;
               perfEl.className = "emu-perf slow";
               perfEl.textContent = (pw.lowPower ? "🔋 " : "🌡 ") + why;
-              perfEl.title = why + ". The emulator runs every guest instruction on the CPU, so it slows down with it. " +
+              perfEl.title = why + ". The emulator runs every guest instruction on the CPU, so it slows down with it. Tap: web benchmark on this iPad. " +
                 (pw.lowPower ? "Turn Low Power Mode off (Settings › Battery) for full speed." : "Let the iPad cool down (or plug it in and remove the case).") +
                 " JS benchmark: " + p.ms + " ms.";
             }).catch(() => {});
@@ -1079,6 +1097,7 @@
               initialMemoryMB: level.presize ? ramMB + 900 : undefined,
               compressedVnc: !!g.android,
               touchGuest: !!g.android,   // touches go straight to Android's touchscreen (run.js installDirectTouch)
+              cpuModelId: g.cpuModelId,
               vncLabel: g.android ? "Android" : undefined,
               appsKey: g.id === "x64pwd",   // desktop panel's Apps button -> openbox's menu key (run.js installAppsKey)
               onStatus: (m) => { try { status.textContent = m; } catch (e) {} },
@@ -1093,7 +1112,7 @@
                   try { panel64.showGui(); } catch (e) {}   // the desktop IS the GUI → connect immediately
                   status.textContent = g.android
                     ? "Running — full Android 12 AOSP (64-bit x86_64) in QEMU. This is a warm-boot image: it resumes to the home screen in a few seconds (no cold boot). Touch the screen directly and use ⌨ Type for text."
-                    : "Running — x86_64 Linux desktop. The panel appears ~1–2 min after the first boot. Tap Apps (bottom-left) or right-click/long-press the desktop for the terminal, web browser, files and the CPU-Z / GPU benchmarks; ⌨ Type or the Magic Keyboard types into the focused window.";
+                    : "Running — x86_64 Linux desktop. The panel appears ~1–2 min after the first boot. Tap Apps (bottom-left) or right-click/long-press the desktop for apps; the Benchmarks icon runs CPU-Z, 7-Zip, sysbench, GPU and web benchmarks; ⌨ Type or the Magic Keyboard types into the focused window.";
                 } else {        // [ terminal | GUI ]: blank GUI until you launch an X program from the terminal
                   // LAZY DISPLAY (power/heat): do NOT connect noVNC on boot — a connected viewer renders
                   // the (blank) Xvnc framebuffer continuously = wasted CPU/GPU even with nothing on screen.

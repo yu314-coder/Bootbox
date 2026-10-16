@@ -1,0 +1,12 @@
+#!/bin/sh
+# bbresult ID "Label" key=number ... - append one benchmark result to ~/.bootbox/results.jsonl, which
+# the Benchmarks hub (Apps > Benchmarks, or bootbox://hub in Web) shows. Non-numeric values are dropped.
+id=$1; label=$2; shift 2
+mkdir -p /root/.bootbox
+j="{\"t\":$(date +%s),\"id\":\"$id\",\"label\":\"$label\",\"cores\":$(nproc)"
+for kv in "$@"; do
+  k=${kv%%=*}; v=${kv#*=}
+  case "$v" in ''|*[!0-9.]*) continue ;; esac
+  j="$j,\"$k\":$v"
+done
+echo "$j}" >> /root/.bootbox/results.jsonl

@@ -13,6 +13,7 @@
   a.tile { display: block; padding: 16px; border-radius: 12px; background: #121a27; border: 1px solid #1f2a3c;
            color: #d6e2f2; text-decoration: none; }
   a.tile:hover { border-color: #3d8bfd; }
+  a.tile.hl { border-color: #2c4a78; }
   a.tile b { display: block; color: #fff; margin-bottom: 4px; }
   a.tile span { font-size: 13px; color: #7f8ea6; }
   p.note { margin-top: 30px; font-size: 13px; color: #5d6b82; text-align: center; }
@@ -29,8 +30,11 @@
     <a class="tile" href="https://github.com/"><b>GitHub</b><span>code</span></a>
     <a class="tile" href="https://docs.python.org/3/"><b>Python docs</b><span>reference</span></a>
     <a class="tile" href="https://text.npr.org/"><b>NPR Text</b><span>light news</span></a>
+    <a class="tile hl" href="bootbox://app/hub"><b>Benchmarks</b><span>CPU-Z, 7-Zip, sysbench, GPU, web</span></a>
+    <a class="tile hl" href="bootbox://app/webbench"><b>Web benchmark</b><span>this browser's speed</span></a>
+    <a class="tile" href="https://browserbench.org/"><b>BrowserBench</b><span>Speedometer / JetStream (very slow here)</span></a>
   </div>
-  <p class="note" id="note">Pages run on the emulated CPU - light sites load fastest.</p>
+  <p class="note" id="note">Pages run on the emulated CPU - light sites load fastest. Turn on <b>Lite</b> (toolbar) for mobile versions without images.</p>
 </main>
 <script>document.title = "Start"; document.getElementById("note").dataset.js = "1";</script>
 </body></html>

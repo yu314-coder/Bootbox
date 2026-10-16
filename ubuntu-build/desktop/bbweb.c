@@ -4,11 +4,17 @@
 // loaded LLVM + the llvmpipe driver, ~100 MB of libraries), no smooth-scroll animation, no autoplay.
 // Started by the `bbweb` launcher (bbweb-launch.c), which shows a card until BBWEB_READY_FD is written.
 // Single instance: later launches send their URL over /tmp/.bbweb.sock -> a new tab, window to front.
+// It stays running when its window is closed (hidden, one tab back on the start page), and xstart
+// pre-starts it hidden after boot (`--prewarm`), so opening Web is instant instead of ~20 s.
+// bootbox://app/ pages: start, hub (Benchmarks), webbench; .../run/<id> starts a whitelisted
+// benchmark, .../results and .../save?j=<json> read and append ~/.bootbox/results.jsonl.
+// Lite (toolbar): mobile site versions, no images - much lighter pages on the emulated CPU.
 //   bbweb [URL]        URL or search words; no argument = the local start page
 //   BBWEB_LOG=1        print page titles + start-up phases to stdout (the image build's smoke test)
 #include <gtk/gtk.h>
 #include <gio/gunixsocketaddress.h>
 #include <webkit2/webkit2.h>
+#include <libsoup/soup.h>
 #include <fcntl.h>
 #include <stdlib.h>
 #include <string.h>
@@ -16,12 +22,17 @@
 
 #define SOCK_PATH "/tmp/.bbweb.sock"
 
-#define HOME_URI "file:///usr/share/bootbox/start.html"
+#define HOME_URI "bootbox://app/start"
+#define SHARE "/usr/share/bootbox/"
+#define LITE_FLAG "/root/.config/bbweb/lite"
+#define RESULTS "/root/.bootbox/results.jsonl"
+#define MOBILE_UA "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
 #define SEARCH_URI "https://lite.duckduckgo.com/lite/?q="
 
 static GtkWidget *win, *nb, *entry, *back_btn, *fwd_btn, *reload_btn;
 static WebKitSettings *settings;
-static gboolean log_titles;
+static gboolean log_titles, prewarm;
+static GtkWidget *lite_btn;
 
 // BBWEB_LOG: phase timestamps on the guest's uptime clock (compare with `cat /proc/uptime` at launch).
 static void phase(const char *what) {
@@ -92,10 +103,19 @@ static void on_view_changed(WebKitWebView *v, GParamSpec *ps, gpointer d) {
   if (v == current_view()) sync_toolbar();
 }
 
+// Closing the window (or its last tab) only hides it: the engine and its web process stay up, so the
+// next Web tap shows the window at once. One tab is kept, back on the light start page.
+static void hide_browser(void) {
+  while (gtk_notebook_get_n_pages(GTK_NOTEBOOK(nb)) > 1) gtk_notebook_remove_page(GTK_NOTEBOOK(nb), -1);
+  if (current_view()) webkit_web_view_load_uri(current_view(), HOME_URI);
+  gtk_widget_hide(win);
+}
+static gboolean on_delete(GtkWidget *w, GdkEvent *e, gpointer d) { (void)w; (void)e; (void)d; hide_browser(); return TRUE; }
+
 static void close_tab(WebKitWebView *v) {
   int i = gtk_notebook_page_num(GTK_NOTEBOOK(nb), GTK_WIDGET(v));
   if (i < 0) return;
-  if (gtk_notebook_get_n_pages(GTK_NOTEBOOK(nb)) == 1) { gtk_main_quit(); return; }
+  if (gtk_notebook_get_n_pages(GTK_NOTEBOOK(nb)) == 1) { hide_browser(); return; }
   gtk_notebook_remove_page(GTK_NOTEBOOK(nb), i);
 }
 static void on_close_clicked(GtkButton *b, gpointer v) { (void)b; close_tab(WEBKIT_WEB_VIEW(v)); }
@@ -203,6 +223,95 @@ static gboolean on_key(GtkWidget *w, GdkEventKey *ev, gpointer d) {
   return FALSE;
 }
 
+static void apply_lite(gboolean on) {
+  g_object_set(settings, "auto-load-images", !on, NULL);
+  webkit_settings_set_user_agent(settings, on ? MOBILE_UA : NULL);
+}
+static void on_lite_toggled(GtkToggleButton *b, gpointer d) {
+  (void)d;
+  gboolean on = gtk_toggle_button_get_active(b);
+  apply_lite(on);
+  if (on) { g_mkdir_with_parents("/root/.config/bbweb", 0755); g_file_set_contents(LITE_FLAG, "1\n", -1, NULL); }
+  else unlink(LITE_FLAG);
+  if (current_view()) webkit_web_view_reload(current_view());
+}
+
+// --- bootbox:// -------------------------------------------------------------------------------------
+// Benchmarks the hub may start: id -> command. Nothing else is ever run from a page.
+static const char *const RUNNABLE[][2] = {
+  { "cpuz",     "bxterm -T 'CPU-Z benchmark' -geometry 80x22 -e sh -c 'cpuz-bench; echo; printf \"Press Enter to close\"; read x'" },
+  { "cpuzwin",  "cpuz-gui" },
+  { "7zip",     "bxterm -T '7-Zip benchmark' -geometry 88x26 -e sh -c '7z-bench; echo; printf \"Press Enter to close\"; read x'" },
+  { "sysbench", "bxterm -T 'sysbench CPU' -geometry 80x22 -e sh -c 'sysbench-bench; echo; printf \"Press Enter to close\"; read x'" },
+  { "gpu",      "bxterm -T 'GPU benchmark' -geometry 90x24 -e sh -c 'gpu-bench; echo; printf \"Press Enter to close\"; read x'" },
+  { "monitor",  "bxterm -T 'System monitor' -geometry 100x30 -e htop" },
+};
+
+// bootbox:// pages get an opaque origin in WebKit, so even their own fetches are cross-origin: every
+// response says it may be read (the hub reads results, the web benchmark saves its score).
+static void finish_bytes(WebKitURISchemeRequest *req, const char *type, gchar *data, gsize len) {
+  GInputStream *in = g_memory_input_stream_new_from_data(data, len, g_free);
+  WebKitURISchemeResponse *resp = webkit_uri_scheme_response_new(in, len);
+  webkit_uri_scheme_response_set_content_type(resp, type);
+  SoupMessageHeaders *h = soup_message_headers_new(SOUP_MESSAGE_HEADERS_RESPONSE);
+  soup_message_headers_append(h, "Access-Control-Allow-Origin", "*");
+  soup_message_headers_append(h, "Cache-Control", "no-store");
+  webkit_uri_scheme_response_set_http_headers(resp, h);
+  webkit_uri_scheme_request_finish_with_response(req, resp);
+  g_object_unref(resp);
+  g_object_unref(in);
+}
+static void finish_file(WebKitURISchemeRequest *req, const char *name) {
+  gchar *path = g_strconcat(SHARE, name, NULL), *data = NULL;
+  gsize len = 0;
+  if (g_file_get_contents(path, &data, &len, NULL)) finish_bytes(req, "text/html", data, len);
+  else { GError *e = g_error_new(G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "%s missing", path); webkit_uri_scheme_request_finish_error(req, e); g_error_free(e); }
+  g_free(path);
+}
+
+static void on_bootbox_scheme(WebKitURISchemeRequest *req, gpointer d) {
+  (void)d;
+  // Pages live under one origin, bootbox://app/... (bootbox://hub and bootbox://run would be two
+  // origins, and WebKit hides cross-origin responses from the page); short forms still work.
+  const char *uri = webkit_uri_scheme_request_get_uri(req) + strlen("bootbox://");
+  if (g_str_has_prefix(uri, "app/")) uri += 4;
+  if (g_str_has_prefix(uri, "start")) { finish_file(req, "start.html"); return; }
+  if (g_str_has_prefix(uri, "hub")) { finish_file(req, "hub.html"); return; }
+  if (g_str_has_prefix(uri, "webbench")) { finish_file(req, "webbench.html"); return; }
+  if (g_str_has_prefix(uri, "results")) {
+    gchar *data = NULL; gsize len = 0;
+    GString *js = g_string_new("[");
+    if (g_file_get_contents(RESULTS, &data, &len, NULL)) {
+      gchar **lines = g_strsplit(data, "\n", -1); gboolean first = TRUE;
+      for (gchar **l = lines; *l; l++) if (**l == '{') { if (!first) g_string_append_c(js, ','); g_string_append(js, *l); first = FALSE; }
+      g_strfreev(lines); g_free(data);
+    }
+    g_string_append_c(js, ']');
+    gsize n = js->len; finish_bytes(req, "application/json", g_string_free(js, FALSE), n);
+    return;
+  }
+  if (g_str_has_prefix(uri, "save?j=")) {
+    gchar *j = g_uri_unescape_string(uri + 7, NULL);
+    if (j && j[0] == '{' && !strchr(j, '\n') && strlen(j) < 4096) {
+      g_mkdir_with_parents("/root/.bootbox", 0755);
+      FILE *f = fopen(RESULTS, "a");
+      if (f) { fprintf(f, "%s\n", j); fclose(f); }
+    }
+    g_free(j);
+    finish_bytes(req, "text/plain", g_strdup("ok"), 2);
+    return;
+  }
+  if (g_str_has_prefix(uri, "run/")) {
+    const char *id = uri + 4; gboolean ok = FALSE;
+    for (gsize i = 0; i < G_N_ELEMENTS(RUNNABLE); i++)
+      if (!strcmp(id, RUNNABLE[i][0])) ok = g_spawn_command_line_async(RUNNABLE[i][1], NULL);
+    finish_bytes(req, "text/plain", g_strdup(ok ? "started" : "unknown"), ok ? 7 : 7);
+    return;
+  }
+  GError *e = g_error_new(G_IO_ERROR, G_IO_ERROR_NOT_FOUND, "no such page");
+  webkit_uri_scheme_request_finish_error(req, e); g_error_free(e);
+}
+
 static GtkWidget *tool_button(const char *icon, const char *tip, GCallback cb) {
   GtkWidget *b = gtk_button_new_from_icon_name(icon, GTK_ICON_SIZE_LARGE_TOOLBAR);
   gtk_widget_set_tooltip_text(b, tip);
@@ -226,9 +335,19 @@ static gboolean on_incoming(GSocketService *svc, GSocketConnection *c, GObject *
   (void)svc; (void)src; (void)d;
   GDataInputStream *in = g_data_input_stream_new(g_io_stream_get_input_stream(G_IO_STREAM(c)));
   gchar *line = g_data_input_stream_read_line(in, NULL, NULL, NULL);
-  if (line && *g_strstrip(line)) add_tab(NULL, line, TRUE);
+  gboolean was_hidden = !gtk_widget_get_visible(win);
+  if (line && *g_strstrip(line)) {
+    // Hidden (closed or pre-started) with just the start page: reuse that tab rather than open a 2nd.
+    WebKitWebView *v = current_view();
+    const char *u = v ? webkit_web_view_get_uri(v) : NULL;
+    if (was_hidden && v && gtk_notebook_get_n_pages(GTK_NOTEBOOK(nb)) == 1 && (!u || !strcmp(u, HOME_URI))) {
+      gchar *t = to_uri(line); webkit_web_view_load_uri(v, t); g_free(t);
+    } else add_tab(NULL, line, TRUE);
+  }
   g_free(line);
   g_object_unref(in);
+  if (was_hidden) gtk_widget_show_all(win);
+  prewarm = FALSE;
   gtk_window_present_with_time(GTK_WINDOW(win), GDK_CURRENT_TIME);
   return TRUE;
 }
@@ -273,11 +392,19 @@ int main(int argc, char **argv) {
   phase("settings");
   WebKitWebContext *ctx = webkit_web_context_get_default();
   webkit_web_context_set_cache_model(ctx, WEBKIT_CACHE_MODEL_DOCUMENT_BROWSER);
+  webkit_web_context_register_uri_scheme(ctx, "bootbox", on_bootbox_scheme, NULL, NULL);
+  WebKitSecurityManager *sm = webkit_web_context_get_security_manager(ctx);
+  webkit_security_manager_register_uri_scheme_as_secure(sm, "bootbox");
+  webkit_security_manager_register_uri_scheme_as_cors_enabled(sm, "bootbox");
+  webkit_security_manager_register_uri_scheme_as_local(sm, "bootbox");
+  gboolean lite = g_file_test(LITE_FLAG, G_FILE_TEST_EXISTS);
+  apply_lite(lite);
 
   win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
   gtk_window_set_default_size(GTK_WINDOW(win), 980, 660);
   gtk_window_set_icon_from_file(GTK_WINDOW(win), "/usr/share/bootbox/icons/browser.png", NULL);
   g_signal_connect(win, "destroy", G_CALLBACK(gtk_main_quit), NULL);
+  g_signal_connect(win, "delete-event", G_CALLBACK(on_delete), NULL);
   g_signal_connect(win, "key-press-event", G_CALLBACK(on_key), NULL);
 
   GtkWidget *vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
@@ -288,6 +415,11 @@ int main(int argc, char **argv) {
   reload_btn = tool_button("view-refresh-symbolic", "Reload (Ctrl+R) / Stop", G_CALLBACK(on_reload));
   GtkWidget *home_btn = tool_button("go-home-symbolic", "Start page", G_CALLBACK(on_home));
   GtkWidget *tab_btn = tool_button("tab-new-symbolic", "New tab (Ctrl+T)", G_CALLBACK(on_new_tab));
+  lite_btn = gtk_toggle_button_new_with_label("Lite");
+  gtk_widget_set_tooltip_text(lite_btn, "Lite: mobile versions of sites, no images - much faster here");
+  gtk_widget_set_can_focus(lite_btn, FALSE);
+  gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(lite_btn), lite);
+  g_signal_connect(lite_btn, "toggled", G_CALLBACK(on_lite_toggled), NULL);
   entry = gtk_entry_new();
   gtk_entry_set_placeholder_text(GTK_ENTRY(entry), "Search or type a web address");
   gtk_entry_set_input_purpose(GTK_ENTRY(entry), GTK_INPUT_PURPOSE_URL);
@@ -297,6 +429,7 @@ int main(int argc, char **argv) {
   gtk_box_pack_start(GTK_BOX(bar), reload_btn, FALSE, FALSE, 0);
   gtk_box_pack_start(GTK_BOX(bar), home_btn, FALSE, FALSE, 0);
   gtk_box_pack_start(GTK_BOX(bar), entry, TRUE, TRUE, 4);
+  gtk_box_pack_start(GTK_BOX(bar), lite_btn, FALSE, FALSE, 2);
   gtk_box_pack_start(GTK_BOX(bar), tab_btn, FALSE, FALSE, 0);
 
   nb = gtk_notebook_new();
@@ -309,12 +442,14 @@ int main(int argc, char **argv) {
   gtk_box_pack_start(GTK_BOX(vbox), nb, TRUE, TRUE, 0);
   gtk_container_add(GTK_CONTAINER(win), vbox);
 
-  gchar *joined = argc > 1 ? g_strjoinv(" ", argv + 1) : NULL;
+  prewarm = argc > 1 && !strcmp(argv[1], "--prewarm");
+  gchar *joined = argc > 1 && !prewarm ? g_strjoinv(" ", argv + 1) : NULL;
   WebKitWebView *v = add_tab(NULL, joined ? joined : HOME_URI, TRUE);
   g_free(joined);
   g_signal_connect(win, "draw", G_CALLBACK(on_first_draw), NULL);
   phase("tab-created");
-  gtk_widget_show_all(win);
+  if (prewarm) { gtk_widget_show_all(vbox); gtk_widget_realize(win); }   // loads the start page, unmapped
+  else gtk_widget_show_all(win);
   phase("window-shown");
   gtk_widget_grab_focus(GTK_WIDGET(v));
   listen_for_launches();

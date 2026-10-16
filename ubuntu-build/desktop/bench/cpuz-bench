@@ -29,6 +29,7 @@ if [ -n "$R" ]; then
   echo "  Multi-thread  : $(echo "$SC" | cut -d',' -f2 | tr -d '"')   ($(nproc) cores)"
   echo "  took $(( $(date +%s) - S )) s"
   echo "======================================="
+  bbresult cpuz "CPU-Z $MODE-bit" single="$(echo "$SC" | cut -d',' -f1 | tr -d '" ')" multi="$(echo "$SC" | cut -d',' -f2 | tr -d '" ')"
 else
   echo "CPU-Z produced no result (Wine did not finish under emulation)."
 fi

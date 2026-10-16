@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Web benchmark</title>
+<style>
+  :root { --bg:#0b0f17; --card:#121a27; --line:#1f2a3c; --fg:#d6e2f2; --dim:#7f8ea6; --acc:#3d8bfd; --ok:#7ad88a; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px "DejaVu Sans", -apple-system, sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:28px 20px 48px; }
+  h1 { font-size:24px; margin:0 0 4px; color:#8fbdec; letter-spacing:1px; }
+  p.sub { margin:0 0 22px; color:var(--dim); font-size:13px; line-height:1.5; }
+  .bar { display:flex; gap:10px; align-items:center; margin-bottom:18px; }
+  button { font:inherit; font-size:15px; padding:9px 22px; border:0; border-radius:9px; background:var(--acc); color:#fff; }
+  button:disabled { opacity:.5; }
+  table { width:100%; border-collapse:collapse; background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+  td, th { padding:9px 12px; border-bottom:1px solid var(--line); text-align:left; font-size:14px; }
+  th { color:var(--dim); font-weight:normal; font-size:12px; text-transform:uppercase; letter-spacing:1px; }
+  td.n { text-align:right; font-variant-numeric:tabular-nums; }
+  tr.run td { color:#fff; } tr.done td.n { color:var(--ok); }
+  .total { margin:22px 0 6px; padding:18px; background:var(--card); border:1px solid var(--line); border-radius:12px; text-align:center; }
+  .total b { display:block; font-size:42px; color:#fff; margin:4px 0; }
+  .total span { color:var(--dim); font-size:13px; }
+  canvas { display:none; }
+  #work { position:absolute; left:-9999px; top:0; width:600px; }
+  a { color:#8fbdec; }
+</style></head>
+<body><main>
+  <h1>WEB BENCHMARK</h1>
+  <p class="sub">JavaScript, DOM and canvas speed of the browser you open this in. Each test runs for a fixed
+  time and counts how many rounds it finishes, so a slow machine takes about as long as a fast one and the
+  scores stay comparable. 1000 = the WebKit engine on an Apple M4 Mac. Run it in the Linux desktop's browser
+  (emulated x86) and natively on the iPad to see the difference.</p>
+  <div class="bar"><button id="go">Run benchmark</button><span id="state" style="color:var(--dim)"></span></div>
+  <table><thead><tr><th>Test</th><th style="text-align:right">Rounds/s</th><th style="text-align:right">Score</th></tr></thead>
+  <tbody id="rows"></tbody></table>
+  <div class="total" id="total" style="display:none"><span>Overall (geometric mean)</span><b id="score">-</b><span id="where"></span></div>
+  <p class="sub" id="saved"></p>
+  <p class="sub" id="links"></p>
+  <canvas id="cv" width="320" height="200"></canvas><div id="work"></div>
+</main>
+<script>
+"use strict";
+// Each test: one "round" of work. ref = rounds/s measured on the reference (WebKit, Apple M4).
+const TESTS = [
+  { id: "math", name: "Math (n-body)", ref: 7100, fn: nbody },
+  { id: "ints", name: "Integers (prime sieve)", ref: 24900, fn: sieve },
+  { id: "str", name: "Strings & regex", ref: 69300, fn: strings },
+  { id: "json", name: "JSON parse/stringify", ref: 24250, fn: json },
+  { id: "sort", name: "Array sort", ref: 13470, fn: sorting },
+  { id: "dom", name: "DOM build + layout", ref: 4870, fn: dom },
+  { id: "canvas", name: "Canvas 2D drawing", ref: 1190, fn: canvas },
+];
+const q = new URLSearchParams(location.search);
+const BUDGET = +(q.get("budget") || (location.protocol === "bootbox:" ? 3000 : 1500));   // ms per test
+let sink = 0;
+
+function nbody() {
+  const b = [[0,0,0,0,0,0,39.47],[4.84,-1.16,-0.10,0.60,2.81,-0.02,0.037],[8.34,4.12,-0.40,-1.01,1.82,0.008,0.011],
+             [12.89,-15.11,-0.22,1.08,0.86,-0.01,0.0017],[15.37,-25.91,0.17,0.97,0.59,-0.03,0.002]];
+  for (let s = 0; s < 120; s++) {
+    for (let i = 0; i < 5; i++) for (let j = i + 1; j < 5; j++) {
+      const dx = b[i][0]-b[j][0], dy = b[i][1]-b[j][1], dz = b[i][2]-b[j][2];
+      const d2 = dx*dx + dy*dy + dz*dz, m = 0.01 / (d2 * Math.sqrt(d2));
+      b[i][3] -= dx*b[j][6]*m; b[i][4] -= dy*b[j][6]*m; b[i][5] -= dz*b[j][6]*m;
+      b[j][3] += dx*b[i][6]*m; b[j][4] += dy*b[i][6]*m; b[j][5] += dz*b[i][6]*m;
+    }
+    for (const p of b) { p[0] += 0.01*p[3]; p[1] += 0.01*p[4]; p[2] += 0.01*p[5]; }
+  }
+  sink += b[1][0];
+}
+function sieve() {
+  const n = 20000, a = new Uint8Array(n + 1); let c = 0;
+  for (let i = 2; i <= n; i++) if (!a[i]) { c++; for (let j = i * i; j <= n; j += i) a[j] = 1; }
+  sink += c;
+}
+function strings() {
+  let s = "";
+  for (let i = 0; i < 120; i++) s += "item-" + i + " value=" + (i * 7 % 13) + "; ";
+  s = s.replace(/value=(\d+)/g, (m, v) => "v" + (v * 2)).replace(/item-/g, "#").toUpperCase();
+  sink += s.split(";").length + s.indexOf("#99");
+}
+function json() {
+  const o = { list: [] };
+  for (let i = 0; i < 150; i++) o.list.push({ id: i, name: "n" + i, tags: ["a", "b", i % 3], ok: i % 2 === 0, v: i * 1.5 });
+  const t = JSON.stringify(o); sink += JSON.parse(t).list.length + t.length;
+}
+function sorting() {
+  const a = new Array(1500); let x = 12345;
+  for (let i = 0; i < a.length; i++) { x = (x * 1103515245 + 12345) & 0x7fffffff; a[i] = x; }
+  a.sort((p, r) => p - r); sink += a[700];
+}
+const work = document.getElementById("work");
+function dom() {
+  const f = document.createDocumentFragment();
+  for (let i = 0; i < 60; i++) { const d = document.createElement("div"); d.className = "r" + (i % 4); d.textContent = "row " + i; d.style.padding = (i % 5) + "px"; f.appendChild(d); }
+  work.appendChild(f); sink += work.offsetHeight; work.textContent = "";
+}
+const ctx = document.getElementById("cv").getContext("2d");
+function canvas() {
+  for (let i = 0; i < 80; i++) {
+    ctx.fillStyle = "hsl(" + (i * 37 % 360) + ",70%,50%)";
+    ctx.fillRect((i * 13) % 300, (i * 7) % 180, 20, 20);
+    ctx.beginPath(); ctx.arc((i * 29) % 320, (i * 17) % 200, 8, 0, 6.283); ctx.fill();
+  }
+  sink += ctx.getImageData(5, 5, 1, 1).data[0];
+}
+
+const rows = document.getElementById("rows");
+TESTS.forEach(t => { const tr = document.createElement("tr"); tr.id = "row-" + t.id;
+  tr.innerHTML = "<td>" + t.name + "</td><td class=n>-</td><td class=n>-</td>"; rows.appendChild(tr); });
+const pause = () => new Promise(r => setTimeout(r, 30));
+
+async function run() {
+  const btn = document.getElementById("go"), state = document.getElementById("state");
+  btn.disabled = true; document.getElementById("total").style.display = "none";
+  const scores = {}, rates = {}; let logsum = 0;
+  for (const t of TESTS) {
+    const tr = document.getElementById("row-" + t.id); tr.className = "run";
+    state.textContent = "running " + t.name + "..."; await pause();
+    t.fn();                                                  // warm-up round
+    let n = 0; const t0 = performance.now();
+    while (performance.now() - t0 < BUDGET) { t.fn(); n++; if (n % 16 === 0 && performance.now() - t0 > BUDGET) break; }
+    const rate = n / ((performance.now() - t0) / 1000), sc = Math.max(1, Math.round(rate / t.ref * 1000));
+    scores[t.id] = sc; logsum += Math.log(sc); rates[t.id] = Math.round(rate);
+    tr.className = "done"; tr.children[1].textContent = rate < 10 ? rate.toFixed(2) : Math.round(rate); tr.children[2].textContent = sc;
+    await pause();
+  }
+  const total = Math.round(Math.exp(logsum / TESTS.length));
+  document.getElementById("score").textContent = total;
+  const emulated = location.protocol === "bootbox:";
+  document.getElementById("where").textContent = emulated ? "Linux desktop browser (x86 emulated in WebAssembly)" :
+    "this device's own web engine (native)" + (window.parent !== window ? " - with a guest running the score is lower; stop it for a clean number" : "");
+  document.getElementById("total").style.display = "";
+  state.textContent = "done"; btn.disabled = false;
+  if (q.get("calib")) fetch("/__result?job=webcalib&tag=" + (q.get("calib") || "x"), { method: "POST", body: JSON.stringify(rates) });
+  if (emulated) {
+    const j = JSON.stringify(Object.assign({ t: Math.floor(Date.now() / 1000), id: "web", label: "Web benchmark (browser)", score: total, cores: navigator.hardwareConcurrency || 1 }, scores));
+    try { await fetch("bootbox://app/save?j=" + encodeURIComponent(j)); document.getElementById("saved").textContent = "Saved to the Benchmarks hub."; } catch (e) {}
+  }
+}
+document.getElementById("go").onclick = run;
+if (location.protocol === "bootbox:") document.getElementById("links").innerHTML = '<a href="bootbox://app/hub">&larr; Benchmarks hub</a>';
+if (q.get("auto")) run();
+</script></body></html>

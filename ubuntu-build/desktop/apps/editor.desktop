@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Text editor
+Comment=Mousepad text editor
+Icon=/usr/share/bootbox/icons/editor.png
+Exec=mousepad
+Terminal=false

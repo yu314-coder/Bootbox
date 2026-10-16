@@ -4,7 +4,10 @@
 //     the front) instead of starting a second ~340 MB copy;
 //   * otherwise shows an "Opening..." card at once, starts /usr/libexec/bbweb-engine and closes the card
 //     when the engine's window is drawn (the engine writes to BBWEB_READY_FD) or the engine exits;
-//   * a second tap while the engine is still starting does nothing (the engine holds /tmp/.bbweb.lock).
+//   * a tap while an engine is still starting (the boot-time pre-start, or a first tap) shows the card
+//     too and hands its URL over as soon as that engine listens (it holds /tmp/.bbweb.lock);
+//   * `bbweb --prewarm` (xstart, after boot) starts the engine hidden with no card, so the first
+//     real tap opens a browser that is already running.
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <errno.h>
@@ -49,15 +52,26 @@ int main(int argc, char **argv) {
     strncat(url, argv[i], sizeof url - strlen(url) - 1);
   }
   for (char *p = url; *p; p++) if (*p == '\n') *p = ' ';
-  if (send_to_running(url)) return 0;
+  int prewarm = argc > 1 && !strcmp(argv[1], "--prewarm");
+  // (a pre-start never talks to a running engine: an empty request would bring its window up)
+  if (!prewarm && send_to_running(url)) return 0;
 
   int lock = open(LOCK_PATH, O_RDWR | O_CREAT | O_CLOEXEC, 0600);
-  if (lock >= 0 && flock(lock, LOCK_EX | LOCK_NB) != 0) return 0;   // an engine is starting already
-  if (lock >= 0) fcntl(lock, F_SETFD, 0);                             // the engine inherits (keeps) the lock
+  int starting = lock >= 0 && flock(lock, LOCK_EX | LOCK_NB) != 0;   // an engine runs or is starting
+  if (starting && prewarm) return 0;
+  if (lock >= 0 && !starting) fcntl(lock, F_SETFD, 0);               // the engine inherits (keeps) the lock
+  if (prewarm) {
+    if (fork() == 0) { setsid(); argv[0] = (char *)ENGINE; execv(ENGINE, argv); _exit(127); }
+    return 0;
+  }
 
-  int ready[2];
+  int ready[2] = { -1, -1 };
+  pid_t pid = -1;
+  if (starting) {
+    if (lock >= 0) close(lock);
+  } else {
   if (pipe(ready) != 0) ready[0] = ready[1] = -1;
-  pid_t pid = fork();
+  pid = fork();
   if (pid == 0) {
     if (ready[0] >= 0) close(ready[0]);
     char fd[16];
@@ -71,6 +85,7 @@ int main(int argc, char **argv) {
   if (ready[1] >= 0) close(ready[1]);
   if (lock >= 0) close(lock);
   if (pid < 0) return 1;
+  }
 
   // The card: an undecorated box in the middle of the screen, drawn with a core font.
   Display *d = XOpenDisplay(NULL);
@@ -124,7 +139,9 @@ int main(int argc, char **argv) {
     if (r > 0) break;                                   // the window is up (a byte) or the engine died (EOF)
     if (r < 0 && errno != EINTR) break;
     if (time(NULL) - t0 > 240) break;
-    if (waitpid(pid, NULL, WNOHANG) == pid) break;
+    if (starting) {                                     // someone else's engine: hand over once it listens
+      if (send_to_running(url)) break;
+    } else if (waitpid(pid, NULL, WNOHANG) == pid) break;
   }
   if (d) XCloseDisplay(d);
   return 0;
