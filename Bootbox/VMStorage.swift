@@ -84,6 +84,8 @@ enum VMStorage {
         "qemu-desktop10-rootfs-1262146190.data",
         "qemu-desktop11-rootfs-1262582457.data.gz", // desktop v11 → v12 (benchmarks hub, apps, prewarmed browser)
         "qemu-desktop11-rootfs-1262582457.data",
+        "qemu-desktop12-rootfs-1276181587.data.gz", // desktop v12 → v13 (faster browser: one web process, mimalloc, ad blocker)
+        "qemu-desktop12-rootfs-1276181587.data",
         "qemu-android64-warm4-2038076444.data.gz",  // Android v4 → v5 (build 93)
         "qemu-android64-warm4-2038076444.data",
         "qemu-android64-warm5-2161126625.data.gz",  // Android v5 → v6 (build 95)

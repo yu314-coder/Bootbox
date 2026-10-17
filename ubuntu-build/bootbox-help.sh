@@ -37,5 +37,9 @@ cat <<'TXT'
     - tap Apps (bottom left) or right-click the wallpaper for the app menu
     - the box top right shows each emulated CPU core's load live
     - the iPad pointer IS the mouse: tap = click, two-finger tap = right-click
+    - web: ads and trackers are blocked (much less JavaScript to run here);
+      to allow them: mkdir -p ~/.config/bbweb; touch ~/.config/bbweb/noblock
+      and restart the browser: pkill bbweb-engine
+    - web: Lite (toolbar) = mobile sites, no pictures - the fastest pages
     - type 'help' to show this again
 TXT

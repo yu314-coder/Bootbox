@@ -9,6 +9,10 @@
 // bootbox://app/ pages: start, hub (Benchmarks), webbench; .../run/<id> starts a whitelisted
 // benchmark, .../results and .../save?j=<json> read and append ~/.bootbox/results.jsonl.
 // Lite (toolbar): mobile site versions, no images - much lighter pages on the emulated CPU.
+// One web process for everything (v13): starting a WebKitWebProcess costs ~10 s on the emulated CPU, so
+// tabs share the first tab's process (related-view) and cross-site navigation does not swap processes
+// (feature ProcessSwapOnCrossSiteNavigation off). Hidden tabs are throttled by WebKit; if the shared
+// process dies, every view reloads itself (at most once a minute).
 //   bbweb [URL]        URL or search words; no argument = the local start page
 //   BBWEB_LOG=1        print page titles + start-up phases to stdout (the image build's smoke test)
 #include <gtk/gtk.h>
@@ -25,6 +29,7 @@
 #define HOME_URI "bootbox://app/start"
 #define SHARE "/usr/share/bootbox/"
 #define LITE_FLAG "/root/.config/bbweb/lite"
+#define NOBLOCK_FLAG "/root/.config/bbweb/noblock"
 #define RESULTS "/root/.bootbox/results.jsonl"
 #define MOBILE_UA "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
 #define SEARCH_URI "https://lite.duckduckgo.com/lite/?q="
@@ -121,6 +126,51 @@ static void close_tab(WebKitWebView *v) {
 static void on_close_clicked(GtkButton *b, gpointer v) { (void)b; close_tab(WEBKIT_WEB_VIEW(v)); }
 static void on_view_close(WebKitWebView *v, gpointer d) { (void)d; close_tab(v); }
 
+// Ad/tracker blocking (v13): third-party requests to these hosts are dropped (a WebKit content filter,
+// compiled once into ~/.cache/bbweb/filters). Their scripts would otherwise run on the emulated CPU - on
+// news sites most of the JavaScript is ads and analytics. Off: touch ~/.config/bbweb/noblock.
+static const char *const BLOCK_HOSTS[] = {
+  "doubleclick.net", "googlesyndication.com", "googleadservices.com", "google-analytics.com",
+  "googletagmanager.com", "googletagservices.com", "adservice.google.com", "googleoptimize.com",
+  "facebook.net", "scorecardresearch.com", "chartbeat.com", "chartbeat.net", "optimizely.com", "hotjar.com",
+  "amazon-adsystem.com", "adnxs.com", "criteo.com", "criteo.net", "taboola.com", "outbrain.com",
+  "quantserve.com", "moatads.com", "adsrvr.org", "rubiconproject.com", "pubmatic.com", "openx.net",
+  "casalemedia.com", "33across.com", "sharethrough.com", "teads.tv", "yieldmo.com", "adform.net",
+  "smartadserver.com", "indexww.com", "bidswitch.net", "rlcdn.com", "demdex.net", "omtrdc.net",
+  "everesttech.net", "krxd.net", "bluekai.com", "exelator.com", "mathtag.com", "tapad.com", "agkn.com",
+  "crwdcntrl.net", "permutive.com", "permutive.app", "mixpanel.com", "nr-data.net", "clarity.ms",
+  "bat.bing.com", "doubleverify.com", "adsafeprotected.com", "imrworldwide.com", "cxense.com",
+  "snap.licdn.com", "ads.linkedin.com", "analytics.twitter.com", "ads-twitter.com", "analytics.tiktok.com",
+  "ads.yahoo.com", "adroll.com", "zemanta.com", "media.net", "lijit.com", "sonobi.com", "gumgum.com",
+  "tiqcdn.com", "ensighten.com", "parsely.com", "parse.ly", "newrelic.com", "branch.io", "segment.com",
+  "segment.io", "amplitude.com", "fullstory.com", "mouseflow.com", "quantcount.com", "adition.com",
+};
+static WebKitUserContentManager *ucm;
+static void on_filter_saved(GObject *o, GAsyncResult *r, gpointer d) {
+  (void)d; GError *e = NULL;
+  WebKitUserContentFilter *f = webkit_user_content_filter_store_save_finish(WEBKIT_USER_CONTENT_FILTER_STORE(o), r, &e);
+  if (!f) { fprintf(stderr, "bbweb: content filter: %s\n", e ? e->message : "?"); if (e) g_error_free(e); return; }
+  webkit_user_content_manager_add_filter(ucm, f);
+  webkit_user_content_filter_unref(f);
+  phase("blocker-on");
+}
+static void setup_blocker(void) {
+  GString *j = g_string_new("[");
+  for (gsize i = 0; i < G_N_ELEMENTS(BLOCK_HOSTS); i++) {
+    gchar *h = g_regex_escape_string(BLOCK_HOSTS[i], -1), *hj = g_strescape(h, NULL);
+    g_string_append_printf(j, "%s{\"trigger\":{\"url-filter\":\"^https?://([^/]+\\\\.)?%s[/:]\",\"load-type\":[\"third-party\"]},\"action\":{\"type\":\"block\"}}",
+                           i ? "," : "", hj);
+    g_free(h); g_free(hj);
+  }
+  g_string_append(j, "]");
+  gchar *dir = g_build_filename(g_get_user_cache_dir(), "bbweb", "filters", NULL);
+  WebKitUserContentFilterStore *st = webkit_user_content_filter_store_new(dir);
+  gsize len = j->len;
+  GBytes *b = g_bytes_new_take(g_string_free(j, FALSE), len);
+  webkit_user_content_filter_store_save(st, "bootbox-block-1", b, NULL, on_filter_saved, NULL);
+  g_bytes_unref(b); g_free(dir);
+}
+
 static WebKitWebView *add_tab(WebKitWebView *related, const char *uri, gboolean focus);
 
 // window.open() / target=_blank: a new tab sharing the opener's web process.
@@ -138,10 +188,20 @@ static gboolean on_load_failed_tls(WebKitWebView *v, gchar *uri, GTlsCertificate
   return TRUE;
 }
 
+static void on_web_process_terminated(WebKitWebView *v, WebKitWebProcessTerminationReason r, gpointer d) {
+  (void)r; (void)d;
+  gint64 now = g_get_monotonic_time(), last = GPOINTER_TO_SIZE(g_object_get_data(G_OBJECT(v), "bb-crash")) * G_USEC_PER_SEC;
+  if (last && now - last < 60 * G_USEC_PER_SEC) return;   // crashed again within a minute: leave the error page
+  g_object_set_data(G_OBJECT(v), "bb-crash", GSIZE_TO_POINTER((gsize)(now / G_USEC_PER_SEC)));
+  webkit_web_view_reload(v);
+}
+
 static WebKitWebView *add_tab(WebKitWebView *related, const char *uri, gboolean focus) {
+  if (!related && gtk_notebook_get_n_pages(GTK_NOTEBOOK(nb)) > 0)   // share the existing web process
+    related = WEBKIT_WEB_VIEW(gtk_notebook_get_nth_page(GTK_NOTEBOOK(nb), 0));
   WebKitWebView *v = related
-      ? WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW, "related-view", related, "settings", settings, NULL))
-      : WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW, "settings", settings, NULL));
+      ? WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW, "related-view", related, "settings", settings, "user-content-manager", ucm, NULL))
+      : WEBKIT_WEB_VIEW(g_object_new(WEBKIT_TYPE_WEB_VIEW, "settings", settings, "user-content-manager", ucm, NULL));
   GtkWidget *box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 4);
   GtkWidget *label = gtk_label_new("New tab");
   gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
@@ -161,6 +221,7 @@ static WebKitWebView *add_tab(WebKitWebView *related, const char *uri, gboolean 
   g_signal_connect(v, "close", G_CALLBACK(on_view_close), NULL);
   g_signal_connect(v, "load-failed-with-tls-errors", G_CALLBACK(on_load_failed_tls), NULL);
   g_signal_connect(v, "load-changed", G_CALLBACK(on_load_changed), NULL);
+  g_signal_connect(v, "web-process-terminated", G_CALLBACK(on_web_process_terminated), NULL);
   gtk_widget_show(GTK_WIDGET(v));
   int i = gtk_notebook_append_page(GTK_NOTEBOOK(nb), GTK_WIDGET(v), box);
   gtk_notebook_set_tab_reorderable(GTK_NOTEBOOK(nb), GTK_WIDGET(v), TRUE);
@@ -238,6 +299,19 @@ static void on_lite_toggled(GtkToggleButton *b, gpointer d) {
 
 // --- bootbox:// -------------------------------------------------------------------------------------
 // Benchmarks the hub may start: id -> command. Nothing else is ever run from a page.
+// Benchmarks start without the browser's allocator environment (bbweb-launch.c engine_env).
+static gboolean spawn_clean(const char *cmd) {
+  gchar **argv = NULL;
+  if (!g_shell_parse_argv(cmd, NULL, &argv, NULL)) return FALSE;
+  gchar **env = g_get_environ();
+  for (const char **k = (const char *[]){ "LD_PRELOAD", "Malloc", "MIMALLOC_PURGE_DELAY", NULL }; *k; k++)
+    env = g_environ_unsetenv(env, *k);
+  gboolean ok = g_spawn_async(NULL, argv, env, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, NULL);
+  g_strfreev(argv);
+  g_strfreev(env);
+  return ok;
+}
+
 static const char *const RUNNABLE[][2] = {
   { "cpuz",     "bxterm -T 'CPU-Z benchmark' -geometry 80x22 -e sh -c 'cpuz-bench; echo; printf \"Press Enter to close\"; read x'" },
   { "cpuzwin",  "cpuz-gui" },
@@ -304,7 +378,7 @@ static void on_bootbox_scheme(WebKitURISchemeRequest *req, gpointer d) {
   if (g_str_has_prefix(uri, "run/")) {
     const char *id = uri + 4; gboolean ok = FALSE;
     for (gsize i = 0; i < G_N_ELEMENTS(RUNNABLE); i++)
-      if (!strcmp(id, RUNNABLE[i][0])) ok = g_spawn_command_line_async(RUNNABLE[i][1], NULL);
+      if (!strcmp(id, RUNNABLE[i][0])) ok = spawn_clean(RUNNABLE[i][1]);
     finish_bytes(req, "text/plain", g_strdup(ok ? "started" : "unknown"), ok ? 7 : 7);
     return;
   }
@@ -389,7 +463,18 @@ int main(int argc, char **argv) {
       "enable-dns-prefetching", TRUE,
       "default-font-size", 15,
       NULL);
+  {   // no process swap on cross-site navigation: each swap = a new ~10 s WebKitWebProcess start here
+    WebKitFeatureList *fl = webkit_settings_get_all_features();
+    for (gsize i = 0; i < webkit_feature_list_get_length(fl); i++) {
+      WebKitFeature *f = webkit_feature_list_get(fl, i);
+      if (!strcmp(webkit_feature_get_identifier(f), "ProcessSwapOnCrossSiteNavigation"))
+        webkit_settings_set_feature_enabled(settings, f, FALSE);
+    }
+    webkit_feature_list_unref(fl);
+  }
   phase("settings");
+  ucm = webkit_user_content_manager_new();
+  if (!g_file_test(NOBLOCK_FLAG, G_FILE_TEST_EXISTS)) setup_blocker();
   WebKitWebContext *ctx = webkit_web_context_get_default();
   webkit_web_context_set_cache_model(ctx, WEBKIT_CACHE_MODEL_DOCUMENT_BROWSER);
   webkit_web_context_register_uri_scheme(ctx, "bootbox", on_bootbox_scheme, NULL, NULL);

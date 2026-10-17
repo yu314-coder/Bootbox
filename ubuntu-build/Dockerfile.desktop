@@ -1,6 +1,8 @@
 # Bootbox DESKTOP guest (x86_64) — a lightweight graphical desktop. v10: bbweb (a small WebKitGTK
 # browser with full JavaScript, built below) + Dillo as the no-JS lite browser, PCManFM, a bash terminal
 # with the common tools, CPU-Z/glmark2 benchmarks (v9). Claude Code is no longer bundled (v10).
+# v13: a faster browser - one shared web process (no ~10 s process start per tab / cross-site link),
+# mimalloc instead of WebKit's madvise-happy allocator, and an ad/tracker blocker (filter pre-compiled here).
 # v2 (build 73): graphical browser (Dillo) + file manager (PCManFM) + a real wallpaper. HISTORY: dillo/BadWolf "flooded the single-threaded Xvnc until the GUI froze" — but that
 # was tested BEFORE the cx16 engine fix, when every guest allocation took a stop-the-world exclusive
 # section (kernel SLUB uses lock cmpxchg16b). With the spinlock engine those light GUI apps get
@@ -88,10 +90,12 @@ RUN set -eux; \
 # 3b) browsers + file manager + wallpaper tools. bbweb = WebKitGTK 4.1 (built in the tools stage;
 #     glib-networking gives it TLS) · dillo = FLTK lite browser (CSS, no JS) · pcmanfm = light GTK
 #     file manager · ripgrep + git for the terminal. (v10: Node.js + Claude Code removed.)
+#     v13: mimalloc2-insecure = the browser's malloc (bbweb-launch.c engine_env: Malloc=1 + LD_PRELOAD).
 RUN set -eux; \
     apk add --no-cache webkit2gtk-4.1 glib-networking dillo pcmanfm xwallpaper ripgrep git \
-      conky mousepad galculator gpicview xarchiver 2>&1 | tail -1; \
+      conky mousepad galculator gpicview xarchiver mimalloc2-insecure 2>&1 | tail -1; \
     for c in conky mousepad galculator gpicview xarchiver; do command -v $c >/dev/null; done; \
+    test -f /usr/lib/libmimalloc-insecure.so.2; \
     echo "DESKTOP-APPS-OK dillo=$(command -v dillo) pcmanfm=$(command -v pcmanfm)"
 COPY --from=wall /wallpaper.png /usr/share/bootbox-wallpaper.png
 
@@ -229,6 +233,9 @@ RUN set -eux; \
     (DISPLAY=:9 BBWEB_LOG=1 timeout 60 bbweb >/tmp/warm-w.log 2>&1 &); sleep 25; \
     test -S /tmp/.bbweb.sock; DISPLAY=:9 bbweb; DISPLAY=:9 bbweb https://example.org; sleep 8; \
     test "$(pgrep bbweb-engine | wc -l)" = 1; grep -q "title: Example Domain" /tmp/warm-w.log; echo "BBWEB-SINGLE-INSTANCE-OK"; \
+    ps -o pid,ppid,args | grep -i "[w]ebkit\|[b]bweb"; grep -E "^phase|^title" /tmp/warm-w.log; \
+    test "$(pgrep -f WebKitWebProcess | wc -l)" = 1; grep -q mimalloc /proc/$(pgrep -f WebKitWebProcess | head -1)/maps; \
+    grep -q "blocker-on" /tmp/warm-w.log; test -n "$(ls -A /root/.cache/bbweb/filters)"; echo "BBWEB-ONE-PROCESS-MIMALLOC-BLOCKER-OK"; \
     DISPLAY=:9 bbweb bootbox://app/hub; DISPLAY=:9 bbweb 'bootbox://app/webbench?auto=1&budget=300'; sleep 20; \
     grep -q "title: Benchmarks" /tmp/warm-w.log; grep -q "title: Web benchmark" /tmp/warm-w.log; \
     grep -q '"id":"web"' /root/.bootbox/results.jsonl; grep -q "title: Benchmarks (1)" /tmp/warm-w.log; echo "BBWEB-HUB-WEBBENCH-SAVE-OK"; \
@@ -244,7 +251,8 @@ RUN set -eux; \
     cat /tmp/warm-w.log /tmp/warm-w2.log | grep -v "^$" | tail -12; \
     grep -q "title: Start$" /tmp/warm-w.log; \
     (grep -q "title: Example Domain" /tmp/warm-w2.log && echo "BBWEB-HTTPS-OK") || echo "BBWEB-HTTPS-NOT-VERIFIED (build network?)"; \
-    rm -rf /root/.cache/bbweb /root/.local/share/bbweb /root/.local/share/webkitgtk; \
+    find /root/.cache/bbweb -mindepth 1 -maxdepth 1 ! -name filters -exec rm -rf {} +; \
+    rm -rf /root/.local/share/bbweb /root/.local/share/webkitgtk; \
     apk del xvfb 2>&1 | tail -1; \
     echo "DESKTOP-WARM-OK"
 

@@ -27,6 +27,18 @@
 #define SOCK_PATH "/tmp/.bbweb.sock"
 #define LOCK_PATH "/tmp/.bbweb.lock"
 #define ENGINE "/usr/libexec/bbweb-engine"
+#define MIMALLOC "/usr/lib/libmimalloc-insecure.so.2"   /* the plain build: Alpine's libmimalloc.so.2 = the slower "secure" one */
+
+// WebKit's own allocator (libpas) hands freed memory back with madvise and faults it in again, thousands
+// of times per page load - each round trip a page fault + TLB flush on the emulated CPU. Malloc=1 makes
+// WebKit use the system malloc, here mimalloc, which keeps freed memory for 2 s: page loads ~17% faster,
+// kernel time -65%, same RSS (measured on offline Wikipedia/GitHub copies). Its processes inherit it.
+static void engine_env(void) {
+  if (access(MIMALLOC, R_OK) != 0) return;
+  setenv("Malloc", "1", 0);
+  setenv("LD_PRELOAD", MIMALLOC, 0);
+  setenv("MIMALLOC_PURGE_DELAY", "2000", 0);
+}
 
 static int send_to_running(const char *url) {
   int s = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -61,7 +73,7 @@ int main(int argc, char **argv) {
   if (starting && prewarm) return 0;
   if (lock >= 0 && !starting) fcntl(lock, F_SETFD, 0);               // the engine inherits (keeps) the lock
   if (prewarm) {
-    if (fork() == 0) { setsid(); argv[0] = (char *)ENGINE; execv(ENGINE, argv); _exit(127); }
+    if (fork() == 0) { setsid(); engine_env(); argv[0] = (char *)ENGINE; execv(ENGINE, argv); _exit(127); }
     return 0;
   }
 
@@ -78,6 +90,7 @@ int main(int argc, char **argv) {
     snprintf(fd, sizeof fd, "%d", ready[1]);
     setenv("BBWEB_READY_FD", fd, 1);
     setsid();
+    engine_env();
     argv[0] = (char *)ENGINE;
     execv(ENGINE, argv);
     _exit(127);

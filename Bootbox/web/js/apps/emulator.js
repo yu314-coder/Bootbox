@@ -100,8 +100,8 @@
       // v12 (build 101): Benchmarks hub (CPU-Z, 7-Zip, sysbench, GPU, web benchmark, saved results),
       // categorized menu + text editor / calculator / image viewer / archiver, per-core CPU widget,
       // browser pre-started after boot and kept running when closed, Lite mode, clearer CPU name.
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v12/qemu-desktop12-rootfs.data.gz",
-        name: "qemu-desktop12-rootfs-1276181587.data.gz", mb: 419, size: 438535811 },
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v13/qemu-desktop13-rootfs.data.gz",
+        name: "qemu-desktop13-rootfs-1276560295.data.gz", mb: 418, size: 438765417 },
     ] },
     // Android is a full AOSP x86_64 userspace on Bootbox's QEMU guest kernel.
     // The rootfs is download-on-demand; the x86_64 engine is shared with Linux.

@@ -87,6 +87,11 @@
       if (i >= 0 && a[i + 1] != null && a[i + 1].indexOf("model-id=") < 0)
         a[i + 1] += ",model-id=" + String(opts.cpuModelId).replace(/,/g, " ").slice(0, 48);
     }
+    // Extra CPU features for cold-boot guests (opts.cpuFlags, e.g. "+aes,+ssse3"): appended to -cpu.
+    if (opts.cpuFlags && self.Module && self.Module.arguments) {
+      const a = self.Module.arguments, i = a.indexOf("-cpu");
+      if (i >= 0 && a[i + 1] != null) a[i + 1] += "," + String(opts.cpuFlags).replace(/[^+\-a-z0-9_.,]/gi, "");
+    }
     // CPU cores: opts.smp overrides the baked "-smp" (the x64 console guest ships dual-core;
     // 1 = battery saver — each vCPU worker costs ~1 host core even at an idle prompt).
     if (opts.smp && self.Module && self.Module.arguments) {
