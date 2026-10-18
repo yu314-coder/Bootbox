@@ -5,6 +5,8 @@
 # mimalloc instead of WebKit's madvise-happy allocator, and an ad/tracker blocker (filter pre-compiled here).
 # v14: inside the Bootbox app, Web opens pages in the app's native browser (the iPad's own WebKit) via a
 # console request (bbweb-launch.c open_native); `web --linux` / the Linux browser stay for bootbox:// pages.
+# v15: hub "Run all" (bench-all), glmark2 from the hub works (benchmarks get a clean env), and the boot
+# terminal waits for a real width before bash draws its prompt (the iPad showed it one letter per line).
 # v2 (build 73): graphical browser (Dillo) + file manager (PCManFM) + a real wallpaper. HISTORY: dillo/BadWolf "flooded the single-threaded Xvnc until the GUI froze" — but that
 # was tested BEFORE the cx16 engine fix, when every guest allocation took a stop-the-world exclusive
 # section (kernel SLUB uses lock cmpxchg16b). With the spinlock engine those light GUI apps get
@@ -194,7 +196,7 @@ RUN set -eux; \
     rm -rf /usr/lib/sane /usr/lib/libsane* /etc/sane.d /usr/lib/libOpenCL* /etc/OpenCL; \
     rm -rf /usr/lib/wine/i386-windows /usr/lib/wine/i386-unix; \
     echo "CPUZ-OK (64-bit Wine only: the 32-bit side is 209 MB; full Wine stays in the Linux Terminal image; GStreamer stays: WebKit links it)"
-COPY desktop/bench/cpuz-bench desktop/bench/gpu-bench desktop/bench/cpuz-gui /usr/local/bin/
+COPY desktop/bench/cpuz-bench desktop/bench/gpu-bench desktop/bench/cpuz-gui desktop/bench/bench-all /usr/local/bin/
 # Warm Wine's first-GUI-run and CPU-Z's first start (font caches, registry, DLL loads) at native
 # speed; on the device the first CPU-Z start then skips minutes of one-time setup.
 RUN set -eux; \

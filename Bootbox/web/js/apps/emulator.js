@@ -100,8 +100,11 @@
       // v12 (build 101): Benchmarks hub (CPU-Z, 7-Zip, sysbench, GPU, web benchmark, saved results),
       // categorized menu + text editor / calculator / image viewer / archiver, per-core CPU widget,
       // browser pre-started after boot and kept running when closed, Lite mode, clearer CPU name.
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v14/qemu-desktop14-rootfs.data.gz",
-        name: "qemu-desktop14-rootfs-1276560403.data.gz", mb: 418, size: 438754112 },
+      // v13-v14 (builds 102-103): faster Linux browser (one web process, mimalloc, ad blocker); Web opens
+      // in the app's native browser. v15 (build 106): hub "Run all", glmark2 from the hub, the boot
+      // terminal waits for its real width before the first prompt.
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v15/qemu-desktop15-rootfs.data.gz",
+        name: "qemu-desktop15-rootfs-1277329886.data.gz", mb: 419, size: 439105856 },
     ] },
     // Android is a full AOSP x86_64 userspace on Bootbox's QEMU guest kernel.
     // The rootfs is download-on-demand; the x86_64 engine is shared with Linux.

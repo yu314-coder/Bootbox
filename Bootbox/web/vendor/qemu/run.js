@@ -87,6 +87,14 @@
       if (i >= 0 && a[i + 1] != null && a[i + 1].indexOf("model-id=") < 0)
         a[i + 1] += ",model-id=" + String(opts.cpuModelId).replace(/,/g, " ").slice(0, 48);
     }
+    // Extra kernel command-line words for cold-boot guests (opts.kernelArgs), before init's own args.
+    if (opts.kernelArgs && self.Module && self.Module.arguments) {
+      const a = self.Module.arguments, i = a.indexOf("-append");
+      if (i >= 0 && a[i + 1] != null) {
+        const extra = String(opts.kernelArgs).replace(/[^a-zA-Z0-9_.,=\- ]/g, "");
+        a[i + 1] = a[i + 1].indexOf(" init=") >= 0 ? a[i + 1].replace(" init=", " " + extra + " init=") : a[i + 1] + " " + extra;
+      }
+    }
     // Extra CPU features for cold-boot guests (opts.cpuFlags, e.g. "+aes,+ssse3"): appended to -cpu.
     if (opts.cpuFlags && self.Module && self.Module.arguments) {
       const a = self.Module.arguments, i = a.indexOf("-cpu");

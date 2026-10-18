@@ -339,6 +339,7 @@ static const char *const RUNNABLE[][2] = {
   { "sysbench", "bxterm -T 'sysbench CPU' -geometry 80x22 -e sh -c 'sysbench-bench; echo; printf \"Press Enter to close\"; read x'" },
   { "gpu",      "bxterm -T 'GPU benchmark' -geometry 90x24 -e sh -c 'gpu-bench; echo; printf \"Press Enter to close\"; read x'" },
   { "monitor",  "bxterm -T 'System monitor' -geometry 100x30 -e htop" },
+  { "all",      "bxterm -T 'All benchmarks' -geometry 90x34 -e sh -c 'bench-all; echo; printf \"Press Enter to close\"; read x'" },
 };
 
 // bootbox:// pages get an opaque origin in WebKit, so even their own fetches are cross-origin: every

@@ -1,8 +1,13 @@
 # Bootbox terminal: bash with completion, a colour prompt, shared history and the usual aliases.
 case $- in *i*) ;; *) return ;; esac
 # The terminal opened during boot can start bash before xterm has sized its pty; readline then draws
-# the prompt one character per line. Give it a moment if the width is implausibly small.
-case "$(stty size 2>/dev/null)" in ''|*\ [0-9]) sleep 1 ;; esac
+# the prompt one character per line ("r", "oo", "oot"... on the iPad). Wait - up to 8 s, a slow device
+# needs more than the 1 s that was enough on a Mac - until the width is plausible.
+_bb_w=0
+while [ $_bb_w -lt 16 ]; do
+  case "$(stty size 2>/dev/null)" in *\ [0-9]|*\ 1[0-9]|'') sleep 0.25; _bb_w=$((_bb_w + 1)) ;; *) break ;; esac
+done
+unset _bb_w
 # Completion loads on the first Tab: sourcing bash-completion at start-up cost ~0.7 s per new
 # terminal on the emulated CPU (the image drops Alpine's /etc/bash/bash_completion.sh hook for this).
 if [ -r /usr/share/bash-completion/bash_completion ]; then

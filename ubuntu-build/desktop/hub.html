@@ -13,7 +13,7 @@
   .card .r { font-size:13.5px; color:var(--ok); min-height:18px; }
   .card .r span { color:var(--dim); }
   .row { display:flex; gap:8px; align-items:center; }
-  button, a.btn { font:inherit; font-size:14px; padding:7px 16px; border:0; border-radius:8px; background:var(--acc); color:#fff; text-decoration:none; }
+  button, a.btn { font:inherit; font-size:14px; padding:7px 16px; white-space:nowrap; flex:none; border:0; border-radius:8px; background:var(--acc); color:#fff; text-decoration:none; }
   button.ghost { background:#1d2a40; }
   .msg { font-size:12px; color:var(--dim); }
   table { width:100%; border-collapse:collapse; margin-top:22px; background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
@@ -26,6 +26,8 @@
   <p class="sub">Everything here runs on the emulated x86 CPU (translated to WebAssembly in software on the
   iPad), so scores measure this emulator on this device, not the iPad's own chip. Run one at a time for
   clean numbers; the last results stay here. <span id="cores"></span></p>
+  <div class="row" style="margin:0 0 14px"><button data-run="all" id="runall">Run all</button>
+    <span class="msg" id="m-all">sysbench, 7-Zip, CPU-Z and the GPU test one after another (~15 min) - then one screenshot of the history below has every number.</span></div>
   <div class="grid" id="grid"></div>
   <h3>History</h3>
   <table><thead><tr><th>When</th><th>Benchmark</th><th>Result</th><th>Cores</th></tr></thead><tbody id="hist"><tr><td colspan=4 class=msg>No results yet.</td></tr></tbody></table>
@@ -55,13 +57,15 @@ for (const b of B) {
     "<span class=msg id=m-" + b.id + "></span></div>";
   grid.appendChild(c);
 }
-grid.addEventListener("click", async (e) => {
+async function onRun(e) {
   const run = e.target.dataset && e.target.dataset.run; if (!run) return;
-  const b = B.find(x => x.run === run), m = document.getElementById("m-" + b.id);
+  const b = B.find(x => x.run === run) || { id: run }, m = document.getElementById("m-" + b.id);
   m.textContent = "starting...";
   try { const t = await (await fetch("bootbox://app/run/" + run)).text(); m.textContent = t === "started" ? "running in its own window" : "could not start"; }
   catch (err) { m.textContent = "could not start"; }
-});
+}
+grid.addEventListener("click", onRun);
+document.getElementById("runall").addEventListener("click", onRun);
 const when = t => { const d = new Date(t * 1000); return d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); };
 async function refresh() {
   let res = [];
@@ -75,6 +79,8 @@ async function refresh() {
     if (r && document.getElementById("m-" + b.id).textContent.startsWith("running") && Date.now() / 1000 - r.t < 30)
       document.getElementById("m-" + b.id).textContent = "done";
   }
+  const ma = document.getElementById("m-all");   // Run all ends with the GPU test
+  if (ma.textContent.startsWith("running") && latest.gpu && Date.now() / 1000 - latest.gpu.t < 30) ma.textContent = "done";
   if (res.length) {
     document.getElementById("hist").innerHTML = res.slice(-12).reverse().map(r => {
       const b = B.find(x => x.id === r.id);
