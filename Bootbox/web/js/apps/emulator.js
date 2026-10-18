@@ -100,8 +100,8 @@
       // v12 (build 101): Benchmarks hub (CPU-Z, 7-Zip, sysbench, GPU, web benchmark, saved results),
       // categorized menu + text editor / calculator / image viewer / archiver, per-core CPU widget,
       // browser pre-started after boot and kept running when closed, Lite mode, clearer CPU name.
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v13/qemu-desktop13-rootfs.data.gz",
-        name: "qemu-desktop13-rootfs-1276560295.data.gz", mb: 418, size: 438765417 },
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v14/qemu-desktop14-rootfs.data.gz",
+        name: "qemu-desktop14-rootfs-1276560403.data.gz", mb: 418, size: 438754112 },
     ] },
     // Android is a full AOSP x86_64 userspace on Bootbox's QEMU guest kernel.
     // The rootfs is download-on-demand; the x86_64 engine is shared with Linux.
@@ -1100,6 +1100,11 @@
               cpuModelId: g.cpuModelId,
               vncLabel: g.android ? "Android" : undefined,
               appsKey: g.id === "x64pwd",   // desktop panel's Apps button -> openbox's menu key (run.js installAppsKey)
+              // Desktop v14+: Linux's Web opens pages in the app's native Browser (the iPad's own WebKit,
+              // ~300x the emulated one). run.js writes /share/.bootbox/native-web for the guest's launcher
+              // and hands its console request (OSC 7777 "open;<url>") to onGuestOpenUrl.
+              nativeWeb: g.id === "x64pwd" && !!(window.Bridge && Bridge.onDevice),
+              onGuestOpenUrl: (u) => { try { Apps.launch("browser", { url: String(u || "").trim() || undefined, reuse: true, maximize: true }); } catch (e) {} },
               onStatus: (m) => { try { status.textContent = m; } catch (e) {} },
               onReady: (r) => {
                 setState("Running");

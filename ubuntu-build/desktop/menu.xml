@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- Bootbox desktop v12 start menu (the panel's Apps button or a right-click on the desktop).
+<!-- Bootbox desktop v14 start menu (the panel's Apps button or a right-click on the desktop).
      The everyday apps sit at the top; everything else is grouped in submenus (tap to open). -->
 <openbox_menu xmlns="http://openbox.org/3.4/menu">
   <menu id="internet-menu" label="Internet">
-    <item label="Web browser" icon="/usr/share/bootbox/icons/browser.png"><action name="Execute"><command>bbweb</command></action></item>
+    <item label="Web browser (fast: the iPad's own engine)" icon="/usr/share/bootbox/icons/browser.png"><action name="Execute"><command>bbweb</command></action></item>
+    <item label="Web browser (Linux WebKitGTK, emulated)" icon="/usr/share/bootbox/icons/browser.png"><action name="Execute"><command>bbweb --linux</command></action></item>
     <item label="Lite browser (Dillo, no JavaScript)" icon="/usr/share/bootbox/icons/browser.png"><action name="Execute"><command>dillo https://lite.duckduckgo.com/lite/</command></action></item>
   </menu>
   <menu id="accessories-menu" label="Accessories">

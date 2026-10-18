@@ -7,7 +7,8 @@ cat <<'TXT'
   BOOTBOX LINUX - commands & apps
   ===============================
   GRAPHICAL APPS (Apps menu, bottom left; grouped in submenus)
-    web [url|words]   web browser (full JavaScript, tabs; Lite button = fast mobile pages)
+    web [url|words]   web browser - runs in the iPad's own engine (fast)
+    web --linux [url] the Linux browser (WebKitGTK, emulated CPU - slow)
     dillo [url]       lite web browser (very fast, no JavaScript)
     mousepad          text editor          galculator   calculator
     gpicview          image viewer         xarchiver    archive manager
@@ -37,9 +38,10 @@ cat <<'TXT'
     - tap Apps (bottom left) or right-click the wallpaper for the app menu
     - the box top right shows each emulated CPU core's load live
     - the iPad pointer IS the mouse: tap = click, two-finger tap = right-click
-    - web: ads and trackers are blocked (much less JavaScript to run here);
+    - Linux browser: the Fast button moves the page to the iPad's own browser
+    - Linux browser: ads and trackers are blocked (much less JavaScript);
       to allow them: mkdir -p ~/.config/bbweb; touch ~/.config/bbweb/noblock
       and restart the browser: pkill bbweb-engine
-    - web: Lite (toolbar) = mobile sites, no pictures - the fastest pages
+    - Linux browser: Lite (toolbar) = mobile sites, no pictures
     - type 'help' to show this again
 TXT

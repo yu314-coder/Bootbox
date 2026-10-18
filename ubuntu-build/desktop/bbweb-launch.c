@@ -8,6 +8,9 @@
 //     too and hands its URL over as soon as that engine listens (it holds /tmp/.bbweb.lock);
 //   * `bbweb --prewarm` (xstart, after boot) starts the engine hidden with no card, so the first
 //     real tap opens a browser that is already running.
+//   * desktop v14, inside the Bootbox app (/share/.bootbox/native-web exists): web pages open in the app's
+//     native browser instead - the iPad's own WebKit, hundreds of times faster than WebKit on the
+//     emulated CPU. `bbweb --linux [URL]`, bootbox:// and file: pages keep this Linux browser.
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 #include <errno.h>
@@ -28,6 +31,7 @@
 #define LOCK_PATH "/tmp/.bbweb.lock"
 #define ENGINE "/usr/libexec/bbweb-engine"
 #define MIMALLOC "/usr/lib/libmimalloc-insecure.so.2"   /* the plain build: Alpine's libmimalloc.so.2 = the slower "secure" one */
+#define NATIVE_FLAG "/share/.bootbox/native-web"
 
 // WebKit's own allocator (libpas) hands freed memory back with madvise and faults it in again, thousands
 // of times per page load - each round trip a page fault + TLB flush on the emulated CPU. Malloc=1 makes
@@ -38,6 +42,22 @@ static void engine_env(void) {
   setenv("Malloc", "1", 0);
   setenv("LD_PRELOAD", MIMALLOC, 0);
   setenv("MIMALLOC_PURGE_DELAY", "2000", 0);
+}
+
+// Ask the Bootbox app to open URL (or search words; "" = its start page) in its native browser: an OSC
+// 7777 "open;<text>" sequence on the console, which the app's terminal (run.js) turns into a request.
+static int open_native(const char *url) {
+  if (access(NATIVE_FLAG, R_OK) != 0) return 0;
+  int fd = open("/dev/console", O_WRONLY | O_NOCTTY | O_CLOEXEC);
+  if (fd < 0) return 0;
+  char buf[4200];
+  int n = snprintf(buf, sizeof buf, "\033]7777;open;");
+  for (const char *p = url; *p && n < (int)sizeof buf - 2; p++)
+    if ((unsigned char)*p >= 0x20 && *p != 0x7f) buf[n++] = *p;   // no control chars inside the sequence
+  buf[n++] = '\a';
+  int ok = write(fd, buf, n) == n;
+  close(fd);
+  return ok;
 }
 
 static int send_to_running(const char *url) {
@@ -57,6 +77,8 @@ static unsigned long rgb(Display *d, const char *spec) {
 }
 
 int main(int argc, char **argv) {
+  int linux_only = argc > 1 && !strcmp(argv[1], "--linux");   // this Linux browser, never the native one
+  if (linux_only) { argv++; argc--; }
   // The URL / search words, joined (the engine treats "" as the start page).
   char url[4096] = "";
   for (int i = 1; i < argc; i++) {
@@ -65,6 +87,7 @@ int main(int argc, char **argv) {
   }
   for (char *p = url; *p; p++) if (*p == '\n') *p = ' ';
   int prewarm = argc > 1 && !strcmp(argv[1], "--prewarm");
+  if (!prewarm && !linux_only && strncmp(url, "bootbox:", 8) && strncmp(url, "file:", 5) && open_native(url)) return 0;
   // (a pre-start never talks to a running engine: an empty request would bring its window up)
   if (!prewarm && send_to_running(url)) return 0;
 

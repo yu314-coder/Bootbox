@@ -9,6 +9,9 @@
  *
  *  Features: multi-tab, omnibox (URL or search), back/forward/reload/home,
  *  new tab, live title + loading state from the native engine.
+ *
+ *  launch({ url, reuse, maximize }): reuse = add a tab to the open Browser window instead of a
+ *  second window (the Linux desktop's `bbweb` sends its pages here: the emulator's onGuestOpenUrl).
  * ========================================================================== */
 (function () {
   const HOME = "about:home";
@@ -22,6 +25,7 @@
   ];
   const native = !!(window.Bridge && Bridge.onDevice);
   let uid = 1;
+  let live = null;   // the open Browser window: { winId, open(url) } (for launch({ reuse: true }))
 
   function normalize(input) {
     let q = (input || "").trim();
@@ -32,6 +36,7 @@
   }
 
   function launch(args) {
+    if (args && args.reuse && live && WM.get(live.winId)) { live.open(args.url); return; }
     let tabs = [], active = 0;
 
     WM.open({
@@ -138,7 +143,7 @@
         // keep native overlay aligned to the window (move/resize/minimize)
         let syncing = true, lastRect = "";
         function syncLoop() {
-          if (!syncing) return;
+          if (!syncing || closedCheck()) return;
           if (native) {
             const t = cur();
             const w = WM.get(win.id);
@@ -151,6 +156,13 @@
           requestAnimationFrame(syncLoop);
         }
         function stopSync() { syncing = false; if (native) Bridge.call("browser", "hideAll", {}); }
+        // window closed with its ✕ (not tab by tab): free the native tabs too
+        function closedCheck() {
+          if (WM.get(win.id)) return false;
+          if (native) tabs.forEach(t => Bridge.call("browser", "close", { id: t.id }));
+          tabs = []; syncing = false; if (live && live.winId === win.id) live = null;
+          return true;
+        }
 
         // live state from native engine
         Bridge.onEvent && Bridge.onEvent("browser:state", (s) => {
@@ -172,6 +184,11 @@
 
         newTab(args && args.url ? args.url : HOME);
         requestAnimationFrame(syncLoop);
+        live = { winId: win.id, open(url) { WM.focus(win.id); if (url) newTab(url); else paint(); } };
+        if (args && args.maximize) setTimeout(() => {   // only into a laid-out desktop (never a 0x0 window)
+          const w = WM.get(win.id), fb = document.getElementById("windows").getBoundingClientRect();
+          if (w && !w.max && fb.width > 300 && fb.height > 300) WM.toggleMax(win.id);
+        }, 0);
       },
     });
   }

@@ -131,6 +131,15 @@
     xterm.open(termEl);
     const { master, slave } = openpty();
     xterm.loadAddon(master);
+    // Guest -> app requests over the console: `printf '\033]7777;open;<url or words>\007' > /dev/console`
+    // (desktop v14 bbweb launcher). Only "open" exists; the text goes to opts.onGuestOpenUrl.
+    try {
+      xterm.parser.registerOscHandler(7777, (data) => {
+        const i = data.indexOf(";"), cmd = i < 0 ? data : data.slice(0, i), arg = i < 0 ? "" : data.slice(i + 1);
+        if (cmd === "open" && opts.onGuestOpenUrl) { try { opts.onGuestOpenUrl(arg.slice(0, 4096)); } catch (e) {} }
+        return true;
+      });
+    } catch (e) {}
 
     // --- Touch-drag scrolling of the scrollback (iPad has no scroll wheel). xterm's own touch
     // handling is unreliable here, so drive it directly: a vertical finger drag scrolls by whole
@@ -244,6 +253,12 @@
       let info = "t:" + Math.round(Date.now() / 1000) + "\nm:share\n";
       if (opts.netWs) info += "n:02:00:00:00:00:01\n";
       mod.FS.writeFile("/pack/info", info);
+      // Native web (desktop v14): the guest's `bbweb` launcher opens pages in the app's native browser
+      // (the iPad's own WebKit, ~300x faster than WebKit on the emulated CPU) when this flag exists.
+      if (opts.nativeWeb) {
+        try { mod.FS.mkdir("/share/.bootbox"); } catch (e) {}
+        try { mod.FS.writeFile("/share/.bootbox/native-web", "1\n"); } catch (e) {}
+      }
       // wasm-TCG JIT tunables, read once by the engine (build 84+; older engines ignore the file):
       // jit = interpreted runs before a block is compiled to wasm, max = live compiled-block cap,
       // chain = blocks tail-call their compiled successor instead of returning to the dispatcher
@@ -324,7 +339,7 @@
     // move files host<->guest for the 64-bit Save/Share buttons. read() may return null until the
     // guest writes; write() drops a file the guest sees immediately at /share/<name>.
     const shareFs = {
-      list: () => { try { return self.Module.FS.readdir("/share").filter((n) => n !== "." && n !== ".."); } catch (e) { return []; } },
+      list: () => { try { return self.Module.FS.readdir("/share").filter((n) => n !== "." && n !== ".." && n !== ".bootbox"); } catch (e) { return []; } },
       read: (name) => { try { return self.Module.FS.readFile("/share/" + name); } catch (e) { return null; } },
       write: (name, bytes) => { try { self.Module.FS.writeFile("/share/" + name, bytes); return true; } catch (e) { return false; } },
     };

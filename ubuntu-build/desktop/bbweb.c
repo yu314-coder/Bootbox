@@ -30,6 +30,7 @@
 #define SHARE "/usr/share/bootbox/"
 #define LITE_FLAG "/root/.config/bbweb/lite"
 #define NOBLOCK_FLAG "/root/.config/bbweb/noblock"
+#define NATIVE_FLAG "/share/.bootbox/native-web"   // inside the Bootbox app: its native browser exists (v14)
 #define RESULTS "/root/.bootbox/results.jsonl"
 #define MOBILE_UA "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1"
 #define SEARCH_URI "https://lite.duckduckgo.com/lite/?q="
@@ -257,6 +258,23 @@ static void on_reload(GtkButton *b, gpointer d) {
 }
 static void on_home(GtkButton *b, gpointer d) { (void)b; (void)d; if (current_view()) webkit_web_view_load_uri(current_view(), HOME_URI); }
 static void on_new_tab(GtkButton *b, gpointer d) { (void)b; (void)d; add_tab(NULL, HOME_URI, TRUE); gtk_widget_grab_focus(entry); }
+
+// Fast (toolbar, only inside the Bootbox app): hand the page to the app's native browser - the iPad's own
+// WebKit - with the same console request the bbweb launcher uses (OSC 7777 "open;<url>").
+static void on_fast(GtkButton *b, gpointer d) {
+  (void)b; (void)d;
+  WebKitWebView *v = current_view();
+  const char *u = v ? webkit_web_view_get_uri(v) : NULL;
+  if (!u || !g_str_has_prefix(u, "http")) u = "";
+  int fd = open("/dev/console", O_WRONLY | O_NOCTTY | O_CLOEXEC);
+  if (fd < 0) return;
+  GString *g = g_string_new("\033]7777;open;");
+  for (const char *p = u; *p; p++) if ((unsigned char)*p >= 0x20 && *p != 0x7f) g_string_append_c(g, *p);
+  g_string_append_c(g, '\a');
+  if (write(fd, g->str, g->len) < 0) {}
+  close(fd);
+  g_string_free(g, TRUE);
+}
 
 static void zoom(double f) {
   WebKitWebView *v = current_view();
@@ -515,6 +533,13 @@ int main(int argc, char **argv) {
   gtk_box_pack_start(GTK_BOX(bar), home_btn, FALSE, FALSE, 0);
   gtk_box_pack_start(GTK_BOX(bar), entry, TRUE, TRUE, 4);
   gtk_box_pack_start(GTK_BOX(bar), lite_btn, FALSE, FALSE, 2);
+  if (access(NATIVE_FLAG, R_OK) == 0) {
+    GtkWidget *fast = gtk_button_new_with_label("Fast");
+    gtk_widget_set_tooltip_text(fast, "Open this page in the iPad's own browser - hundreds of times faster");
+    gtk_widget_set_can_focus(fast, FALSE);
+    g_signal_connect(fast, "clicked", G_CALLBACK(on_fast), NULL);
+    gtk_box_pack_start(GTK_BOX(bar), fast, FALSE, FALSE, 2);
+  }
   gtk_box_pack_start(GTK_BOX(bar), tab_btn, FALSE, FALSE, 0);
 
   nb = gtk_notebook_new();
