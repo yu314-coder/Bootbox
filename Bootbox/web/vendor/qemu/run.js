@@ -276,6 +276,7 @@
       // others (build 100 engine; older engines ignore both). Multi-threaded Linux guests only.
       if (t.tsc) tune += "tsc=1\n";
       if (t.hotshare) tune += "hotshare=1\n";
+      if (t.extra) tune += String(t.extra).replace(/[^a-z0-9=\n]/g, "") + "\n";   // harness experiments: raw key=value lines
       if (tune) mod.FS.writeFile("/bootbox-tune", tune);
     });
     let cbs = [];
