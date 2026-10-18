@@ -36,14 +36,14 @@
     // the working set (Mac-measured: no recompiles, growth ~5 MB/s); the engine still evicts the
     // least-recently-run blocks past it, and lowers the cap itself if the host refuses a compile.
     { id: "x64pw",     name: "Linux (Terminal)",  boot: "q64",
-      base: "vendor/qemu-aload/", url: "", ram: 1536, tune: { max: 40000, tsc: 1 },
+      base: "vendor/qemu-aload/", url: "", ram: 1536, tune: { max: 40000, tsc: 1 }, fastTci: true,
       cpuModelId: "Bootbox x86-64 (emulated in WebAssembly)" },   // CPU-Z "Specification" (run.js)
     // Lightweight graphical desktop: its OWN image. openbox/tint2 + a bash terminal, PCManFM, the bbweb
     // browser (WebKitGTK, v10) + Dillo, Python, mc, CPU-Z/glmark2 (v9). Reuses the x86_64 engine (wasm shared from
     // qemu-aload — no duplication). The image auto-starts the desktop, so boot64 sends no start-desktop.
     { id: "x64pwd",    name: "Linux (Desktop)",  boot: "q64",
       base: "vendor/qemu-desktop/", wasm: "../qemu-aload/qemu-system-x86_64.wasm", url: "", ram: 1536, gui: true,
-      tune: { max: 40000, tsc: 1 }, cpuModelId: "Bootbox x86-64 (emulated in WebAssembly)" },   // same reason as x64pw
+      tune: { max: 40000, tsc: 1 }, fastTci: true, cpuModelId: "Bootbox x86-64 (emulated in WebAssembly)" },   // same reason as x64pw
     // tsc=1 (build 100 engine): every guest RDTSC used to take one global lock around a JavaScript
     // clock call - 4 threads reading the clock ran 22x slower per call than 1. Lock-free now (Linux
     // guests; Android keeps the old path until verified there). CPU-Z itself isn't clock-bound: its
@@ -648,6 +648,10 @@
               <option value="6">6 cores</option>
               <option value="8">8 cores</option>
             </select>
+            <select class="e-sel" id="interp" style="width:112px;display:none" title="How the Linux guests run code that is not compiled yet. Fast: the new compact interpreter (build 104) - quicker app starts, browser and benchmarks. Classic: the previous one. Applies on the next boot; if Fast ever crashes, Bootbox switches back by itself.">
+              <option value="fast">⚡ Fast interp.</option>
+              <option value="classic">Classic interp.</option>
+            </select>
             <span class="grow"></span>
             <span class="emu-perf" id="perf" title="Emulation speed of this device (WASM JIT benchmark). Tap: web benchmark on this iPad.">⏱ testing…</span>
             <span class="emu-pill"><span class="led"></span><span id="state">Idle</span></span>
@@ -680,6 +684,7 @@
         const kindSel = body.querySelector("#kind");
         const ramInput = body.querySelector("#ram");
         const coresSel = body.querySelector("#cores");
+        const interpSel = body.querySelector("#interp");
         const perfEl = body.querySelector("#perf");
         let emu = null;
         let qemuTerm = null;   // 64-bit QEMU xterm (set when q64 boots); the keyboard routes here, not to v86 `emu`
@@ -758,6 +763,7 @@
           ramInput.value = Math.min(g.maxRam || 1536,
             Math.max(g.minRam || 64, c.ram || g.ram || 512));   // restore RAM within this guest's safe range
           coresSel.style.display = (g.boot === "q64") ? "" : "none";   // cores apply to the 64-bit guests
+          interpSel.style.display = g.fastTci ? "" : "none";   // the hot-loop interpreter: Linux guests only
           const maxCores = g.maxCores || 8, minCores = g.minCores || 1;
           // A warm-snapshot guest (Android) resumes ONLY at the vCPU count it was captured with, so
           // min == max pins and locks the selector; leaving it restores the user's remembered count.
@@ -777,6 +783,11 @@
         if (!coresSel.value) coresSel.value = "2";   // guard: unknown value -> select falls back
         if (+coresSel.value > (initialGuest.maxCores || 8)) coresSel.value = String(initialGuest.maxCores || 8);
         if (+coresSel.value < (initialGuest.minCores || 1)) coresSel.value = String(initialGuest.minCores || 1);
+        interpSel.value = cfg().fastTci === false ? "classic" : "fast";
+        interpSel.addEventListener("change", () => {
+          setCfg({ fastTci: interpSel.value === "fast", q64safe3: { level: 0 } });   // a manual pick restarts the safety ladder
+          try { status.textContent = "Interpreter set to " + (interpSel.value === "fast" ? "Fast" : "Classic") + " — applies on the next boot (press ⏻ Start to reboot)."; } catch (e) {}
+        });
         coresSel.addEventListener("change", () => {
           setCfg({ cores64: +coresSel.value || 2 });
           try { status.textContent = "CPU cores set to " + coresSel.value + " — applies on the next boot (press ⏻ Start to reboot)."; } catch (e) {}
@@ -1046,15 +1057,19 @@
             // return, no wasm tail calls - the tail-call form killed the page on iPadOS 27.2, TestFlight
             // 90). New key so a device parked on the old ladder's "no tail calls" level tries it once;
             // if it crashes too, the next boot steps down to "no TB chaining" = the build 91 setup.
+            // q64safe3 (build 104): a new top level - the fast hot-loop interpreter (fasttci) on the Linux
+            // guests. If its first boots crash the page, the ladder steps down to the classic interpreter.
+            const fastTci = !!g.fastTci && cfg().fastTci !== false;
             const SAFE_LEVELS = [
-              { name: "full speed" },
+              { name: "full speed", tune: fastTci ? { fasttci: 1 } : undefined },
+              { name: "classic interpreter" },
               { name: "no TB chaining", tune: { chain: 0 } },
               { name: "no TB chaining, no SIMD float inlining", tune: { chain: 0, fpinline: 0 } },
               { name: "no chaining/float inlining/register locals", tune: { chain: 0, fpinline: 0, regloc: 0 } },
               { name: "the above + fixed-size memory, fewer compiled blocks", tune: { chain: 0, fpinline: 0, regloc: 0, max: 8000 }, presize: true },
               { name: "interpreter only (slow)", tune: { chain: 0, fpinline: 0, regloc: 0, max: 8000, jit: 1000000000 }, presize: true },
             ];
-            let safe = cfg().q64safe2 || { level: 0 };
+            let safe = cfg().q64safe3 || { level: 0 };
             try {
               const lc = (window.Bridge && Bridge.onDevice) ? await Bridge.call("system", "takeLastCrash") : null;
               console.log("[safe] last page crash " + JSON.stringify(lc) + ", previous boot " + JSON.stringify(safe));
@@ -1065,12 +1080,12 @@
             } catch (e) {}
             const level = SAFE_LEVELS[Math.min(SAFE_LEVELS.length - 1, safe.level || 0)];
             safe = { level: safe.level || 0, startedAt: Date.now(), ok: false };
-            setCfg({ q64safe2: safe });
+            setCfg({ q64safe3: safe });
             console.log("[safe] engine level " + safe.level + ": " + level.name);
             if (safe.level) { try { status.textContent += " Safer engine settings: " + level.name + "."; } catch (e) {} }
             setTimeout(() => {
-              const s2 = cfg().q64safe2 || {};
-              if (s2.startedAt === safe.startedAt) { s2.ok = true; setCfg({ q64safe2: s2 }); console.log("[safe] level " + safe.level + " has run 75 s — keeping it"); }
+              const s2 = cfg().q64safe3 || {};
+              if (s2.startedAt === safe.startedAt) { s2.ok = true; setCfg({ q64safe3: s2 }); console.log("[safe] level " + safe.level + " has run 75 s — keeping it"); }
             }, 75000);
             // Wasm tail calls (the engine's TB-to-TB chaining) crash the page on the iPad (iPadOS 27.2
             // WebKit, arm64e) the moment the guest starts running - found by the ladder on the user's

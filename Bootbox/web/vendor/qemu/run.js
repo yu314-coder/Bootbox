@@ -276,6 +276,9 @@
       // others (build 100 engine; older engines ignore both). Multi-threaded Linux guests only.
       if (t.tsc) tune += "tsc=1\n";
       if (t.hotshare) tune += "hotshare=1\n";
+      // fasttci=1 (build 104 engine): the hot-loop interpreter (no Asyncify, small enough for WebKit's
+      // optimizing tier); device accesses that may switch coroutines re-run in the classic interpreter.
+      if (t.fasttci) tune += "fasttci=1\n";
       if (t.extra) tune += String(t.extra).replace(/[^a-z0-9=\n]/g, "") + "\n";   // harness experiments: raw key=value lines
       if (tune) mod.FS.writeFile("/bootbox-tune", tune);
     });
