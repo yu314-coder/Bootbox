@@ -648,9 +648,9 @@
               <option value="6">6 cores</option>
               <option value="8">8 cores</option>
             </select>
-            <select class="e-sel" id="interp" style="width:112px;display:none" title="How the Linux guests run code that is not compiled yet. Fast: the new compact interpreter (build 104) - quicker app starts, browser and benchmarks. Classic: the previous one. Applies on the next boot; if Fast ever crashes, Bootbox switches back by itself.">
-              <option value="fast">⚡ Fast interp.</option>
+            <select class="e-sel" id="interp" style="width:112px;display:none" title="How the Linux guests run code that is not compiled yet. Classic (default): the proven interpreter. Fast (beta): a compact one - quicker in Chrome, but on iPad it lowered multi-core speed. Applies on the next boot; if Fast ever crashes, Bootbox switches back by itself.">
               <option value="classic">Classic interp.</option>
+              <option value="fast">Fast interp. (beta)</option>
             </select>
             <span class="grow"></span>
             <span class="emu-perf" id="perf" title="Emulation speed of this device (WASM JIT benchmark). Tap: web benchmark on this iPad.">⏱ testing…</span>
@@ -783,7 +783,7 @@
         if (!coresSel.value) coresSel.value = "2";   // guard: unknown value -> select falls back
         if (+coresSel.value > (initialGuest.maxCores || 8)) coresSel.value = String(initialGuest.maxCores || 8);
         if (+coresSel.value < (initialGuest.minCores || 1)) coresSel.value = String(initialGuest.minCores || 1);
-        interpSel.value = cfg().fastTci === false ? "classic" : "fast";
+        interpSel.value = cfg().fastTci === true ? "fast" : "classic";
         interpSel.addEventListener("change", () => {
           setCfg({ fastTci: interpSel.value === "fast", q64safe3: { level: 0 } });   // a manual pick restarts the safety ladder
           try { status.textContent = "Interpreter set to " + (interpSel.value === "fast" ? "Fast" : "Classic") + " — applies on the next boot (press ⏻ Start to reboot)."; } catch (e) {}
@@ -1059,7 +1059,10 @@
             // if it crashes too, the next boot steps down to "no TB chaining" = the build 91 setup.
             // q64safe3 (build 104): a new top level - the fast hot-loop interpreter (fasttci) on the Linux
             // guests. If its first boots crash the page, the ladder steps down to the classic interpreter.
-            const fastTci = !!g.fastTci && cfg().fastTci !== false;
+            // Off by default since build 105: on the iPad (Build 104) Fast gave the same CPU-Z single-core
+            // (7.44 vs 7.40) but multi-core 8.37 vs 13.20 Classic - WebKit runs four threads of the hot loop
+            // worse than the classic interpreter. Kept as an opt-in (toolbar selector).
+            const fastTci = !!g.fastTci && cfg().fastTci === true;
             const SAFE_LEVELS = [
               { name: "full speed", tune: fastTci ? { fasttci: 1 } : undefined },
               { name: "classic interpreter" },
