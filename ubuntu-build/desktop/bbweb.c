@@ -317,12 +317,14 @@ static void on_lite_toggled(GtkToggleButton *b, gpointer d) {
 
 // --- bootbox:// -------------------------------------------------------------------------------------
 // Benchmarks the hub may start: id -> command. Nothing else is ever run from a page.
-// Benchmarks start without the browser's allocator environment (bbweb-launch.c engine_env).
+// Benchmarks start without the browser's own environment (allocator, hidden Mesa, WebKit switches).
 static gboolean spawn_clean(const char *cmd) {
   gchar **argv = NULL;
   if (!g_shell_parse_argv(cmd, NULL, &argv, NULL)) return FALSE;
   gchar **env = g_get_environ();
-  for (const char **k = (const char *[]){ "LD_PRELOAD", "Malloc", "MIMALLOC_PURGE_DELAY", NULL }; *k; k++)
+  /* LIBGL_DRIVERS_PATH=/nonexistent hides Mesa from WebKit (see main) - glmark2 started from the hub needs it */
+  for (const char **k = (const char *[]){ "LD_PRELOAD", "Malloc", "MIMALLOC_PURGE_DELAY", "LIBGL_DRIVERS_PATH",
+                                          "WEBKIT_DISABLE_COMPOSITING_MODE", "WEBKIT_DISABLE_DMABUF_RENDERER", NULL }; *k; k++)
     env = g_environ_unsetenv(env, *k);
   gboolean ok = g_spawn_async(NULL, argv, env, G_SPAWN_SEARCH_PATH, NULL, NULL, NULL, NULL);
   g_strfreev(argv);
