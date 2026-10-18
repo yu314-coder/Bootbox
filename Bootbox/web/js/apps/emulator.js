@@ -36,14 +36,14 @@
     // the working set (Mac-measured: no recompiles, growth ~5 MB/s); the engine still evicts the
     // least-recently-run blocks past it, and lowers the cap itself if the host refuses a compile.
     { id: "x64pw",     name: "Linux (Terminal)",  boot: "q64",
-      base: "vendor/qemu-aload/", url: "", ram: 1536, tune: { max: 40000, tsc: 1 }, fastTci: true,
+      base: "vendor/qemu-aload/", url: "", ram: 1536, tune: { max: 40000, tsc: 1, lazywasm: 1 }, fastTci: true,
       cpuModelId: "Bootbox x86-64 (emulated in WebAssembly)" },   // CPU-Z "Specification" (run.js)
     // Lightweight graphical desktop: its OWN image. openbox/tint2 + a bash terminal, PCManFM, the bbweb
     // browser (WebKitGTK, v10) + Dillo, Python, mc, CPU-Z/glmark2 (v9). Reuses the x86_64 engine (wasm shared from
     // qemu-aload — no duplication). The image auto-starts the desktop, so boot64 sends no start-desktop.
     { id: "x64pwd",    name: "Linux (Desktop)",  boot: "q64",
       base: "vendor/qemu-desktop/", wasm: "../qemu-aload/qemu-system-x86_64.wasm", url: "", ram: 1536, gui: true,
-      tune: { max: 40000, tsc: 1 }, fastTci: true, cpuModelId: "Bootbox x86-64 (emulated in WebAssembly)" },   // same reason as x64pw
+      tune: { max: 40000, tsc: 1, lazywasm: 1 }, fastTci: true, cpuModelId: "Bootbox x86-64 (emulated in WebAssembly)" },   // same reason as x64pw
     // tsc=1 (build 100 engine): every guest RDTSC used to take one global lock around a JavaScript
     // clock call - 4 threads reading the clock ran 22x slower per call than 1. Lock-free now (Linux
     // guests; Android keeps the old path until verified there). CPU-Z itself isn't clock-bound: its
@@ -55,7 +55,8 @@
       // Android's code footprint overflows the engine's default 15000 live compiled blocks (shared by
       // all 4 vCPUs) → constant evict/recompile churn. Mac-measured cold Settings launch: v3 1-core 605s,
       // v4 4-core 314s, v4 + max=45000 53-109s. A host that can't hold that many just interprets past it.
-      tune: { max: 45000 } },
+      // lazywasm (build 107): Mac harness cold launch Settings 38.6 -> 34.0 s, Contacts 30.8 -> 21.4 s.
+      tune: { max: 45000, lazywasm: 1 } },
     // (The ARM64 guest — vendor/qemu-aarch64/, its own engine — is no longer offered: the systems are
     // Linux Desktop, Linux Terminal, Android, and the Windows images through the ISO/disk path.)
   ];
@@ -788,7 +789,7 @@
         if (+coresSel.value < (initialGuest.minCores || 1)) coresSel.value = String(initialGuest.minCores || 1);
         interpSel.value = cfg().fastTci === true ? "fast" : "classic";
         interpSel.addEventListener("change", () => {
-          setCfg({ fastTci: interpSel.value === "fast", q64safe3: { level: 0 } });   // a manual pick restarts the safety ladder
+          setCfg({ fastTci: interpSel.value === "fast", q64safe4: { level: 0 } });   // a manual pick restarts the safety ladder
           try { status.textContent = "Interpreter set to " + (interpSel.value === "fast" ? "Fast" : "Classic") + " — applies on the next boot (press ⏻ Start to reboot)."; } catch (e) {}
         });
         coresSel.addEventListener("change", () => {
@@ -1065,17 +1066,19 @@
             // Off by default since build 105: on the iPad (Build 104) Fast gave the same CPU-Z single-core
             // (7.44 vs 7.40) but multi-core 8.37 vs 13.20 Classic - WebKit runs four threads of the hot loop
             // worse than the classic interpreter. Kept as an opt-in (toolbar selector).
+            // q64safe4 (build 107): lazy modules (lazywasm, Linux guests) are part of "full speed"; the
+            // first step down keeps a module with every block again (the build 106 engine behaviour).
             const fastTci = !!g.fastTci && cfg().fastTci === true;
             const SAFE_LEVELS = [
               { name: "full speed", tune: fastTci ? { fasttci: 1 } : undefined },
-              { name: "classic interpreter" },
-              { name: "no TB chaining", tune: { chain: 0 } },
-              { name: "no TB chaining, no SIMD float inlining", tune: { chain: 0, fpinline: 0 } },
-              { name: "no chaining/float inlining/register locals", tune: { chain: 0, fpinline: 0, regloc: 0 } },
-              { name: "the above + fixed-size memory, fewer compiled blocks", tune: { chain: 0, fpinline: 0, regloc: 0, max: 8000 }, presize: true },
-              { name: "interpreter only (slow)", tune: { chain: 0, fpinline: 0, regloc: 0, max: 8000, jit: 1000000000 }, presize: true },
+              { name: "classic interpreter, modules stored with every block", tune: { lazywasm: 0 } },
+              { name: "no TB chaining", tune: { chain: 0, lazywasm: 0 } },
+              { name: "no TB chaining, no SIMD float inlining", tune: { chain: 0, fpinline: 0, lazywasm: 0 } },
+              { name: "no chaining/float inlining/register locals", tune: { chain: 0, fpinline: 0, regloc: 0, lazywasm: 0 } },
+              { name: "the above + fixed-size memory, fewer compiled blocks", tune: { chain: 0, fpinline: 0, regloc: 0, max: 8000, lazywasm: 0 }, presize: true },
+              { name: "interpreter only (slow)", tune: { chain: 0, fpinline: 0, regloc: 0, max: 8000, jit: 1000000000, lazywasm: 0 }, presize: true },
             ];
-            let safe = cfg().q64safe3 || { level: 0 };
+            let safe = cfg().q64safe4 || { level: 0 };
             try {
               const lc = (window.Bridge && Bridge.onDevice) ? await Bridge.call("system", "takeLastCrash") : null;
               console.log("[safe] last page crash " + JSON.stringify(lc) + ", previous boot " + JSON.stringify(safe));
@@ -1086,12 +1089,12 @@
             } catch (e) {}
             const level = SAFE_LEVELS[Math.min(SAFE_LEVELS.length - 1, safe.level || 0)];
             safe = { level: safe.level || 0, startedAt: Date.now(), ok: false };
-            setCfg({ q64safe3: safe });
+            setCfg({ q64safe4: safe });
             console.log("[safe] engine level " + safe.level + ": " + level.name);
             if (safe.level) { try { status.textContent += " Safer engine settings: " + level.name + "."; } catch (e) {} }
             setTimeout(() => {
-              const s2 = cfg().q64safe3 || {};
-              if (s2.startedAt === safe.startedAt) { s2.ok = true; setCfg({ q64safe3: s2 }); console.log("[safe] level " + safe.level + " has run 75 s — keeping it"); }
+              const s2 = cfg().q64safe4 || {};
+              if (s2.startedAt === safe.startedAt) { s2.ok = true; setCfg({ q64safe4: s2 }); console.log("[safe] level " + safe.level + " has run 75 s — keeping it"); }
             }, 75000);
             // Wasm tail calls (the engine's TB-to-TB chaining) crash the page on the iPad (iPadOS 27.2
             // WebKit, arm64e) the moment the guest starts running - found by the ladder on the user's

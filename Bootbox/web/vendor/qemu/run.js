@@ -287,6 +287,10 @@
       // fasttci=1 (build 104 engine): the hot-loop interpreter (no Asyncify, small enough for WebKit's
       // optimizing tier); device accesses that may switch coroutines re-run in the classic interpreter.
       if (t.fasttci) tune += "fasttci=1\n";
+      // lazywasm=1 (build 107 engine): a block's wasm module is built when the block turns hot (a
+      // re-translation) instead of stored with every block - 75% of the translation cache was modules
+      // for blocks that never ran hot, and the full cache flushed every few seconds under Wine.
+      if (t.lazywasm) tune += "lazywasm=1\n";
       if (t.extra) tune += String(t.extra).replace(/[^a-z0-9=\n]/g, "") + "\n";   // harness experiments: raw key=value lines
       if (tune) mod.FS.writeFile("/bootbox-tune", tune);
     });
