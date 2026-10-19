@@ -789,7 +789,7 @@
         if (+coresSel.value < (initialGuest.minCores || 1)) coresSel.value = String(initialGuest.minCores || 1);
         interpSel.value = cfg().fastTci === true ? "fast" : "classic";
         interpSel.addEventListener("change", () => {
-          setCfg({ fastTci: interpSel.value === "fast", q64safe4: { level: 0 } });   // a manual pick restarts the safety ladder
+          setCfg({ fastTci: interpSel.value === "fast", q64safe5: { level: 0 } });   // a manual pick restarts the safety ladder
           try { status.textContent = "Interpreter set to " + (interpSel.value === "fast" ? "Fast" : "Classic") + " — applies on the next boot (press ⏻ Start to reboot)."; } catch (e) {}
         });
         coresSel.addEventListener("change", () => {
@@ -1068,17 +1068,19 @@
             // worse than the classic interpreter. Kept as an opt-in (toolbar selector).
             // q64safe4 (build 107): lazy modules (lazywasm, Linux guests) are part of "full speed"; the
             // first step down keeps a module with every block again (the build 106 engine behaviour).
+            // q64safe5 (build 109): the first step down also turns off the engine's sticky TB split at
+            // mid-block device I/O (split=0).
             const fastTci = !!g.fastTci && cfg().fastTci === true;
             const SAFE_LEVELS = [
               { name: "full speed", tune: fastTci ? { fasttci: 1 } : undefined },
-              { name: "classic interpreter, modules stored with every block", tune: { lazywasm: 0 } },
-              { name: "no TB chaining", tune: { chain: 0, lazywasm: 0 } },
-              { name: "no TB chaining, no SIMD float inlining", tune: { chain: 0, fpinline: 0, lazywasm: 0 } },
-              { name: "no chaining/float inlining/register locals", tune: { chain: 0, fpinline: 0, regloc: 0, lazywasm: 0 } },
-              { name: "the above + fixed-size memory, fewer compiled blocks", tune: { chain: 0, fpinline: 0, regloc: 0, max: 8000, lazywasm: 0 }, presize: true },
-              { name: "interpreter only (slow)", tune: { chain: 0, fpinline: 0, regloc: 0, max: 8000, jit: 1000000000, lazywasm: 0 }, presize: true },
+              { name: "classic interpreter, modules stored with every block", tune: { lazywasm: 0, split: 0 } },
+              { name: "no TB chaining", tune: { chain: 0, lazywasm: 0, split: 0 } },
+              { name: "no TB chaining, no SIMD float inlining", tune: { chain: 0, fpinline: 0, lazywasm: 0, split: 0 } },
+              { name: "no chaining/float inlining/register locals", tune: { chain: 0, fpinline: 0, regloc: 0, lazywasm: 0, split: 0 } },
+              { name: "the above + fixed-size memory, fewer compiled blocks", tune: { chain: 0, fpinline: 0, regloc: 0, max: 8000, lazywasm: 0, split: 0 }, presize: true },
+              { name: "interpreter only (slow)", tune: { chain: 0, fpinline: 0, regloc: 0, max: 8000, jit: 1000000000, lazywasm: 0, split: 0 }, presize: true },
             ];
-            let safe = cfg().q64safe4 || { level: 0 };
+            let safe = cfg().q64safe5 || { level: 0 };
             try {
               const lc = (window.Bridge && Bridge.onDevice) ? await Bridge.call("system", "takeLastCrash") : null;
               console.log("[safe] last page crash " + JSON.stringify(lc) + ", previous boot " + JSON.stringify(safe));
@@ -1089,12 +1091,12 @@
             } catch (e) {}
             const level = SAFE_LEVELS[Math.min(SAFE_LEVELS.length - 1, safe.level || 0)];
             safe = { level: safe.level || 0, startedAt: Date.now(), ok: false };
-            setCfg({ q64safe4: safe });
+            setCfg({ q64safe5: safe });
             console.log("[safe] engine level " + safe.level + ": " + level.name);
             if (safe.level) { try { status.textContent += " Safer engine settings: " + level.name + "."; } catch (e) {} }
             setTimeout(() => {
-              const s2 = cfg().q64safe4 || {};
-              if (s2.startedAt === safe.startedAt) { s2.ok = true; setCfg({ q64safe4: s2 }); console.log("[safe] level " + safe.level + " has run 75 s — keeping it"); }
+              const s2 = cfg().q64safe5 || {};
+              if (s2.startedAt === safe.startedAt) { s2.ok = true; setCfg({ q64safe5: s2 }); console.log("[safe] level " + safe.level + " has run 75 s — keeping it"); }
             }, 75000);
             // Wasm tail calls (the engine's TB-to-TB chaining) crash the page on the iPad (iPadOS 27.2
             // WebKit, arm64e) the moment the guest starts running - found by the ladder on the user's

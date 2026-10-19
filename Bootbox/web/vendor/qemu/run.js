@@ -291,6 +291,8 @@
       // re-translation) instead of stored with every block - 75% of the translation cache was modules
       // for blocks that never ran hot, and the full cache flushed every few seconds under Wine.
       if (t.lazywasm) tune += "lazywasm=1\n";
+      // split=0 (build 109 engine): turn off the sticky TB split at mid-block device I/O (safety ladder).
+      if (t.split === 0) tune += "split=0\n";
       if (t.extra) tune += String(t.extra).replace(/[^a-z0-9=\n]/g, "") + "\n";   // harness experiments: raw key=value lines
       if (tune) mod.FS.writeFile("/bootbox-tune", tune);
     });
