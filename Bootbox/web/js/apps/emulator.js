@@ -652,9 +652,9 @@
               <option value="6">6 cores</option>
               <option value="8">8 cores</option>
             </select>
-            <select class="e-sel" id="interp" style="width:112px;display:none" title="How the Linux guests run code that is not compiled yet. Classic (default): the proven interpreter. Fast (beta): a compact one - quicker in Chrome, but on iPad it lowered multi-core speed. Applies on the next boot; if Fast ever crashes, Bootbox switches back by itself.">
+            <select class="e-sel" id="interp" style="width:112px;display:none" title="How the Linux guests run code that is not compiled yet. Fast (default): a compact interpreter WebKit can fully optimize - steady speed. Classic: the older, larger one (in WebKit some runs slow down to a crawl). Applies on the next boot; if Fast ever crashes, Bootbox switches back by itself.">
+              <option value="fast">Fast interp.</option>
               <option value="classic">Classic interp.</option>
-              <option value="fast">Fast interp. (beta)</option>
             </select>
             <span class="grow"></span>
             <span class="emu-perf" id="perf" title="Emulation speed of this device (WASM JIT benchmark). Tap: web benchmark on this iPad.">⏱ testing…</span>
@@ -787,9 +787,9 @@
         if (!coresSel.value) coresSel.value = "2";   // guard: unknown value -> select falls back
         if (+coresSel.value > (initialGuest.maxCores || 8)) coresSel.value = String(initialGuest.maxCores || 8);
         if (+coresSel.value < (initialGuest.minCores || 1)) coresSel.value = String(initialGuest.minCores || 1);
-        interpSel.value = cfg().fastTci === true ? "fast" : "classic";
+        interpSel.value = cfg().interp2 === "classic" ? "classic" : "fast";
         interpSel.addEventListener("change", () => {
-          setCfg({ fastTci: interpSel.value === "fast", q64safe5: { level: 0 } });   // a manual pick restarts the safety ladder
+          setCfg({ interp2: interpSel.value, q64safe6: { level: 0 } });   // a manual pick restarts the safety ladder
           try { status.textContent = "Interpreter set to " + (interpSel.value === "fast" ? "Fast" : "Classic") + " — applies on the next boot (press ⏻ Start to reboot)."; } catch (e) {}
         });
         coresSel.addEventListener("change", () => {
@@ -1066,11 +1066,17 @@
             // Off by default since build 105: on the iPad (Build 104) Fast gave the same CPU-Z single-core
             // (7.44 vs 7.40) but multi-core 8.37 vs 13.20 Classic - WebKit runs four threads of the hot loop
             // worse than the classic interpreter. Kept as an opt-in (toolbar selector).
+            // Default again since build 112 (new key interp2, so a Classic picked back then is not kept):
+            // in macOS WebKit (Terminal CPU-Z, Build 111 engine, interleaved) Fast ran 12.0-12.7 / 29-31 in
+            // 3 of 3 runs (~90 s per job); Classic 11.6 / 33.4 once and 2.5-3.7 / 4-7.5 in the other two
+            // (390-500 s) - WebKit sometimes never gets the big instrumented interpreter fast.
             // q64safe4 (build 107): lazy modules (lazywasm, Linux guests) are part of "full speed"; the
             // first step down keeps a module with every block again (the build 106 engine behaviour).
             // q64safe5 (build 109): the first step down also turns off the engine's sticky TB split at
             // mid-block device I/O (split=0).
-            const fastTci = !!g.fastTci && cfg().fastTci === true;
+            // q64safe6 (build 112): level 0 has the Fast interpreter by default - a device parked lower
+            // tries it once.
+            const fastTci = !!g.fastTci && cfg().interp2 !== "classic";
             const SAFE_LEVELS = [
               { name: "full speed", tune: fastTci ? { fasttci: 1 } : undefined },
               { name: "classic interpreter, modules stored with every block", tune: { lazywasm: 0, split: 0 } },
@@ -1080,7 +1086,7 @@
               { name: "the above + fixed-size memory, fewer compiled blocks", tune: { chain: 0, fpinline: 0, regloc: 0, max: 8000, lazywasm: 0, split: 0 }, presize: true },
               { name: "interpreter only (slow)", tune: { chain: 0, fpinline: 0, regloc: 0, max: 8000, jit: 1000000000, lazywasm: 0, split: 0 }, presize: true },
             ];
-            let safe = cfg().q64safe5 || { level: 0 };
+            let safe = cfg().q64safe6 || { level: 0 };
             try {
               const lc = (window.Bridge && Bridge.onDevice) ? await Bridge.call("system", "takeLastCrash") : null;
               console.log("[safe] last page crash " + JSON.stringify(lc) + ", previous boot " + JSON.stringify(safe));
@@ -1091,12 +1097,12 @@
             } catch (e) {}
             const level = SAFE_LEVELS[Math.min(SAFE_LEVELS.length - 1, safe.level || 0)];
             safe = { level: safe.level || 0, startedAt: Date.now(), ok: false };
-            setCfg({ q64safe5: safe });
+            setCfg({ q64safe6: safe });
             console.log("[safe] engine level " + safe.level + ": " + level.name);
             if (safe.level) { try { status.textContent += " Safer engine settings: " + level.name + "."; } catch (e) {} }
             setTimeout(() => {
-              const s2 = cfg().q64safe5 || {};
-              if (s2.startedAt === safe.startedAt) { s2.ok = true; setCfg({ q64safe5: s2 }); console.log("[safe] level " + safe.level + " has run 75 s — keeping it"); }
+              const s2 = cfg().q64safe6 || {};
+              if (s2.startedAt === safe.startedAt) { s2.ok = true; setCfg({ q64safe6: s2 }); console.log("[safe] level " + safe.level + " has run 75 s — keeping it"); }
             }, 75000);
             // Wasm tail calls (the engine's TB-to-TB chaining) crash the page on the iPad (iPadOS 27.2
             // WebKit, arm64e) the moment the guest starts running - found by the ladder on the user's
