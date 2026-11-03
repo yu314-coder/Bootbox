@@ -122,3 +122,23 @@ Bootbox collects no data.
 Note: guideline 2.3.10 discourages naming other mobile platforms in the metadata. "Android" stays out of
 the subtitle, promo text and keywords and appears only as a feature line in the description. If review
 objects, drop that line too; the feature itself is interactive functionality, which 2.3.10 allows.
+
+## Status in App Store Connect (2026-11-04)
+
+Filled through the API (`/Volumes/D/xcode/asc.py`, screenshots: `/Volumes/D/xcode/asc_shots.py`):
+- [x] Subtitle, description, keywords, promotional text, support URL, copyright
+- [x] Privacy policy URL: https://yu314-coder.github.io/privacy.html#bootbox
+- [x] Categories: Utilities / Developer Tools
+- [x] Age rating questionnaire, giving 17+ (unrestricted web access)
+- [x] iPad 13-inch screenshots (4): boot menu, desktop + browser, Terminal + Python, web benchmark.
+      Android is left out (2.3.10); its shot is in /Volumes/D/xcode/appstore-shots/
+- [x] iPhone 6.9-inch screenshots (3): boot menu, desktop + Wikipedia in the Linux browser, Terminal + Python
+- [x] Review contact and notes
+- [x] App Privacy published: "Data Not Collected"
+- [x] Price free (175 regions); availability all 175 regions; Mac + Vision Pro left on; content rights declared
+- [x] Build 114 (version 1.0) attached and **submitted for review 2026-11-04**; waiting for review
+
+## Guest bugs found while taking screenshots (fix in the next desktop image)
+- The desktop's first Terminal shows a garbled prompt ("root / ooot / toot / @oot ..." one line per prompt
+  character): bash draws the prompt before the terminal window has its real width.
+- The first page the prewarmed Linux browser shows stays blank (grey) until Reload.
