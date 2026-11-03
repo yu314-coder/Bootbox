@@ -137,7 +137,7 @@
         if (!p || p.name !== rawName) return;
         if (p.done) { if (Bridge.offEvent) Bridge.offEvent("gunzipProgress", handler); p.ok ? resolve() : reject(new Error(p.error || "expand failed")); return; }
         const pct = p.total > 0 ? Math.round(p.received / p.total * 100) + "%" : ((p.received / 1048576) | 0) + " MB";
-        try { status.textContent = "Preparing the " + label + " (one-time, stays on this iPad)… " + pct; } catch (e) {}
+        try { status.textContent = "Preparing the " + label + " (one-time, stays on this device)… " + pct; } catch (e) {}
       };
       Bridge.onEvent("gunzipProgress", handler);
     });
@@ -657,7 +657,7 @@
               <option value="classic">Classic interp.</option>
             </select>
             <span class="grow"></span>
-            <span class="emu-perf" id="perf" title="Emulation speed of this device (WASM JIT benchmark). Tap: web benchmark on this iPad.">⏱ testing…</span>
+            <span class="emu-perf" id="perf" title="Emulation speed of this device (WASM JIT benchmark). Tap: web benchmark on this device.">⏱ testing…</span>
             <span class="emu-pill"><span class="led"></span><span id="state">Idle</span></span>
           </div>
           <div id="screen_container" style="flex:1;background:#000;overflow:hidden;position:relative;display:flex;align-items:center;justify-content:center">
@@ -712,7 +712,7 @@
           cachedPerf = { tier, ms: Math.round(ms), jit: ms < 380 };
           try { console.log("[perf] JS benchmark " + Math.round(ms) + " ms (" + tier + "), " + (navigator.hardwareConcurrency || "?") + " cores"); } catch (e) {}
         }
-        // Tap the speed badge: the web benchmark (JS / DOM / canvas) natively in this iPad's own
+        // Tap the speed badge: the web benchmark (JS / DOM / canvas) natively in this device's own
         // WebView - the same page the Linux desktop's browser runs emulated, same scale (1000 = M4).
         perfEl.style.cursor = "pointer";
         perfEl.addEventListener("click", () => {
@@ -746,7 +746,7 @@
               if (!why) return;
               perfEl.className = "emu-perf slow";
               perfEl.textContent = (pw.lowPower ? "🔋 " : "🌡 ") + why;
-              perfEl.title = why + ". The emulator runs every guest instruction on the CPU, so it slows down with it. Tap: web benchmark on this iPad. " +
+              perfEl.title = why + ". The emulator runs every guest instruction on the CPU, so it slows down with it. Tap: web benchmark on this device. " +
                 (pw.lowPower ? "Turn Low Power Mode off (Settings › Battery) for full speed." : "Let the iPad cool down (or plug it in and remove the case).") +
                 " JS benchmark: " + p.ms + " ms.";
             }).catch(() => {});
@@ -1005,7 +1005,7 @@
             if (!window.QEMU_PANEL) {
               await new Promise((res, rej) => {
                 const s = document.createElement("script");
-                s.src = "vendor/qemu/panel.js";
+                s.src = "vendor/qemu/panel.js?v=113";
                 s.onload = res; s.onerror = () => rej(new Error("missing QEMU panel"));
                 document.head.appendChild(s);
               });
@@ -1022,7 +1022,7 @@
               status.textContent = "Couldn't download the " + (g.android ? "Android" : "64-bit Linux") + " image (needs internet on first boot): " + ((e && e.message) || e);
               return;
             }
-            // Fit the guest into what this iPad lets one web page use: the app measures it once per iOS
+            // Fit the guest into what this device lets one web page use: the app measures it once per iOS
             // version (MemoryProbe; 0/unknown on a Mac or in a browser) and iOS kills the page outright
             // past it. Besides guest RAM the page needs ~1 GB (engine, WebKit's compiled code, buffers).
             let ramMB = Math.min(g.maxRam || 1536, Math.max(g.minRam || 64, +ramInput.value || g.ram || 1536));
@@ -1034,7 +1034,7 @@
                 for (let i = 0; i < 60; i++) {
                   const info = await Bridge.call("system", "info").catch(() => null);
                   if (!info || !info.memProbeRunning) break;
-                  status.textContent = "Measuring how much memory this iPad gives the emulator (first launch only)… " + i + " s";
+                  status.textContent = "Measuring how much memory this device gives the emulator (first launch only)… " + i + " s";
                   await new Promise((r) => setTimeout(r, 1000));
                 }
               }
@@ -1044,10 +1044,10 @@
                 console.log("[mem] a page may use ~" + lim + " MB here (" + (ml.how || "?") + ")");
                 const fit = Math.floor((lim - 1000) / 128) * 128;
                 if (g.android) {
-                  if (lim < 2400) memNote = " Heads-up: Android needs about 2.4 GB, and this iPad lets a page use about " + lim + " MB — iPadOS may stop it.";
+                  if (lim < 2400) memNote = " Heads-up: Android needs about 2.4 GB, and this device lets a page use about " + lim + " MB — iPadOS may stop it.";
                 } else if (fit < ramMB) {
                   ramMB = Math.max(512, fit);
-                  memNote = " Guest RAM set to " + ramMB + " MB to fit this iPad (a page may use ~" + lim + " MB).";
+                  memNote = " Guest RAM set to " + ramMB + " MB to fit this device (a page may use ~" + lim + " MB).";
                 }
               }
             } catch (e) {}

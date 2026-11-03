@@ -59,15 +59,10 @@ final class BridgeRouter: NSObject, WKScriptMessageHandler, UIGestureRecognizerD
     // MARK: - WKNavigationDelegate
     // When the page's WebContent process dies, the web view just sits there blank. Don't hide it by
     // reloading: log why and show a stop screen with the reason (WebHostView); the user restarts.
+    // (public API only: WebKit's private variant that also says WHY - memory/CPU limit, crash - was
+    // removed for the App Store; the reason is logged as "no reason given")
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         pageDied(reasonCode: -1)
-    }
-    // WebKit's (non-public) variant of the callback that says WHY: 0 memory limit, 1 CPU limit,
-    // 2 requested by the app, 3 crash (newer WebKit may add more). When implemented, WebKit calls
-    // this instead of the public one. Diagnostic only - remove before an App Store submission.
-    @objc(_webView:webContentProcessDidTerminateWithReason:)
-    func webContentProcessDidTerminate(_ webView: WKWebView, reason: Int) {
-        pageDied(reasonCode: reason)
     }
     private func pageDied(reasonCode: Int) {
         let why: String

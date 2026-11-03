@@ -1,12 +1,10 @@
 import Foundation
-import ExternalAccessory
 
-/// Detects external hardware reachable on iPadOS:
-///  - MFi accessories via ExternalAccessory (USB/Lightning/USB-C connect/disconnect events)
-///  - External storage volumes (USB drives / SD) that iPadOS has mounted
+/// Detects external storage volumes (USB drives / SD cards) that iPadOS has mounted.
 ///
-/// Note: iPadOS has no public hot-plug event for generic USB mass storage, so
-/// volumes are also polled. MFi accessories DO emit connect/disconnect notes.
+/// Note: iPadOS has no public hot-plug event for generic USB mass storage, so volumes are polled.
+/// (MFi accessory events via ExternalAccessory were removed for the App Store: that framework is for
+/// apps registered with an MFi accessory protocol.)
 final class USBBridge: NSObject {
     private var monitoring = false
     private var pollTimer: Timer?
@@ -17,7 +15,7 @@ final class USBBridge: NSObject {
         case "start":
             startMonitoring(); respond(true, true)
         case "list":
-            respond(true, ["accessories": accessories(), "volumes": externalVolumes()])
+            respond(true, ["accessories": [[String: Any]](), "volumes": externalVolumes()])
         default:
             respond(false, "unknown usb action: \(action)")
         }
@@ -26,28 +24,10 @@ final class USBBridge: NSObject {
     private func startMonitoring() {
         guard !monitoring else { return }
         monitoring = true
-        let mgr = EAAccessoryManager.shared()
-        mgr.registerForLocalNotifications()
-        NotificationCenter.default.addObserver(self, selector: #selector(connected(_:)),
-            name: .EAAccessoryDidConnect, object: nil)
-        NotificationCenter.default.addObserver(self, selector: #selector(disconnected(_:)),
-            name: .EAAccessoryDidDisconnect, object: nil)
-
         // Poll external volumes every 3s (no public hot-plug event for these).
         lastVolumes = Set(externalVolumes().map { $0["name"] as? String ?? "" })
         pollTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
             self?.pollVolumes()
-        }
-    }
-
-    @objc private func connected(_ note: Notification) {
-        if let a = note.userInfo?[EAAccessoryKey] as? EAAccessory {
-            HostEvents.emit("usb:connect", ["name": a.name, "manufacturer": a.manufacturer, "kind": "accessory"])
-        }
-    }
-    @objc private func disconnected(_ note: Notification) {
-        if let a = note.userInfo?[EAAccessoryKey] as? EAAccessory {
-            HostEvents.emit("usb:disconnect", ["name": a.name, "kind": "accessory"])
         }
     }
 
@@ -61,12 +41,6 @@ final class USBBridge: NSObject {
             HostEvents.emit("usb:disconnect", ["name": removed, "kind": "volume"])
         }
         lastVolumes = names
-    }
-
-    private func accessories() -> [[String: Any]] {
-        EAAccessoryManager.shared().connectedAccessories.map {
-            ["name": $0.name, "manufacturer": $0.manufacturer, "model": $0.modelNumber, "serial": $0.serialNumber]
-        }
     }
 
     /// Mounted external volumes other than the system root (USB drives, SD cards).

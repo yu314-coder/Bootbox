@@ -7,7 +7,7 @@ struct MiniOSApp: App {
         SelfCheck.run()
         VMStorage.cleanupStale()             // drop stale *.part temp files from the Files view
         DomainRegistrar.register()
-        BackgroundKeepAlive.shared.start()   // keep the VM alive when backgrounded
+        BackgroundKeepAlive.shared.start()   // a short grace for the guest when backgrounded
         MiniOSApp.startNetStack()            // embedded netstack -> real internet for the 64-bit guest
     }
 
@@ -25,8 +25,10 @@ struct MiniOSApp: App {
 
     var body: some Scene {
         WindowGroup {
-            HostView()
-                .ignoresSafeArea()
+            ZStack {
+                Color.black.ignoresSafeArea()
+                HostView()   // (iPhone: inside the safe area - the toolbar sat under the Dynamic Island)
+            }
                 .statusBarHidden(true)
                 .persistentSystemOverlays(.hidden)
                 .onOpenURL { url in

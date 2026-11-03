@@ -84,21 +84,12 @@
   // Commands chosen to work on the Alpine/BusyBox guest (and any minimal Linux).
   // Entries: [label, command, "gui"?] — or ["@ section"] group headers (build 72).
   var QUICK = [
-    ["@ wine & gui"],
-    // Wine (build 62-71): wine-staging 11.5, esync+quiet defaults, warm prefix, cx16 engine.
-    // "🍷" runs the streaming diagnostic matrix (cx16 → cmd → winemine), pushed via /share.
-    ["🍷 Wine test", "__wt4__"],
+    // Build 113 (App Store): only the benchmarks stay here. The developer diagnostics (Wine test matrix,
+    // Wine log, GUI test, input probe, cx16 probe) and the 32-bit CPU-Z (still fails in this guest) are
+    // gone from the panel; their handlers (__wt4__ ...) remain for development.
+    ["@ benchmarks"],
     ["🏆 CPU-Z 64", "__cpuz64__"],   // real CPU-Z, wine, -bench headless benchmark (64-bit)
-    ["🏆 CPU-Z 32", "__cpuz32__"],   // 32-bit CPU-Z benchmark
     ["🎮 GPU bench", "__gpubench__"],   // glmark2 OpenGL benchmark (Mesa llvmpipe, one render thread per core)
-    // Bounded tail (build 72): 45s of live log then the pty frees itself — the old `tail -f`
-    // held the console hostage until ^C and made every other button look dead.
-    ["📜 Wine log", "timeout 45 tail -n 40 -f /root/winetest-cmd.log /root/winetest-esync.log 2>/dev/null; echo '[log view ended — tap 📜 again for more]'"],
-    ["🖥️ GUI test", "(DISPLAY=:0 xterm -geometry 72x22 -bg white -fg black -fn fixed -e sh -c 'echo BOOTBOX GUI WORKS; echo; echo If you can read this white window, the graphical desktop is working.; exec sh' >/dev/null 2>&1 &); echo 'Launched a test window on the X desktop — switching to the 🖥️ GUI tab. A white terminal window should appear within a few seconds.'", "gui"],
-    // Input-freeze discriminator: yellow window responds but wine does not → wine holds an X grab;
-    // NEITHER responds → the VNC input path is stuck (use 🔄 on the GUI pane).
-    ["🩺 input probe", "(DISPLAY=:0 xterm -geometry 40x12+30+30 -bg yellow -fg black -fn fixed -e sh -c 'echo TAP HERE; echo; echo If this window responds but wine does not: wine holds a grab.; echo If neither responds: tap the blue reload button on the GUI tab.; exec sh' >/dev/null 2>&1 &); echo 'Yellow probe window launched — switching to the 🖥️ GUI tab.'", "gui"],
-    ["⚛️ cx16 probe", "winetest cx16"],
     ["@ system"],
     ["uname", "uname -a"],
     ["os-release", "cat /etc/os-release"],
@@ -236,7 +227,7 @@
       var age = hudChangeT ? Math.round((now - hudChangeT) / 1000) : -1;
       hud.style.color = "#8fd18f";
       hud.textContent = "🖥️ display: ON · " + dim + (age >= 0 ? " · last update " + age + "s ago" : "") +
-        (mode === "desktop" ? "" : " — black = empty desktop; wine windows can take minutes on first run (📜 Wine log)");
+        (mode === "desktop" ? "" : " — black = empty desktop; wine windows can take minutes on first run");
     }, 2000);
 
     function showTab(which) {

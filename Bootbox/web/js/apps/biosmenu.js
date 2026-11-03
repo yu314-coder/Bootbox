@@ -18,28 +18,20 @@
 (function () {
   // The bootable "systems" — REAL official distro ISOs (not lightweight spins),
   // all 32-bit. Each downloads its official ISO on first boot, then boots it.
-  // The boot menu offers exactly five systems (user direction, Oct 2026): two Linux front-ends of the
-  // 64-bit x86_64 engine, Android, and the two v86 Windows images. (The ARM64 guest is no longer listed.)
+  // The boot menu offers three systems: two Linux front-ends of the 64-bit x86_64 engine and Android.
+  // (The ARM64 guest is no longer listed.) The one-tap Windows 98 / 2000 images were removed for the App
+  // Store (Nov 2026: Microsoft's software can't be distributed); the emulator still boots an image or ISO
+  // the user provides ("Windows / ISO / disk image…" in the emulator).
   const SYSTEMS = [
-    { id: "x64pwd", name: "Linux (Desktop)", sub: "64-bit Linux desktop · windows, taskbar, terminal, file manager, text web browser", icon: "🖥️", tag: "DESKTOP",
+    { id: "x64pwd", name: "Linux (Desktop)", sub: "64-bit Linux desktop · windows, taskbar, terminal, file manager, web browser", icon: "🖥️", tag: "DESKTOP",
       guest: "x64pwd", ram: 1536,
-      note: "A full-screen 64-bit (x86_64) Linux desktop: window manager (twm) + taskbar/clock (tint2) + a terminal + the mc file manager, Python 3.12 with pip. Right-click the desktop for the menu (web browser = links, text mode). Downloaded once (~240 MB), then the guest disk is read straight from the iPad's storage as needed." },
+      note: "A full-screen 64-bit (x86_64) Linux desktop: windows (Openbox) + taskbar/clock (tint2), a terminal, a file manager, a web browser (WebKit) and Python 3.12 with pip. Tap Apps (bottom-left) or right-click the desktop for programs; the Benchmarks icon runs CPU-Z, 7-Zip and more. Downloaded once (~240 MB), then the guest disk is read straight from the iPad's storage as needed." },
     { id: "x64pw", name: "Linux (Terminal)", sub: "64-bit Linux console · Python 3.12 + pip · Wine for .exe · internet", icon: "🐍", tag: "TERMINAL",
       guest: "x64pw", ram: 1536,
       note: "64-bit (x86_64) Alpine Linux in a terminal — DUAL-CORE (cores 1–8 in UEFI Setup). Python 3.12 + pip, Wine (32 & 64-bit .exe) and real internet. Terminal on the LEFT; the panel on the RIGHT has quick buttons and shows graphical output when you start an X app or a Wine .exe. Downloaded once (~310 MB), then the guest disk is read straight from the iPad's storage as needed." },
     { id: "android64", name: "Android", sub: "Android 12 AOSP · 64-bit x86_64 · quad-core · touch + keyboard", icon: "🤖", tag: "ANDROID",
       guest: "android64", ram: 1280,
       note: "Android 12 AOSP (System UI + Launcher3) on 4 emulated cores. It resumes from a snapshot taken at the home screen, so it opens in seconds instead of a multi-minute cold boot. Touch the screen directly; ⌨ Type for text. Downloaded once (~901 MB). No Google Play, no GPU acceleration." },
-    { id: "win98", name: "Windows 98 SE", sub: "One-tap download + boot · ~89 MB", icon: "🪟", tag: "WIN",
-      img: "vmres://iso/win98.img", kind: "hda", ram: 256, fixedRam: true,
-      downloadName: "win98.img.gz", imgName: "win98.img", gz: true,
-      downloadUrl: "https://github.com/yu314-coder/Bootbox/releases/download/windows-v1/win98.img.gz",
-      note: "Windows 98 SE · one-tap download (~89 MB) + boot. Verified booting to the desktop in v86. Boots as a hard disk at 256 MB RAM (Win9x can't use much more). 640×480 standard VGA." },
-    { id: "win2000", name: "Windows 2000 Pro", sub: "One-tap download + boot · has internet · ~340 MB", icon: "🪟", tag: "WIN",
-      img: "vmres://iso/win2000.img", kind: "hda", ram: 512, fixedRam: true,
-      downloadName: "win2000.img.gz", imgName: "win2000.img", gz: true,
-      downloadUrl: "https://github.com/yu314-coder/Bootbox/releases/download/windows-v1/win2000.img.gz",
-      note: "Windows 2000 SP4 · one-tap download (~340 MB) + boot. The only Windows here with WORKING INTERNET (NT NDIS NIC via the relay, where Win9x's driver hangs). Heavier/slower than Win98. 512 MB RAM · 640×480 VGA · auto-logon." },
   ];
   const SETUP_ROW = { id: "__setup__", kind: "setup", name: "UEFI Firmware Setup", sub: "Advanced configuration (normally hidden)",
     icon: "⚙️", tag: "SETUP", note: "Enter the firmware setup — boot order, memory, CPU, security." };
@@ -144,7 +136,7 @@
         <div class="bm-top">
           <span class="bm-brand"><span class="bm-glyph"><i></i><i></i><i></i><i></i></span>Bootbox UEFI</span>
           <span style="opacity:.7">Boot Manager</span>
-          <span class="bm-right">x86 · i686 · 32-bit firmware</span>
+          <span class="bm-right">x86-64 · emulated in WebAssembly</span>
         </div>
         <div class="bm-mid">
           <div class="bm-box">
@@ -354,15 +346,14 @@
     hooks = hooks || {};
     const DEF = { ram: 256, cores: 2, bootOrder: "cd-hd", vtx: true, htt: false, secureBoot: false,
       bootMode: "UEFI", fastBoot: true, sataMode: "AHCI", usbLegacy: true, numlock: true, memRemap: false,
-      netInternet: true, resumeState: true, nx: true, tpm: false, txt: false, bgRun: "Keep running" };
+      netInternet: true, resumeState: true, nx: true, tpm: false, txt: false, bgRun: "About 30 s" };
     let s = Object.assign({}, DEF, readCfg());
     // Reflect the emulator's actual internet + resume state (it stores these in its own config).
     try { const ec = JSON.parse(VFS.read("/Apps/.emulator.json") || "{}"); s.netInternet = (ec.netRelay !== "off"); s.resumeState = (ec.resumeState !== false); } catch (e) {}
     // Reflect the real background-grace setting (lives in native UserDefaults, not the JS config).
-    const BG_SEC = { "Keep running": 86400, "10 min": 600, "1 min": 60, "Off": 0 };
+    const BG_SEC = { "About 30 s": 30, "Off": 0 };
     try { if (window.Bridge) Bridge.call("system", "getBackgroundGrace").then(function (g) {
-      var sec = (typeof g === "number") ? g : (g && g.result); var lbl = "Keep running";
-      Object.keys(BG_SEC).forEach(function (k) { if (BG_SEC[k] === sec) lbl = k; });
+      var sec = (typeof g === "number") ? g : (g && g.result); var lbl = sec === 0 ? "Off" : "About 30 s";
       if (sec != null) { s.bgRun = lbl; if (typeof paint === "function") paint(); }
     }).catch(function () {}); } catch (e) {}
     let tab = 0, foc = 0;
@@ -407,8 +398,8 @@
         { t: "sep", label: "Network Configuration" },
         { t: "toggle", label: "Guest Internet", key: "netInternet", help: "Functional. Bridges the guest's NIC to the WebSocket relay so it reaches the real internet (the guest still needs its own DHCP client). Turn off for a fully offline VM." },
         { t: "sep", label: "Power & Background" },
-        { t: "select", label: "Run in Background", key: "bgRun", opts: ["Keep running", "10 min", "1 min", "Off"],
-          help: "Functional. Keeps the guest COMPUTING after you switch to another app, so long jobs (builds, downloads, pip, compute) finish in the background instead of freezing. 'Keep running' = never suspend — best for background work; idle is cheap now (tickless kernel), but sustained load will drain the battery. '10 min' / '1 min' = hold that long, then let iOS suspend to save power. 'Off' = suspend immediately on switch-away." },
+        { t: "select", label: "Run in Background", key: "bgRun", opts: ["About 30 s", "Off"],
+          help: "Functional. When you switch to another app, iOS pauses Bootbox. 'About 30 s' = the guest keeps computing for the short time iOS allows (finishing a save or a download step), then pauses; 'Off' = it pauses at once. Either way the guest stays in memory and continues where it was when you come back." },
       ];
       if (tab === 2) return [
         { t: "select", label: "Boot Mode", key: "bootMode", opts: ["UEFI", "Legacy"], help: "Firmware boot mode. Legacy = CSM/BIOS compatibility." },

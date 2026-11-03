@@ -67,19 +67,13 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>MiniOS apps can capture photos through the host camera bridge.</string>
+	<string>Bootbox uses the camera only when you take a photo or scan in one of its built-in apps.</string>
 	<key>NSDocumentsFolderUsageDescription</key>
-	<string>MiniOS imports and exports files to your virtual disk.</string>
+	<string>Bootbox imports and exports files to your virtual machines' disks.</string>
 	<key>NSLocalNetworkUsageDescription</key>
-	<string>MiniOS uses the local network for its virtual network device.</string>
+	<string>Bootbox runs a small local network inside the app so the virtual machines can reach the internet.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>MiniOS apps can record audio through the host microphone bridge.</string>
-	<key>NSPhotoLibraryAddUsageDescription</key>
-	<string>MiniOS can save captured photos to your virtual disk.</string>
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>audio</string>
-	</array>
+	<string>Bootbox uses the microphone only when you record in its built-in voice memo app.</string>
 	<key>UIFileSharingEnabled</key>
 	<false/>
 	<key>UILaunchScreen</key>
@@ -93,6 +87,12 @@
 	<true/>
 	<key>UIStatusBarHidden</key>
 	<true/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
 	<key>UISupportedInterfaceOrientations~ipad</key>
 	<array>
 		<string>UIInterfaceOrientationLandscapeLeft</string>

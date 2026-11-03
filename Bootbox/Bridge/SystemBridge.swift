@@ -56,11 +56,12 @@ final class SystemBridge: NSObject {
         case "fpreset":
             DomainRegistrar.forceReset(); respond(true, "File-sync location reset requested.")
         case "getBackgroundGrace":
-            // Seconds the app keeps the guest running after you switch away. >=86400 = keep running.
-            let sec = UserDefaults.standard.object(forKey: "BootboxBackgroundGraceSeconds") as? Double ?? 86_400
+            // 0 = the guest pauses as soon as you switch away; otherwise it gets iOS's short background
+            // task (~30 s) first (BackgroundKeepAlive).
+            let sec = UserDefaults.standard.object(forKey: "BootboxBackgroundGraceSeconds") as? Double ?? 30
             respond(true, sec)
         case "setBackgroundGrace":
-            let sec = (payload["seconds"] as? NSNumber)?.doubleValue ?? 86_400
+            let sec = (payload["seconds"] as? NSNumber)?.doubleValue ?? 30
             UserDefaults.standard.set(sec, forKey: "BootboxBackgroundGraceSeconds")
             BackgroundKeepAlive.shared.reschedule()   // apply immediately if already backgrounded
             respond(true, sec)

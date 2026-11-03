@@ -6,8 +6,8 @@
       render(body) {
         body.innerHTML = `<div class="app">
           <h2>ℹ️ MiniOS</h2>
-          <p style="opacity:.8">A lightweight Windows-inspired MiniOS for iPad, running inside a
-          secure host app, using a controlled iPadOS bridge for hardware access.</p>
+          <p style="opacity:.8">A lightweight desktop-style shell for iPad and iPhone, running inside a
+          secure host app, using a controlled iOS bridge for hardware access.</p>
           <div class="list-row"><span style="flex:1">Version</span><b>0.1.0</b></div>
           <div class="list-row"><span style="flex:1">Kernel</span><b>JS micro-runtime</b></div>
           <div class="list-row"><span style="flex:1">Renderer</span><b>${Bridge.onDevice ? "WKWebView → Metal" : "Browser"}</b></div>

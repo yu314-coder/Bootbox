@@ -167,7 +167,9 @@ struct HostView: View {
     var body: some View {
         WebHostView()
             .background(Color.black)
-            .ignoresSafeArea()
+            // iPad: edge to edge. iPhone: stay out of the Dynamic Island / notch, the home indicator and
+            // the landscape side insets (MiniOSApp paints those areas black).
+            .ignoresSafeArea(edges: UIDevice.current.userInterfaceIdiom == .pad ? .all : [])
     }
 }
 
@@ -205,8 +207,6 @@ struct WebHostView: UIViewControllerRepresentable {
         // The emulator needs WebKit's JIT: never let the page land in a hardened, interpreter-only
         // "enhanced security" WebContent process (iPadOS 26.4+). This is the default; set explicitly.
         if #available(iOS 26.4, *) { config.defaultWebpagePreferences.securityRestrictionMode = .none }
-        config.preferences.setValue(true, forKey: "allowFileAccessFromFileURLs")
-        config.setValue(true, forKey: "allowUniversalAccessFromFileURLs")
 
         let webView = WKWebView(frame: .zero, configuration: config)
         if #available(iOS 16.4, *) { webView.isInspectable = true }
