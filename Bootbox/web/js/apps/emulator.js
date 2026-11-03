@@ -552,6 +552,55 @@
     container.addEventListener("contextmenu", (e) => e.preventDefault());
     try { window.__bbPointer = { ops, curve: () => curve, cur: () => cur, reset: () => { calibrated = false; calibTries = 0; calibLast = -1e9; }, calibrate: () => { calibrated = false; calibTries = 0; calibLast = -1e9; saveCurve(null); curve = [[1, 1], [2, 2]]; ensureCalibrated(); return calibrating; } }; } catch (e) {}
   }
+  // The Linux desktop's Web (bbweb) asks for a page in the device's own browser. In the MiniOS shell that is
+  // the Browser app's window; in the boot-menu flow (full-screen #bb-root, z-index 9000) that window opened
+  // UNDER the emulator - tapping Web did nothing (build 113 fix): there the page opens in a full-screen
+  // overlay with one native WebKit view (browser bridge) and a Close button back to the guest.
+  let hostBrowser = null, hostBrowserEvents = false;
+  function openHostBrowser(u) {
+    const q = u.trim();
+    const url = !q ? "https://duckduckgo.com/" : /^https?:\/\//i.test(q) ? q
+      : (/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(q) && !q.includes(" ")) ? "https://" + q
+      : "https://duckduckgo.com/?q=" + encodeURIComponent(q);
+    const fb = document.getElementById("framebuffer"), bb = document.getElementById("bb-root");
+    const shellVisible = fb && !fb.classList.contains("hidden") && (!bb || bb.style.display === "none");
+    if (shellVisible || !(window.Bridge && Bridge.onDevice)) {
+      try { Apps.launch("browser", { url: q || undefined, reuse: true, maximize: true }); } catch (e) {}
+      return;
+    }
+    if (hostBrowser) { Bridge.call("browser", "navigate", { id: hostBrowser.id, url }); return; }
+    const id = "hb" + Date.now(), ov = document.createElement("div");
+    ov.style.cssText = "position:fixed;inset:0;z-index:9500;background:#fff;display:flex;flex-direction:column;" +
+      "font:600 14px system-ui,sans-serif";
+    ov.innerHTML = '<div style="display:flex;gap:8px;align-items:center;padding:8px 10px;background:#eef2f8;border-bottom:1px solid #d9dee7">' +
+      '<button data-a="close" style="height:32px;padding:0 14px;border-radius:8px;border:0;background:#0067c0;color:#fff;font:inherit">✕ Back to Linux</button>' +
+      '<button data-a="back" style="height:32px;width:36px;border-radius:8px;border:1px solid #d9dee7;background:#fff;font:inherit">‹</button>' +
+      '<button data-a="forward" style="height:32px;width:36px;border-radius:8px;border:1px solid #d9dee7;background:#fff;font:inherit">›</button>' +
+      '<button data-a="reload" style="height:32px;width:36px;border-radius:8px;border:1px solid #d9dee7;background:#fff;font:inherit">⟳</button>' +
+      '<span data-t style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#5b5f66;font-weight:500"></span></div>' +
+      '<div data-v style="flex:1"></div>';
+    document.body.appendChild(ov);
+    const view = ov.querySelector("[data-v]"), title = ov.querySelector("[data-t]");
+    title.textContent = url;
+    const rect = () => { const r = view.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; };
+    const fit = () => Bridge.call("browser", "setFrame", { id, rect: rect() });
+    hostBrowser = { id, title };
+    if (!hostBrowserEvents && Bridge.onEvent) {   // (the bridge has no off(): one listener for every overlay)
+      hostBrowserEvents = true;
+      Bridge.onEvent("browser:state", (s) => { if (hostBrowser && s && s.id === hostBrowser.id) hostBrowser.title.textContent = s.title || s.url || ""; });
+    }
+    Bridge.call("browser", "open", { id, url, rect: rect() });
+    window.addEventListener("resize", fit);
+    ov.addEventListener("click", (e) => {
+      const a = e.target && e.target.dataset && e.target.dataset.a;
+      if (!a) return;
+      if (a !== "close") { Bridge.call("browser", a, { id }); return; }
+      Bridge.call("browser", "close", { id });
+      window.removeEventListener("resize", fit);
+      ov.remove(); hostBrowser = null;
+    });
+  }
+
   function nowMs() { return (window.performance && performance.now) ? performance.now() : (+new Date()); }
 
   function loadLib() {
@@ -1136,7 +1185,7 @@
               // ~300x the emulated one). run.js writes /share/.bootbox/native-web for the guest's launcher
               // and hands its console request (OSC 7777 "open;<url>") to onGuestOpenUrl.
               nativeWeb: g.id === "x64pwd" && !!(window.Bridge && Bridge.onDevice),
-              onGuestOpenUrl: (u) => { try { Apps.launch("browser", { url: String(u || "").trim() || undefined, reuse: true, maximize: true }); } catch (e) {} },
+              onGuestOpenUrl: (u) => openHostBrowser(String(u || "").trim()),
               onStatus: (m) => { try { status.textContent = m; } catch (e) {} },
               onReady: (r) => {
                 setState("Running");

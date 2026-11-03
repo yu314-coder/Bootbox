@@ -47,31 +47,78 @@ Lower risk, worth a look:
 
 ## App Store Connect metadata (to prepare)
 
-- [ ] Privacy policy URL (required). Proposed: GitHub Pages on yu314-coder/Bootbox (`docs/privacy.html`).
+- [ ] Privacy policy URL (required): the user publishes [PRIVACY.md](PRIVACY.md) on their GitHub Pages.
       App Privacy answers: **Data Not Collected** (no analytics, no accounts; guest traffic goes straight to the
       internet).
 - [ ] Support URL (the GitHub repo or its Issues page).
 - [ ] Age rating questionnaire: **Unrestricted Web Access = Yes**, which gives 18+ / 17+.
 - [ ] Category: Utilities (secondary: Developer Tools). Price: free.
 - [ ] Description, subtitle, keywords, promotional text.
-- [ ] Screenshots: 13-inch iPad (2064 × 2752 portrait or 2752 × 2064 landscape), 3 to 10 of them: BIOS picker, Linux
-      desktop + browser, Terminal + Python, Android, Benchmarks hub.
+- [ ] Screenshots: 13-inch iPad (2064 × 2752 portrait or 2752 × 2064 landscape) AND 6.9-inch iPhone (1320 × 2868 or
+      2868 × 1320), 3 to 10 each: boot menu, Linux desktop + browser, Terminal + Python, Android, Benchmarks hub.
 - [ ] Review contact (name, phone, email): the user enters these.
 - [ ] Export compliance: `ITSAppUsesNonExemptEncryption = NO` is already set (HTTPS only).
-- [ ] Build with a release Xcode/SDK (Xcode 27.1 27A9275 now) and scan the binary for private symbols
-      before submitting.
+- [x] Build with a release Xcode/SDK: Build 113 (App Store Connect build 112) processed as
+      **APP_STORE_ELIGIBLE** (Xcode 27.1 27A9275).
+- [ ] Availability: by default an iPad app is also offered on Apple silicon Macs ("Designed for iPad") and
+      on Apple Vision Pro, and review may test there. Untested, so turn both off in Pricing and Availability
+      unless we test them.
+- [ ] Scan the release binary for private symbols before submitting.
 
 ## Draft notes for App Review
 
-> Bootbox is a PC emulator for iPad, similar to UTM SE. It emulates an x86-64 computer entirely in
+> Bootbox is a PC emulator for iPad and iPhone, similar to UTM SE. It emulates an x86-64 computer entirely in
 > software: QEMU's CPU emulator is compiled to WebAssembly and runs inside WKWebView. It generates no native
 > code and has no JIT entitlement or private API. The operating systems it boots are open-source (Linux,
 > Android AOSP 12); they download on first use from the developer's GitHub releases. No account or sign-in
 > is needed.
 >
-> To test: open Bootbox and choose "Linux (Desktop)". The first boot downloads about N MB and takes 1–2
+> To test: open Bootbox and choose "Linux (Desktop)". The first boot downloads about 240 MB and takes 1–2
 > minutes to show the desktop. Tap Apps for programs; the Benchmarks icon runs CPU-Z and a web
 > benchmark. "Linux (Terminal)" opens a Linux console with Python.
 >
-> Links in the guest's browser open in the iPad's own browser. Everything the guest does stays inside the
+> Links in the guest's browser open in the device's own browser. Everything the guest does stays inside the
 > app's sandbox.
+
+## Draft store listing
+
+**Name:** Bootbox
+**Subtitle (30 max):** Run Linux on a virtual PC
+
+**Promotional text (170 max):**
+Run a real 64-bit Linux desktop or a Linux terminal with Python, inside one app. Everything
+runs on a virtual x86 computer emulated on your device.
+
+**Description:**
+Bootbox is a virtual PC for iPad and iPhone. It emulates a complete 64-bit x86 computer in software and boots
+real operating systems on it, with no jailbreak, sign-in or server.
+
+CHOOSE A SYSTEM
+• Linux Desktop: windows, a taskbar, a terminal, a file manager and a WebKit web browser.
+• Linux Terminal: a full Linux console with Python 3.12 and pip, internet access, and Wine for Windows
+  command-line programs.
+• Android 12 (AOSP): the Android home screen with touch and keyboard. It resumes in seconds from a
+  ready-made snapshot.
+• Your own disk images and ISO files.
+
+A REAL COMPUTER, EMULATED
+• Up to 8 virtual CPU cores that really run in parallel.
+• Internet inside the virtual machine, through a network stack built into the app.
+• Files move between your device and the virtual machine, and machines can be saved and resumed.
+• Built-in benchmarks (CPU-Z, 7-Zip, sysbench, GPU and web tests) show what the emulated PC can do.
+
+GOOD TO KNOW
+Every instruction of the virtual PC is translated in software, so it runs much slower than a real
+computer. It's best for learning Linux, scripting, retro-style computing and experiments, not heavy
+work. The systems download on first use (about 240 MB for the Linux desktop, about 900 MB for Android) and
+then run offline. Newer devices with more memory run them best.
+
+Bootbox collects no data.
+
+**Keywords (100 max):** linux,emulator,virtual machine,vm,terminal,python,x86,qemu,shell,pc,desktop,os,wine
+**Category:** Utilities (secondary: Developer Tools)
+**Support URL:** https://github.com/yu314-coder/Bootbox/issues
+
+Note: guideline 2.3.10 discourages naming other mobile platforms in the metadata. "Android" stays out of
+the subtitle, promo text and keywords and appears only as a feature line in the description. If review
+objects, drop that line too; the feature itself is interactive functionality, which 2.3.10 allows.
