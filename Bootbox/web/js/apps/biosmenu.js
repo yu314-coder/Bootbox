@@ -18,7 +18,7 @@
 (function () {
   // The bootable "systems" — REAL official distro ISOs (not lightweight spins),
   // all 32-bit. Each downloads its official ISO on first boot, then boots it.
-  // The boot menu: two Linux front-ends of the 64-bit x86_64 engine, Android, ReactOS and the two v86
+  // The boot menu: two Linux front-ends of the 64-bit x86_64 engine, Android and the two v86
   // Windows images. (The ARM64 guest is no longer listed.) The Windows 98 / 2000 one-tap images were out
   // of 1.0 for App Review (guideline 5.2) and are back in 1.1 at the user's direction (Nov 2026).
   const SYSTEMS = [
@@ -31,11 +31,6 @@
     { id: "android64", name: "Android", sub: "Android 12 AOSP · 64-bit x86_64 · quad-core · touch + keyboard", icon: "🤖", tag: "ANDROID",
       guest: "android64", ram: 1280,
       note: "Android 12 AOSP (System UI + Launcher3) on 4 emulated cores. It resumes from a snapshot taken at the home screen, so it opens in seconds instead of a multi-minute cold boot. Touch the screen directly; ⌨ Type for text. Downloaded once (~901 MB). No Google Play, no GPU acceleration." },
-    { id: "reactos", name: "ReactOS", sub: "Open-source Windows-compatible OS · one-tap download · ~189 MB", icon: "💠", tag: "REACTOS",
-      img: "vmres://iso/reactos-0.4.16.iso", kind: "cdrom", ram: 512, fixedRam: true,
-      downloadName: "reactos-0.4.16.iso.gz", imgName: "reactos-0.4.16.iso", gz: true,
-      downloadUrl: "https://github.com/yu314-coder/Bootbox/releases/download/reactos-0.4.16/reactos-0.4.16.iso.gz",
-      note: "ReactOS 0.4.16, a free open-source operating system built to run Windows programs and drivers. One-tap download (~189 MB), then it boots the Live desktop from the CD image in the 32-bit engine in about a minute: tap Next on the language screen. Nothing is installed; 512 MB RAM. Source: github.com/reactos/reactos." },
     { id: "win98", name: "Windows 98 SE", sub: "One-tap download + boot · ~89 MB", icon: "🪟", tag: "WIN",
       img: "vmres://iso/win98.img", kind: "hda", ram: 256, fixedRam: true,
       downloadName: "win98.img.gz", imgName: "win98.img", gz: true,

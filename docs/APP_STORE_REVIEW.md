@@ -147,20 +147,18 @@ Filled through the API (`/Volumes/D/xcode/asc.py`, screenshots: `/Volumes/D/xcod
 
 The user chose to bring the one-tap Windows downloads back in 1.1. Finding **A** above (guideline
 5.2.1/5.2.2) applies again: Windows 98 SE and Windows 2000 are Microsoft software, and the app downloads
-them from the developer's `windows-v1` release. Review may reject 1.1 for this. ReactOS is GPL open source
-and carries no such risk. Ask the user again before submitting, and keep the notes honest about it.
+them from the developer's `windows-v1` release. Review may reject 1.1 for this. Ask the user again before
+submitting, and keep the notes honest about it. (A ReactOS one-tap entry was in the first 1.1 TestFlight
+build; the user had it removed on 2026-11-05. Its `reactos-0.4.16` GitHub release is still up.)
 
 **What's New (draft):**
-• ReactOS: one tap downloads and boots the open-source, Windows-compatible ReactOS live desktop.
 • Windows 98 SE and Windows 2000 one-tap entries are back.
 • An on-screen PC keyboard with F1–F12, Esc, Tab, arrows and Ctrl/Alt/Shift/Win, for every system.
 • UEFI Setup: an optional AVX2 CPU for the 64-bit Linux systems, for programs that need it.
 • Fixes and speed-ups.
 
 **Review notes (draft, append to the 1.0 notes):**
-> New in 1.1: the boot menu adds ReactOS (an open-source, GPL-licensed Windows-compatible operating
-> system, downloaded unmodified from the developer's GitHub release, source at github.com/reactos/reactos)
-> and one-tap Windows 98 SE / Windows 2000 entries, which download pre-installed disk images from the
-> developer's GitHub release. An on-screen PC keyboard (the "Keys" button) and an optional AVX2 CPU setting
-> (UEFI Setup → Advanced) were also added. Everything still runs in the WebAssembly emulator inside
-> WKWebView, with no native code generation.
+> New in 1.1: the boot menu adds one-tap Windows 98 SE / Windows 2000 entries, which download pre-installed
+> disk images from the developer's GitHub release. An on-screen PC keyboard (the "Keys" button) and an
+> optional AVX2 CPU setting (UEFI Setup → Advanced) were also added. Everything still runs in the
+> WebAssembly emulator inside WKWebView, with no native code generation.

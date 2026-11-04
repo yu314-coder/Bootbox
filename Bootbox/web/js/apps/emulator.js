@@ -1516,7 +1516,7 @@
 
           // ---- On-screen PC keyboard (1.1): a full layout with one-shot Shift / Ctrl / Alt / Win, routed to
           // whatever the guest reads: the noVNC desktop (X keysyms), the serial terminal (ANSI bytes) or
-          // v86 (PS/2 set-1 scancodes; so Ctrl+Alt+Del reaches Windows / ReactOS). ----
+          // v86 (PS/2 set-1 scancodes; so Ctrl+Alt+Del reaches Windows). ----
           const osk = body.querySelector("#emu-osk"), oskBtn = body.querySelector("#kosk");
           let toggleOsk = null;
           if (osk) {
