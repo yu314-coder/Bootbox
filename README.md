@@ -1,15 +1,34 @@
 # Bootbox
 
-**A boot manager for your iPad.** Bootbox is a native iOS app that boots real operating
-systems — 64-bit Linux (x86-64 *and* ARM64), full Android, classic Windows, graphical desktops — inside
-a WebKit-hosted emulation stack, with real internet, real multi-core, a built-in file
-browser, guest files in the iOS Files app, and one-tap downloads for every guest image.
+<p align="center">
+  <img src="docs/bootbox-icon.png" alt="Bootbox" width="180">
+</p>
 
-Everything runs on-device. No servers, no streaming, no jailbreak.
+<p align="center">
+  A virtual PC for iPad and iPhone. It boots real 64-bit <b>Linux</b> (a desktop with a WebKit browser,
+  or a terminal with Python 3.12 and Wine) and <b>Android 12</b> on a complete x86-64 computer emulated
+  on-device in WebAssembly, with real internet, real multi-core and your files in the Files app.
+  No jailbreak, no servers, no sign-in.
+</p>
+
+<p align="center">
+  <a href="https://apps.apple.com/app/id6782149582"><img src="https://img.shields.io/badge/Download_on_the-App_Store-000000?style=for-the-badge&logo=apple&logoColor=white" alt="Download on the App Store" height="40"></a>
+</p>
+
+<p align="center">
+  <a href="https://apps.apple.com/app/id6782149582"><img src="https://img.shields.io/badge/App%20Store-v1.0-0D96F6?logo=appstore&logoColor=white" alt="App Store v1.0"></a>
+  <img src="https://img.shields.io/badge/platform-iPadOS%2016+-blue" alt="iPadOS 16+">
+  <img src="https://img.shields.io/badge/platform-iOS%2016+-blue" alt="iOS 16+">
+  <img src="https://img.shields.io/badge/Swift-5-orange" alt="Swift 5">
+  <img src="https://img.shields.io/badge/engine-QEMU%20%E2%86%92%20WebAssembly-purple" alt="QEMU to WebAssembly">
+  <img src="https://img.shields.io/badge/guests-Linux%20%C2%B7%20Android-green" alt="Linux and Android">
+</p>
+
+---
 
 ```
 ┌────────────────────────────────────────────────────────────┐
-│  iPad (iOS)                                                │
+│  iPad / iPhone (iOS)                                       │
 │  ┌──────────────────────────────────────────────────────┐  │
 │  │ Bootbox.app (Swift)                                  │  │
 │  │  HostView ── WKWebView (cross-origin isolated)       │  │
@@ -21,8 +40,8 @@ Everything runs on-device. No servers, no streaming, no jailbreak.
 │  │  │ web/ — the "firmware" UI (boot menu + UEFI     │  │  │
 │  │  │ setup) and the engines:                        │  │  │
 │  │  │  · QEMU-Wasm x86-64 (SMP, ACPI, virtio, 9p)    │  │  │
-│  │  │  · QEMU-Wasm aarch64 (real ARM64, dual-core)   │  │  │
-│  │  │  · v86 (fast 32-bit x86: Win98/2000, i686)     │  │  │
+│  │  │  · QEMU-Wasm aarch64 (ARM64, not in the menu)  │  │  │
+│  │  │  · v86 (32-bit x86: your own images and ISOs)  │  │  │
 │  │  │  · Boxedwine (Wine in the browser)             │  │  │
 │  │  │  · noVNC (Linux desktop + direct Android UI)   │  │  │
 │  │  └────────────────────────────────────────────────┘  │  │
@@ -36,13 +55,10 @@ Everything runs on-device. No servers, no streaming, no jailbreak.
 
 | System | Arch | Cores | Highlights | Download |
 |---|---|---|---|---|
-| **64-bit Linux + Python & Wine** | x86-64 | **1–8 (default 2)** | Alpine · Python 3.12 + pip · real internet · file browser · `mc` · **wine-staging 11.5, esync on by default, warm prefix** | ~310 MB, once |
-| **64-bit Linux — Desktop** | x86-64 | **1–8 (default 2)** | Openbox desktop · app icons on the wallpaper · **Dillo browser** · **PCManFM** · **Claude Code CLI** · terminal + `mc` + `links` | ~240 MB, once |
-| **64-bit Linux — ARM64** | aarch64 | 2 | *Genuine* ARM64 Alpine (`uname -m` = aarch64) · Python · internet · up to 1.5 GB RAM | ~61 MB, once |
-| **Android 12 AOSP** | x86-64 | **1–4 (default 4)** | Full Android framework + ART · System UI · Launcher3 · touch/keyboard · writable 2 GiB `/data` · direct framebuffer VNC | ~591 MB, once |
-| **Windows 98 SE** | i686 (v86) | 1 | Boots to the desktop | ~89 MB, once |
-| **Windows 2000 Pro** | i686 (v86) | 1 | Working internet (NT NDIS via the relay) | ~340 MB, once |
-| **Your own images** | i686 (v86) | 1 | Import `.iso`/`.img` via the Files app; paired save-states resume in ~1 s | — |
+| **Linux (Desktop)** | x86-64 | **1–8 (default 2)** | Openbox + tint2 desktop · **WebKit web browser** (links can also open in the device's own browser) · PCManFM · terminal · Python 3.12 · **Benchmarks hub** (CPU-Z, 7-Zip, sysbench, glmark2, web) | ~240 MB, once |
+| **Linux (Terminal)** | x86-64 | **1–8 (default 2)** | Alpine · Python 3.12 + pip · real internet · file browser · `mc` · **wine-staging 11.5, esync on by default, warm prefix** | ~310 MB, once |
+| **Android 12 AOSP** | x86-64 | 4 | Full Android framework + ART · System UI · Launcher3 · touch/keyboard · resumes from a home-screen snapshot in seconds · writable `/data` | ~900 MB, once |
+| **Your own images** | i686 (v86) | 1 | Import `.iso`/`.img` (for example your own Windows install media) via the Files app; paired save-states resume in ~1 s | — |
 
 The **app itself is ~68 MB.** Guest images are **not bundled** — each system downloads
 once from GitHub Releases and is cached (delete it in the Files app to reclaim space). The
@@ -138,7 +154,8 @@ are shown. The first listing right after boot is slow only because the emulated 
 finishing boot; once settled a listing is **<0.5 s**.
 
 ### Windows programs
-Classic Windows (98/2000) boots natively in **v86**, and 32-bit `.exe` run in **BoxedWine**
+Classic Windows boots in **v86** from install media or disk images you supply (Bootbox doesn't ship
+Windows), and 32-bit `.exe` run in **BoxedWine**
 (import an `.exe` → Compatibility Center → 🍷 Run with Wine → the window renders via noVNC).
 
 **Wine in the 64-bit guest (experimental, v2):** the first attempt (Wine 9.0) deadlocked on-device
@@ -150,16 +167,16 @@ root causes were identified and both are attacked in the current build:
    it on every alloc/free. wasm32 has no 128-bit atomics, so each one used to freeze **all** vCPUs
    (a stop-the-world exclusive section). The engine now emulates 16-byte CAS behind a host spinlock
    (with hardware-faithful CAS-read semantics), speeding up *every* x64 guest, not just Wine
-   (`⚛️ cx16 probe` in the console measures it).
+   (`winetest cx16` in the console measures it).
 2. **Wine:** upgraded to **wine-staging 11.5** (two major loader rewrites past 9.0) with **esync**
    (`WINEESYNC=1`) — sync objects become kernel eventfds, bypassing the wineserver round-trips the
    old deadlock lived in.
 
-Use the **🍷 Wine test** console button: it runs the cx16 probe, then `winemine` under esync, then
+Run `winetest` in the console: it runs the cx16 probe, then `winemine` under esync, then
 plain — with full `WINEDEBUG` logs in `/root/winetest-*.log`. A pass leaves the window visible in
 the 🖥️ GUI tab. (The GUI pipeline itself was never the problem — X apps render fine via Xvnc→noVNC.)
-For production Windows software today, still prefer **v86 (98/2000)** or **BoxedWine (32-bit
-`.exe`)**; for Python tools, run them natively in the Linux guest.
+For production Windows software today, still prefer **v86 (your own Windows image)** or **BoxedWine
+(32-bit `.exe`)**; for Python tools, run them natively in the Linux guest.
 
 ### Your files, in the Files app
 An **iSH-style File Provider** exposes the Bootbox folder in the iOS Files app — drop
@@ -191,8 +208,8 @@ Bootbox/                    Swift host app
   HostView.swift              WKWebView shell (cross-origin isolated)
   LocalServer.swift           in-app HTTP server: COOP/COEP headers, gzip-on-the-fly,
                               size-tagged download cache for guest images
-  BackgroundKeepAlive.swift   keeps the VM alive briefly in background, then lets iOS
-                              suspend (timed release — battery)
+  BackgroundKeepAlive.swift   a short background task (~30 s) when you switch apps, then
+                              iOS suspends and the guest resumes on return
   Bridge/                     native bridges: Downloader, BinaryBridge (import/gunzip),
                               DomainRegistrar (File Provider), System/Media/Clipboard…
   web/                        the whole "firmware" UI + engines (served by LocalServer)
@@ -247,7 +264,7 @@ images. The Dockerfiles live in `ubuntu-build/`:
 | Dockerfile | Produces | Used by |
 |---|---|---|
 | `Dockerfile.base` → `Dockerfile.pw` | Alpine + Python 3.12 + pip/uv + Wine + Xvnc + TUI tools (+ constraints, timeouts) | x86-64 console guest |
-| `Dockerfile.desktop` | Alpine + twm/tint2 desktop + links + mc | x86-64 desktop guest |
+| `Dockerfile.desktop` | Alpine + Openbox/tint2 desktop + WebKitGTK browser (`bbweb`) + benchmarks | x86-64 desktop guest |
 | `Dockerfile.arm64` | aarch64 Alpine + Python | ARM64 guest |
 | `Dockerfile.android64` | Android 12 x86-64 + direct-framebuffer VNC/input bridge | Android guest |
 
