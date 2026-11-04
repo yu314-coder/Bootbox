@@ -18,10 +18,9 @@
 (function () {
   // The bootable "systems" — REAL official distro ISOs (not lightweight spins),
   // all 32-bit. Each downloads its official ISO on first boot, then boots it.
-  // The boot menu offers three systems: two Linux front-ends of the 64-bit x86_64 engine and Android.
-  // (The ARM64 guest is no longer listed.) The one-tap Windows 98 / 2000 images were removed for the App
-  // Store (Nov 2026: Microsoft's software can't be distributed); the emulator still boots an image or ISO
-  // the user provides ("Windows / ISO / disk image…" in the emulator).
+  // The boot menu: two Linux front-ends of the 64-bit x86_64 engine, Android, ReactOS and the two v86
+  // Windows images. (The ARM64 guest is no longer listed.) The Windows 98 / 2000 one-tap images were out
+  // of 1.0 for App Review (guideline 5.2) and are back in 1.1 at the user's direction (Nov 2026).
   const SYSTEMS = [
     { id: "x64pwd", name: "Linux (Desktop)", sub: "64-bit Linux desktop · windows, taskbar, terminal, file manager, web browser", icon: "🖥️", tag: "DESKTOP",
       guest: "x64pwd", ram: 1536,
@@ -32,6 +31,21 @@
     { id: "android64", name: "Android", sub: "Android 12 AOSP · 64-bit x86_64 · quad-core · touch + keyboard", icon: "🤖", tag: "ANDROID",
       guest: "android64", ram: 1280,
       note: "Android 12 AOSP (System UI + Launcher3) on 4 emulated cores. It resumes from a snapshot taken at the home screen, so it opens in seconds instead of a multi-minute cold boot. Touch the screen directly; ⌨ Type for text. Downloaded once (~901 MB). No Google Play, no GPU acceleration." },
+    { id: "reactos", name: "ReactOS", sub: "Open-source Windows-compatible OS · one-tap download · ~189 MB", icon: "💠", tag: "REACTOS",
+      img: "vmres://iso/reactos-0.4.16.iso", kind: "cdrom", ram: 512, fixedRam: true,
+      downloadName: "reactos-0.4.16.iso.gz", imgName: "reactos-0.4.16.iso", gz: true,
+      downloadUrl: "https://github.com/yu314-coder/Bootbox/releases/download/reactos-0.4.16/reactos-0.4.16.iso.gz",
+      note: "ReactOS 0.4.16, a free open-source operating system built to run Windows programs and drivers. One-tap download (~189 MB), then it boots the Live desktop from the CD image in the 32-bit engine in about a minute: tap Next on the language screen. Nothing is installed; 512 MB RAM. Source: github.com/reactos/reactos." },
+    { id: "win98", name: "Windows 98 SE", sub: "One-tap download + boot · ~89 MB", icon: "🪟", tag: "WIN",
+      img: "vmres://iso/win98.img", kind: "hda", ram: 256, fixedRam: true,
+      downloadName: "win98.img.gz", imgName: "win98.img", gz: true,
+      downloadUrl: "https://github.com/yu314-coder/Bootbox/releases/download/windows-v1/win98.img.gz",
+      note: "Windows 98 SE · one-tap download (~89 MB) + boot. Verified booting to the desktop in v86. Boots as a hard disk at 256 MB RAM (Win9x can't use much more). 640×480 standard VGA." },
+    { id: "win2000", name: "Windows 2000 Pro", sub: "One-tap download + boot · has internet · ~340 MB", icon: "🪟", tag: "WIN",
+      img: "vmres://iso/win2000.img", kind: "hda", ram: 512, fixedRam: true,
+      downloadName: "win2000.img.gz", imgName: "win2000.img", gz: true,
+      downloadUrl: "https://github.com/yu314-coder/Bootbox/releases/download/windows-v1/win2000.img.gz",
+      note: "Windows 2000 SP4 · one-tap download (~340 MB) + boot. The only Windows here with WORKING INTERNET (NT NDIS NIC via the relay, where Win9x's driver hangs). Heavier/slower than Win98. 512 MB RAM · 640×480 VGA · auto-logon." },
   ];
   const SETUP_ROW = { id: "__setup__", kind: "setup", name: "UEFI Firmware Setup", sub: "Advanced configuration (normally hidden)",
     icon: "⚙️", tag: "SETUP", note: "Enter the firmware setup — boot order, memory, CPU, security." };
@@ -92,7 +106,11 @@
       });
     }
     // Setup is reached from the footer button (and the S key), not a list row.
-    function build(names) { return SYSTEMS.concat(importRows(names)); }
+    // A one-tap download lands in the same folder as imports; list it only once, as its own entry.
+    function build(names) {
+      const own = new Set(SYSTEMS.map(s => s.imgName).filter(Boolean));
+      return SYSTEMS.concat(importRows((names || []).filter(n => !own.has(n))));
+    }
 
     container.innerHTML = `
       <style>
@@ -346,7 +364,7 @@
     hooks = hooks || {};
     const DEF = { ram: 256, cores: 2, bootOrder: "cd-hd", vtx: true, htt: false, secureBoot: false,
       bootMode: "UEFI", fastBoot: true, sataMode: "AHCI", usbLegacy: true, numlock: true, memRemap: false,
-      netInternet: true, resumeState: true, nx: true, tpm: false, txt: false, bgRun: "About 30 s" };
+      netInternet: true, resumeState: true, nx: true, tpm: false, txt: false, bgRun: "About 30 s", isa: "SSE3 (standard)" };
     let s = Object.assign({}, DEF, readCfg());
     // Reflect the emulator's actual internet + resume state (it stores these in its own config).
     try { const ec = JSON.parse(VFS.read("/Apps/.emulator.json") || "{}"); s.netInternet = (ec.netRelay !== "off"); s.resumeState = (ec.resumeState !== false); } catch (e) {}
@@ -372,7 +390,7 @@
         { t: "info", label: "CPU Type", value: "Virtual x86 Family 6 (i686)" },
         { t: "info", label: "Translation", value: "WASM → native ARM (JIT)" },
         { t: "info", label: "Active Cores", value: String(s.cores || 2) + " (64-bit Linux)" },
-        { t: "info", label: "Instruction Set", value: "x87 FPU · MMX · SSE · SSE2" },
+        { t: "info", label: "Instruction Set", value: /^AVX2/.test(s.isa || "") ? "SSE4.2 · AVX · AVX2 · FMA (64-bit Linux)" : "x87 FPU · MMX · SSE · SSE2 · SSE3" },
         { t: "sep", label: "Memory Information" },
         { t: "info", label: "Total Memory", value: s.ram + " MB" },
         { t: "info", label: "Memory Type", value: "Emulated DRAM" },
@@ -386,7 +404,8 @@
           help: "Functional for the 64-bit x86 Linux guests. 2 (default) = real dual-core — two jobs run in parallel and a busy program doesn't freeze the shell. Up to 4 verified (idle power stays flat), but beyond 2 the speedup depends on the workload (disk-heavy jobs serialize). 1 = simplest. The 32-bit systems are always single-core." },
         { t: "toggle", label: "Hyper-Threading", key: "htt", help: "Theater on a single-core virtual CPU — has no effect." },
         { t: "toggle", label: "Intel® VT-x", key: "vtx", help: "Expose the hardware-virtualization flag to the guest. Cosmetic here." },
-        { t: "info", label: "SSE2 Extensions", value: "Supported" },
+        { t: "select", label: "Instruction Set (64-bit Linux)", key: "isa", opts: ["SSE3 (standard)", "AVX2 (x86-64-v3)"],
+          help: "Functional for the 64-bit Linux guests (applies on the next boot). 'AVX2' adds SSSE3, SSE4.1/4.2, POPCNT, AVX, AVX2, FMA, F16C, BMI1/BMI2, LZCNT and MOVBE, so programs built for x86-64-v3 (newer NumPy, AVX-only tools) run. It is for compatibility, not speed: every AVX instruction is emulated, and programs that switch to AVX code can get much slower, especially multi-threaded (CPU-Z multi-thread drops to about a third). Leave it on SSE3 unless a program needs AVX. Android keeps its own CPU (it resumes from a snapshot)." },
         { t: "toggle", label: "Execute Disable Bit", key: "nx", help: "Theater: the NX/DEP flag exposed to the guest. v86 does not enforce it." },
         { t: "sep", label: "Memory Configuration" },
         { t: "stepper", label: "Installed RAM", key: "ram", min: 64, max: 3584, step: 128, unit: " MB",
@@ -541,7 +560,7 @@
       writeCfg({ ram: s.ram, bootOrder: s.bootOrder, vtx: s.vtx, htt: s.htt, secureBoot: s.secureBoot,
         bootMode: s.bootMode, fastBoot: s.fastBoot, sataMode: s.sataMode, usbLegacy: s.usbLegacy,
         numlock: s.numlock, memRemap: s.memRemap, netInternet: s.netInternet,
-        resumeState: s.resumeState, nx: s.nx, tpm: s.tpm, txt: s.txt, bgRun: s.bgRun });
+        resumeState: s.resumeState, nx: s.nx, tpm: s.tpm, txt: s.txt, bgRun: s.bgRun, isa: s.isa });
       // Apply the background-execution choice to the native keep-alive (UserDefaults + re-arm).
       try { if (window.Bridge && BG_SEC[s.bgRun] != null) Bridge.call("system", "setBackgroundGrace", { seconds: BG_SEC[s.bgRun] }); } catch (e) {}
       // Mirror the internet + resume toggles into the emulator's own config (it reads

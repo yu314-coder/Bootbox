@@ -552,6 +552,13 @@
     container.addEventListener("contextmenu", (e) => e.preventDefault());
     try { window.__bbPointer = { ops, curve: () => curve, cur: () => cur, reset: () => { calibrated = false; calibTries = 0; calibLast = -1e9; }, calibrate: () => { calibrated = false; calibTries = 0; calibLast = -1e9; saveCurve(null); curve = [[1, 1], [2, 2]]; ensureCalibrated(); return calibrating; } }; } catch (e) {}
   }
+  // UEFI Setup -> Advanced -> Instruction Set (1.1): "AVX2 (x86-64-v3)" boots the 64-bit Linux guests with the
+  // x86-64-v3 feature set. XSAVEOPT is required with XSAVE: with XSAVE alone this guest kernel hangs before its
+  // first log line (reproduced in native QEMU 8.2 too). Verified with a self-checking AVX/AVX2/FMA/F16C/BMI test
+  // (1.88 M results, 0 mismatches) in the wasm engine.
+  const AVX2_FLAGS = "+ssse3,+sse4.1,+sse4.2,+popcnt,+abm,+bmi1,+bmi2,+movbe,+xsave,+xsaveopt,+avx,+avx2,+fma,+f16c";
+  function biosIsa() { try { return JSON.parse(VFS.read("/Apps/.bios.json") || "{}").isa || ""; } catch (e) { return ""; } }
+
   // The Linux desktop's Web (bbweb) asks for a page in the device's own browser. In the MiniOS shell that is
   // the Browser app's window; in the boot-menu flow (full-screen #bb-root, z-index 9000) that window opened
   // UNDER the emulator - tapping Web did nothing (build 113 fix): there the page opens in a full-screen
@@ -660,6 +667,16 @@
             .emu-keys .kbtn:active{background:#26262f}
             .emu-keys .kbtn.primary{background:#0067c0;border-color:#1f86e0;color:#fff}
             .emu-keys .kbtn.on{background:#b45309;border-color:#d97706;color:#fff}
+            .emu-osk{display:none;flex-direction:column;gap:5px;padding:6px 6px 2px;background:#0c0c10;border-top:1px solid #23232a;
+              user-select:none;-webkit-user-select:none;-webkit-touch-callout:none;touch-action:manipulation}
+            .emu-osk.open{display:flex}
+            .emu-osk .r{display:flex;gap:5px}
+            .emu-osk button{flex:1 1 0;min-width:0;height:38px;padding:0;border-radius:6px;border:1px solid #2a2a33;background:#1c1c24;
+              color:#e4e4ec;font:600 13px/1 system-ui,sans-serif;white-space:nowrap;overflow:hidden}
+            .emu-osk button:active{background:#33333d}
+            .emu-osk button.m{background:#15151b;color:#aab}
+            .emu-osk button.m.on{background:#b45309;border-color:#d97706;color:#fff}
+            @media (max-width:560px){.emu-osk{gap:4px;padding:4px 3px 1px}.emu-osk .r{gap:3px}.emu-osk button{height:34px;font-size:11px;border-radius:5px}}
             .emu-status{height:28px;display:flex;align-items:center;padding:0 12px;font-size:12px;color:#5b5f66;
               background:#f7f9fc;border-top:1px solid #e5e7eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
               font-family:"Cascadia Mono",Consolas,monospace}
@@ -715,8 +732,10 @@
             <input id="kbd-capture" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" aria-hidden="true"
               style="position:absolute;left:0;bottom:0;width:1px;height:1px;opacity:0;border:0;padding:0;font-size:16px;color:transparent;background:transparent">
           </div>
+          <div class="emu-osk" id="emu-osk"></div>
           <div class="emu-keys" id="emu-keys">
             <button class="kbtn primary" data-k="kbd">⌨ Type</button>
+            <button class="kbtn" id="kosk" data-k="osk">⌨︎ Keys</button>
             <button class="kbtn" data-k="esc">Esc</button>
             <button class="kbtn" data-k="tab">Tab</button>
             <button class="kbtn" id="kctrl" data-k="ctrl">Ctrl</button>
@@ -1179,6 +1198,7 @@
               compressedVnc: !!g.android,
               touchGuest: !!g.android,   // touches go straight to Android's touchscreen (run.js installDirectTouch)
               cpuModelId: g.cpuModelId,
+              cpuFlags: !g.android && /^AVX2/.test(biosIsa()) ? AVX2_FLAGS : undefined,
               vncLabel: g.android ? "Android" : undefined,
               appsKey: g.id === "x64pwd",   // desktop panel's Apps button -> openbox's menu key (run.js installAppsKey)
               // Desktop v14+: Linux's Web opens pages in the app's native Browser (the iPad's own WebKit,
@@ -1494,6 +1514,94 @@
             } catch (e) {}
           };
 
+          // ---- On-screen PC keyboard (1.1): a full layout with one-shot Shift / Ctrl / Alt / Win, routed to
+          // whatever the guest reads: the noVNC desktop (X keysyms), the serial terminal (ANSI bytes) or
+          // v86 (PS/2 set-1 scancodes; so Ctrl+Alt+Del reaches Windows / ReactOS). ----
+          const osk = body.querySelector("#emu-osk"), oskBtn = body.querySelector("#kosk");
+          let toggleOsk = null;
+          if (osk) {
+            const SH = { "`": "~", "1": "!", "2": "@", "3": "#", "4": "$", "5": "%", "6": "^", "7": "&", "8": "*", "9": "(", "0": ")",
+              "-": "_", "=": "+", "[": "{", "]": "}", "\\": "|", ";": ":", "'": "\"", ",": "<", ".": ">", "/": "?" };
+            const CHSC = { "`": 0x29, "1": 0x02, "2": 0x03, "3": 0x04, "4": 0x05, "5": 0x06, "6": 0x07, "7": 0x08, "8": 0x09, "9": 0x0A,
+              "0": 0x0B, "-": 0x0C, "=": 0x0D, "[": 0x1A, "]": 0x1B, "\\": 0x2B, ";": 0x27, "'": 0x28, ",": 0x33, ".": 0x34, "/": 0x35, " ": 0x39 };
+            const chKey = (c) => ({ ch: c, sh: SH[c] || c.toUpperCase(), sc: [LETTER[c] != null ? LETTER[c] : CHSC[c]] });
+            const FKEY = (n) => ({ label: "F" + n, ks: 0xffbd + n, sc: [n <= 10 ? 0x3A + n : 0x56 + (n - 10)],
+              ansi: ["", "\x1bOP", "\x1bOQ", "\x1bOR", "\x1bOS", "\x1b[15~", "\x1b[17~", "\x1b[18~", "\x1b[19~", "\x1b[20~", "\x1b[21~", "\x1b[23~", "\x1b[24~"][n] });
+            const SPK = {
+              Esc: { ks: 0xff1b, sc: [0x01], ansi: "\x1b" }, Bksp: { label: "⌫", w: 1.7, ks: 0xff08, sc: [0x0E], ansi: "\x7f" },
+              Tab: { w: 1.5, ks: 0xff09, sc: [0x0F], ansi: "\t" }, Enter: { w: 1.9, ks: 0xff0d, sc: [0x1C], ansi: "\r" },
+              Space: { label: " ", w: 5, ch: " ", sh: " ", sc: [0x39] }, Del: { ks: 0xffff, sc: [0xE0, 0x53], ansi: "\x1b[3~" },
+              Ins: { ks: 0xff63, sc: [0xE0, 0x52], ansi: "\x1b[2~" }, Home: { ks: 0xff50, sc: [0xE0, 0x47], ansi: "\x1b[H" },
+              End: { ks: 0xff57, sc: [0xE0, 0x4F], ansi: "\x1b[F" }, PgUp: { ks: 0xff55, sc: [0xE0, 0x49], ansi: "\x1b[5~" },
+              PgDn: { ks: 0xff56, sc: [0xE0, 0x51], ansi: "\x1b[6~" },
+              Up: { label: "↑", ks: 0xff52, sc: [0xE0, 0x48], arrow: "ArrowUp" }, Down: { label: "↓", ks: 0xff54, sc: [0xE0, 0x50], arrow: "ArrowDown" },
+              Left: { label: "←", ks: 0xff51, sc: [0xE0, 0x4B], arrow: "ArrowLeft" }, Right: { label: "→", ks: 0xff53, sc: [0xE0, 0x4D], arrow: "ArrowRight" },
+              Shift: { mod: "shift", w: 2.1 }, Ctrl: { mod: "ctrl", w: 1.3 }, Alt: { mod: "alt", w: 1.2 }, Win: { mod: "win", label: "❖", w: 1.2 },
+            };
+            for (let n = 1; n <= 12; n++) SPK["F" + n] = FKEY(n);
+            const ROWS = [
+              ["Esc", "F1", "F2", "F3", "F4", "F5", "F6", "F7", "F8", "F9", "F10", "F11", "F12", "Del"],
+              ["`", "1", "2", "3", "4", "5", "6", "7", "8", "9", "0", "-", "=", "Bksp"],
+              ["Tab", "q", "w", "e", "r", "t", "y", "u", "i", "o", "p", "[", "]", "\\"],
+              ["a", "s", "d", "f", "g", "h", "j", "k", "l", ";", "'", "Enter"],
+              ["Shift", "z", "x", "c", "v", "b", "n", "m", ",", ".", "/", "Up", "PgUp"],
+              ["Ctrl", "Win", "Alt", "Space", "Home", "End", "Left", "Down", "Right", "PgDn"],
+            ];
+            const mods = { shift: false, ctrl: false, alt: false, win: false };
+            const defs = [];
+            osk.innerHTML = ROWS.map((row) => '<div class="r">' + row.map((name) => {
+              const d = SPK[name] || chKey(name); d.name = name; defs.push(d);
+              return '<button data-o="' + (defs.length - 1) + '" class="' + (d.mod ? "m" : "") + '" style="flex-grow:' + (d.w || 1) + '"></button>';
+            }).join("") + "</div>").join("");
+            const btns = Array.from(osk.querySelectorAll("button"));
+            const paint = () => btns.forEach((b) => {
+              const d = defs[+b.dataset.o];
+              b.textContent = d.ch != null ? (mods.shift ? d.sh : d.ch) : (d.label != null ? d.label : d.name);
+              if (d.mod) b.classList.toggle("on", mods[d.mod]);
+            });
+            const brk = (c) => { const b = c.slice(); for (let i = b.length - 1; i >= 0; i--) if (b[i] !== 0xE0) { b[i] |= 0x80; break; } return b; };
+            const press = (d) => {
+              if (d.mod) { mods[d.mod] = !mods[d.mod]; paint(); return; }
+              const shift = mods.shift, ctrl = mods.ctrl || ctrlOn, alt = mods.alt, win = mods.win;
+              const ch = d.ch != null ? (shift ? d.sh : d.ch) : null;
+              try {
+                if (qemuTerm && guiOn()) {                     // 64-bit desktop / Android: X keysyms
+                  const r = guiRfb(), ks = ch != null ? ch.charCodeAt(0) : d.ks;
+                  const M = [[ctrl, 0xffe3, "ControlLeft"], [alt, 0xffe9, "AltLeft"], [win, 0xffeb, "MetaLeft"], [shift, 0xffe1, "ShiftLeft"]].filter((m) => m[0]);
+                  M.forEach((m) => r.sendKey(m[1], m[2], true));
+                  r.sendKey(ks, null, true); r.sendKey(ks, null, false);
+                  M.reverse().forEach((m) => r.sendKey(m[1], m[2], false));
+                } else if (qemuTerm) {                         // 64-bit serial terminal: bytes
+                  const out = d.arrow ? arrowSeq(d.arrow) : d.ansi ? d.ansi : ch != null ? (ctrl && ch !== " " ? ctrlByte(ch) : ch) : "";
+                  if (out) send64((alt ? "\x1b" : "") + out);
+                } else if (emu && emu.keyboard_send_scancodes) {   // v86: PS/2 scancodes
+                  const M = [[ctrl, [0x1D]], [alt, [0x38]], [win, [0xE0, 0x5B]], [shift, [0x2A]]].filter((m) => m[0]).map((m) => m[1]);
+                  let seq = [];
+                  M.forEach((c) => { seq = seq.concat(c); });
+                  seq = seq.concat(d.sc, brk(d.sc));
+                  M.reverse().forEach((c) => { seq = seq.concat(brk(c)); });
+                  emu.keyboard_send_scancodes(seq);
+                }
+              } catch (e) {}
+              if (mods.shift || mods.ctrl || mods.alt || mods.win) { mods.shift = mods.ctrl = mods.alt = mods.win = false; paint(); }
+              if (ctrlOn) setCtrl(false);
+            };
+            // click (like the key bar): WebKit on iOS reliably turns a tap into a click on the tapped button, while
+            // pointerdown from quick taps was dropped or landed on a neighbouring key. Buttons don't take focus on
+            // iOS, so this never summons or dismisses the soft keyboard.
+            osk.addEventListener("click", (e) => {
+              const b = e.target.closest("button[data-o]"); if (!b) return;
+              e.preventDefault(); press(defs[+b.dataset.o]);
+            });
+            paint();
+            toggleOsk = () => {
+              const open = osk.classList.toggle("open");
+              if (oskBtn) oskBtn.classList.toggle("on", open);
+              try { status.textContent = open ? "On-screen keyboard: on (Shift / Ctrl / Alt / ❖ apply to the next key)" : "On-screen keyboard: off"; } catch (e) {}
+              try { window.dispatchEvent(new Event("resize")); } catch (e) {}   // the screen area shrank / grew
+            };
+          }
+
           kbd.addEventListener("input", () => {                // soft keyboard (keydown is 229)
             const v = kbd.value; kbd.value = "";
             if (!v) return;
@@ -1507,6 +1615,7 @@
             const b = e.target.closest("[data-k]"); if (!b) return;
             const k = b.dataset.k;
             if (k === "kbd") return focusKbd();
+            if (k === "osk") { if (toggleOsk) toggleOsk(); return; }
             if (k === "ctrl") return setCtrl(!ctrlOn);
             if (qemuTerm) {                                    // 64-bit
               if (guiOn()) {                                   // GUI tab active -> X desktop
