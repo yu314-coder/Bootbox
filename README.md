@@ -24,7 +24,34 @@
   <img src="https://img.shields.io/badge/guests-Linux%20%C2%B7%20Android-green" alt="Linux and Android">
 </p>
 
+<p align="center">
+  <img src="docs/screenshots/ipad-desktop.jpg" alt="Linux desktop with the WebKit browser on iPad" width="300">
+  <img src="docs/screenshots/ipad-terminal-python.jpg" alt="Linux terminal running Python on iPad" width="300">
+</p>
+<p align="center">
+  <img src="docs/screenshots/iphone-desktop.jpg" alt="Linux desktop on iPhone" width="190">
+  <img src="docs/screenshots/iphone-terminal.jpg" alt="Python in the Linux terminal on iPhone" width="190">
+  <img src="docs/screenshots/iphone-boot-menu.jpg" alt="Boot menu on iPhone" width="190">
+</p>
+
+<p align="center">
+  <a href="#what-it-boots">What it boots</a> ·
+  <a href="#performance">Performance</a> ·
+  <a href="#feature-highlights">Features</a> ·
+  <a href="#building-the-app">Build</a> ·
+  <a href="#engineering-notes-the-fun-bugs">Engineering notes</a> ·
+  <a href="#privacy">Privacy</a>
+</p>
+
 ---
+
+## How it works
+
+Bootbox emulates a whole x86-64 PC in software: QEMU's CPU emulator is compiled to WebAssembly
+and runs inside a `WKWebView`, so WebKit's own JIT turns guest code into native code. There is
+no Hypervisor.framework or JIT entitlement on iOS, and Bootbox needs neither. Every guest
+instruction is translated in software, which makes it far slower than a real computer; it's
+built for learning Linux, scripting, retro computing and experiments.
 
 ```
 ┌────────────────────────────────────────────────────────────┐
@@ -67,7 +94,57 @@ engine, which few users boot) are fetched on demand.
 
 ---
 
+## Performance
+
+Measured on an Apple M4 Mac with the engine the app ships (Linux guest, 4 vCPUs), in Chrome's and
+in WebKit's WebAssembly engines. iPads land in the same range or somewhat lower.
+
+| Benchmark | Score |
+|---|---|
+| CPU-Z, single / multi thread | **15.4 / 42.0** (WebKit: 12.0–12.7 / 29–31) |
+| 7-Zip, single / multi thread | **301 / 907** MIPS |
+| GPU: glmark2 on Mesa llvmpipe (every pixel drawn by the emulated CPU) | **45** |
+| Web benchmark in the Linux browser (1000 = WebKit natively on an M4) | **4–7** |
+| Android 12 cold app launch: Settings / Contacts | **21 s / 15 s** |
+
+For scale: a modern native CPU core scores roughly 700–900 in CPU-Z single-thread, so the emulated PC
+runs at a few percent of native. A month earlier the same CPU-Z test scored 0.59 / 1.48. What made
+the difference, build by build:
+
+- **Compiled blocks no longer wait for the garbage collector** (Build 85). Evicted block instances
+  stayed counted against the live-instance cap until JavaScript's GC ran, so big guests quietly ran
+  fully interpreted. CPU-Z ×18, glmark2 ×8.
+- **Registers in wasm locals, SSE float ops as native wasm, chained blocks** (Builds 86–93).
+- **Compile threshold 10,000 on iPad** (Build 99). WebKit pays a costly module compile per block,
+  so first-run code (opening apps and menus, booting) got 2–4× faster.
+- **Lazy wasm modules** (Build 107). Every translated block stored a wasm module, so the 256 MB
+  translation cache filled and flushed every ~8 s. A block now gets its module only once it's hot:
+  CPU-Z +16% single / +32% multi; Android app launches ~30% faster.
+- **16-byte atomics without stopping the world** (Build 108). Every guest kernel allocation used to
+  freeze all vCPUs.
+- **No longjmp per run of blocks that touch a device** (Build 109): sticky block splits at mid-block
+  MMIO; APIC recompiles fell from 541,738 to 13 per CPU-Z run.
+- **WebKit-only hot spots** (Builds 110–111), found by sampling WebKit itself: wasm table growth
+  one slot at a time, `performance` lookups, and a 43 KB call switch WebKit's optimizing compiler
+  chewed on for seconds during every boot.
+- **Fast interpreter by default** (Build 112). A compact interpreter loop WebKit can fully
+  optimize; the classic one sometimes stayed slow (2 of 3 test runs were 3–4× slower).
+
+---
+
 ## Feature highlights
+
+### A Linux desktop with a real browser
+The Desktop system boots straight to an **Openbox** desktop with a **tint2** taskbar: tap **Apps**
+(bottom left) or right-click / long-press the desktop for programs. It comes with a terminal, the
+**PCManFM** file manager, a text editor, Python 3.12, a system monitor and **bbweb**, a WebKitGTK
+browser tuned for emulation (one web process, the mimalloc allocator, an ad blocker, Lite and Fast
+page modes). bbweb runs real sites such as Wikipedia, DuckDuckGo and GitHub inside the emulated PC.
+Its **Web** icon can also hand a page to the device's own browser, which is far faster, with a
+**Back to Linux** button.
+
+A **Benchmarks hub** runs CPU-Z (the real Windows program, under Wine), 7-Zip, sysbench, glmark2 and
+a web benchmark, singly or with **Run all**, and keeps a history you can screenshot.
 
 ### Real multi-core (x86-64, up to 8 cores) — and it *actually* parallelizes
 The x86-64 console guest boots **dual-core by default** (`nproc` = 2) and scales to **8**.
@@ -128,10 +205,11 @@ under software CPU emulation.
 This is **AOSP**, so Google Play, Google Mobile Services and Play certification are not
 included. The guest is software-emulated because Apple exposes Hypervisor.framework and
 Virtualization.framework on macOS, not iPadOS; performance is therefore suitable for the
-Android compatibility testing rather than graphics-heavy games. Cold boot under browser
-WebAssembly is currently a development limitation: the clean Mac validation reached VNC in
-about 251 seconds but System UI had not drawn after ten minutes. The image downloads once
-and stays outside the app bundle.
+Android compatibility testing rather than graphics-heavy games. A cold boot under WebAssembly
+takes many minutes, so Bootbox doesn't do one: the image carries a **snapshot taken at the home
+screen** (captured on four cores) and resumes from it in seconds. Apps then cold-launch in roughly
+15–20 s on an M4 Mac (Settings 21 s, Contacts 15 s). The image downloads once (~900 MB) and stays
+outside the app bundle.
 
 ### Python that actually works
 - `pip install` is backed by **uv** (a static Rust resolver — no slow Python import tree)
@@ -221,15 +299,15 @@ Bootbox/                    Swift host app
     vendor/qemu-aload/          x86-64 engine (patched QEMU-Wasm, -g-stripped) + loader
     vendor/qemu-aarch64/        ARM64 engine loader (engine wasm + rootfs download on demand)
     vendor/qemu-desktop/        desktop-guest loader (shares the x86-64 engine binary)
-    vendor/qemu-android/        Android guest loader + QEMU arguments
-    vendor/qemu-android-engine/ Android-only 3 GiB QEMU-Wasm engine
+    vendor/qemu-android/        Android guest QEMU arguments (runs on the shared x86-64 engine)
     vendor/v86/                 v86 (32-bit x86 in wasm)
     vendor/boxedwine/           Boxedwine
     vendor/novnc/               noVNC (guest GUI)
 FileProvider/               Files-app integration (classic NSFileProviderExtension)
 Frameworks/Iosnet.xcframework   gVisor netstack (Go, via gomobile)
 ubuntu-build/               Dockerfiles for the guest rootfs images (see below)
-docs/                       historical design docs (the MiniOS web-shell era)
+docs/                       App Store review checklist, privacy policy, screenshots, icon,
+                            and historical design docs (the MiniOS web-shell era)
 tools/, build.sh            misc build helpers
 ```
 
@@ -237,10 +315,12 @@ tools/, build.sh            misc build helpers
 
 ## Building the app
 
-Requirements: Xcode 16+, an Apple developer team for device installs.
+Requirements: Xcode 26.4 or newer (releases are built with Xcode 27.1), an Apple developer team for
+device installs. The app runs on iPadOS / iOS 16 and later. It sizes guest RAM to what the device
+lets a page use, and Android needs about 2.4 GB of it, so newer devices with more RAM run it best.
 
 ```bash
-open Bootbox.xcodeproj          # build & run the "Bootbox" scheme on an iPad
+open Bootbox.xcodeproj          # build & run the "Bootbox" scheme on an iPad or iPhone
 ```
 
 CLI (unsigned build):
@@ -362,6 +442,48 @@ runtime crashes). NumPy 1.x wheels detect CPU features at **runtime** and run co
 A baked `pip`/`uv` constraints file pins the working line so a plain `pip install numpy`
 does the right thing.
 
+**7. Why big guests ran 18× slower than they should.**
+Each hot translated block becomes its own small WebAssembly module, and a cap limits how many live
+instances exist. Evicted instances were only uncounted when a `FinalizationRegistry` callback
+fired, which waits for JavaScript's garbage collector. Busy vCPU workers almost never GC, so once
+a big working set filled the cap, *nothing new was compiled ever again* and the guest ran fully in
+the interpreter. Freeing the cap slot at eviction made CPU-Z 18× and glmark2 8× faster.
+
+**8. Why the translation cache flushed every eight seconds.**
+QEMU's 256 MB code buffer held every translated block, and each block also stored its finished
+wasm module, which was 75% of the bytes while only ~2% of blocks ever got compiled. Under Wine
+the buffer filled and was flushed every ~8 s, throwing away all compiled code. Blocks now carry an
+empty module and are re-translated into a scratch buffer only when they turn hot. That needs
+care: live addresses biased into the scratch copy, matching alignment, and a final byte-compare
+against the live block before compiling.
+
+**9. Why every kernel memory allocation froze all CPUs.**
+The guest kernel's SLUB allocator uses 16-byte `cmpxchg16b`, and the build container compiled
+QEMU without `CONFIG_CMPXCHG128`, so every 16-byte atomic *load* fell back to
+stop-the-world exclusive execution on all vCPUs. 16-byte loads and stores now go through the
+engine's spinlock CAS. The first version of the fix halved multi-core speed by sending every
+aligned SSE store through the lock; the shipped one only locks real 128-bit atomics.
+
+**10. Why WebKit (the iPad's engine) was slower than Chrome on the same code.**
+Sampling WebKit's own content process showed costs Chrome never has:
+- wasm table growth one slot at a time, O(n) each, up to 25% of busy time;
+- a `performance` property lookup on every clock read;
+- seconds of optimizing-compiler time at every boot on one 43 KB interpreter switch;
+- the classic, Asyncify-instrumented interpreter sometimes never reaching WebKit's fast tier.
+
+The fixes, in order: pre-grow the table once, cache the clock object, split the switch into 21
+small functions kept out of line, and make the compact interpreter loop the default.
+
+---
+
+## Privacy
+
+Bootbox collects no data: no accounts, no analytics, no ads, no tracking. Guest images download
+from this repository's GitHub releases, and the Linux and Android guests' internet traffic goes
+straight from the device to the sites it contacts (the 32-bit engine for your own images uses a
+public WebSocket relay instead, and can be switched offline). Details:
+[privacy policy](https://yu314-coder.github.io/privacy.html#bootbox).
+
 ---
 
 ## Credits
@@ -381,6 +503,16 @@ Bootbox stands on excellent open source:
   [xterm-pty](https://github.com/mame/xterm-pty) — the serial console
 - **[iSH](https://github.com/ish-app/ish)** — whose classic File Provider implementation
   showed the way past "Syncing Paused"
+- In the guest images: **[Alpine Linux](https://alpinelinux.org/)**,
+  **[Android Open Source Project](https://source.android.com/)** (Apache-2.0),
+  **[Wine](https://www.winehq.org/)** / wine-staging (LGPL-2.1),
+  **[WebKitGTK](https://webkitgtk.org/)** (LGPL-2.1), **[Openbox](http://openbox.org/)** and
+  **[tint2](https://gitlab.com/o9000/tint2)** (GPL-2.0), **[PCManFM](https://github.com/lxde/pcmanfm)**
+  (GPL-2.0), **[mimalloc](https://github.com/microsoft/mimalloc)** (MIT), **[Mesa](https://mesa3d.org/)**
+  (MIT), **[glmark2](https://github.com/glmark2/glmark2)** (GPL-3.0),
+  **[sysbench](https://github.com/akopytov/sysbench)** (GPL-2.0), **[7-Zip](https://www.7-zip.org/)**
+  (LGPL-2.1) and **[CPU-Z](https://www.cpuid.com/softwares/cpu-z.html)** (CPUID freeware, run
+  unmodified under Wine)
 
 Modified engine sources are published in the two forks above, per the GPL. Guest Linux
 images are built from Alpine Linux packages; classic-Windows images are user-supplied.
