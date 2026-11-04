@@ -305,6 +305,7 @@ Bootbox/                    Swift host app
     vendor/novnc/               noVNC (guest GUI)
 FileProvider/               Files-app integration (classic NSFileProviderExtension)
 Frameworks/Iosnet.xcframework   gVisor netstack (Go, via gomobile)
+engine/                     the x86-64 engine's source (QEMU-Wasm, GPL-2.0) + build recipe
 ubuntu-build/               Dockerfiles for the guest rootfs images (see below)
 docs/                       App Store review checklist, privacy policy, screenshots, icon,
                             and historical design docs (the MiniOS web-shell era)
@@ -363,7 +364,15 @@ changed):
   MADT table (SMP), (b) builds the kernel tickless (`NO_HZ_IDLE` + `HIGH_RES_TIMERS`), and
   (c) drops `-g` from the QEMU/emscripten build flags for a release-size engine.
 - **[yu314-coder/qemu-wasm](https://github.com/yu314-coder/qemu-wasm)**, branch
-  `idle-sleep` — replaces the event-loop busy-poll with adaptive futex sleeps.
+  `idle-sleep` — replaces the event-loop busy-poll with adaptive futex sleeps. (The guest images
+  are built with this branch; the engine the app itself runs is newer and lives in
+  [`engine/`](engine/), see below.)
+
+**The engine source is in this repository:** [`engine/qemu-wasm/`](engine/qemu-wasm/) is the
+QEMU-Wasm tree the App Store build's x86-64 engine is compiled from, plus one later experiment
+(cross-vCPU module sharing, off by default), with [`engine/Dockerfile.engine`](engine/Dockerfile.engine)
+as its build recipe. How to build it and
+what changed is in [`engine/README.md`](engine/README.md).
 
 Example (x86-64 console pack) — note `--dockerfile` selects the fork's `-g`-stripped build
 recipe instead of `c2w`'s embedded default:
@@ -514,8 +523,9 @@ Bootbox stands on excellent open source:
   (LGPL-2.1) and **[CPU-Z](https://www.cpuid.com/softwares/cpu-z.html)** (CPUID freeware, run
   unmodified under Wine)
 
-Modified engine sources are published in the two forks above, per the GPL. Guest Linux
-images are built from Alpine Linux packages; classic-Windows images are user-supplied.
+Modified engine sources are published per the GPL: the app's engine in
+[`engine/qemu-wasm/`](engine/qemu-wasm/), the guest-image build changes in the two forks above.
+Guest Linux images are built from Alpine Linux packages; classic-Windows images are user-supplied.
 
 ---
 

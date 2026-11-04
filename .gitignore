@@ -5,7 +5,7 @@ vm/
 distros/
 DerivedData/
 boxedwine/
-qemu-wasm/
+/qemu-wasm/
 qemu-build/
 c2w-src/
 
