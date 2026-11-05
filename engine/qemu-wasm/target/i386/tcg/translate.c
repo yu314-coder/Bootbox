@@ -139,6 +139,11 @@ typedef struct DisasContext {
 
     sigjmp_buf jmpbuf;
     TCGOp *prev_insn_end;
+
+    /* Bootbox: a pending short forward jcc kept inside the TB ("hammock", see gen_jcc) */
+    TCGLabel *hm_label;      /* taken path: branches here */
+    target_ulong hm_target;  /* the jcc's target pc; the fall-through path joins it there */
+    target_ulong hm_pc_save; /* pc_save on the taken path */
 } DisasContext;
 
 #define DISAS_EOB_ONLY         DISAS_TARGET_0
@@ -2464,10 +2469,86 @@ static inline int insn_const_size(MemOp ot)
     }
 }
 
+/*
+ * Bootbox "hammock": a conditional jump forward over a few bytes (if (x < 0) x += 1.0 compiles to
+ * comiss + jbe over one addss) used to end the TB, so a loop with such ifs ran as a chain of small
+ * TBs - and each TB boundary is a dispatch or chained call in the wasm engine, far costlier than a
+ * native backend's direct jump. Instead the taken path branches to a label inside the TB and the
+ * fall-through path keeps translating; both meet at the target (i386_tr_insn_start), where cc_op is
+ * DYNAMIC on both sides (gen_jcc1 stores it before the branch, the join stores the fall-through's)
+ * and cpu_eip is made to agree (pc_save). If the TB ends before the target is reached, the taken
+ * path gets its own exit in i386_tr_tb_stop. /bootbox-tune hammock=1 (wasm) / BB_HAMMOCK=1 (native);
+ * hmmax=N caps the skipped bytes, hmcpl=3 limits it to user mode, hmmod/hmsel pick TBs by a pc hash
+ * (bisection). The TCI half needed tci_args_br (tcg/wasm32.c): a skipped region whose ops all fold
+ * away leaves a zero-length br.
+ */
+#ifdef __EMSCRIPTEN__
+extern int bb_hammock, bb_hm_max, bb_hm_mod, bb_hm_sel, bb_hm_cpl;   /* tcg/wasm32.c */
+void bootbox_tune_init(void);
+static bool hammock_on(void) { bootbox_tune_init(); return bb_hammock > 0; }
+#else
+static int bb_hm_max = 16, bb_hm_mod = 1, bb_hm_sel = 0, bb_hm_cpl = 0;
+static bool hammock_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("BB_HAMMOCK"); on = e && atoi(e) > 0; }
+    return on;
+}
+#endif
+
+static bool hammock_ok(DisasContext *s, int diff)
+{
+    return diff > 0 && CODE64(s) && !s->hm_label && s->jmp_opt &&
+           !(tb_cflags(s->base.tb) & CF_USE_ICOUNT) &&
+           s->base.num_insns + 4 <= s->base.max_insns &&
+           is_same_page(&s->base, s->pc + diff) && hammock_on() && diff <= bb_hm_max &&
+           (!bb_hm_cpl || CPL(s) == bb_hm_cpl) &&
+           (bb_hm_mod <= 1 || ((s->base.pc_first >> 4) * 2654435761u >> 7) % bb_hm_mod == bb_hm_sel);
+}
+
+/* Fall-through path reaches the target: make its state match the taken path, place the label. */
+static void hammock_join(DisasContext *s)
+{
+    gen_update_cc_op(s);
+    set_cc_op(s, CC_OP_DYNAMIC);
+    if (s->pc_save != s->hm_pc_save) {
+        assert(s->pc_save != -1);
+        if (tb_cflags(s->base.tb) & CF_PCREL) {
+            tcg_gen_addi_tl(cpu_eip, cpu_eip, s->hm_pc_save - s->pc_save);
+        }
+        s->pc_save = s->hm_pc_save;
+    }
+    gen_set_label(s->hm_label);
+    s->hm_label = NULL;
+}
+
+/* The TB ended before the target: the taken path leaves the TB on its own. */
+static void hammock_exit(DisasContext *s)
+{
+    gen_set_label(s->hm_label);
+    s->hm_label = NULL;
+    s->cc_op = CC_OP_DYNAMIC;       /* as gen_jcc1 left it: already stored */
+    s->cc_op_dirty = false;
+    if (tb_cflags(s->base.tb) & CF_PCREL) {
+        tcg_gen_addi_tl(cpu_eip, cpu_eip, s->hm_target - s->hm_pc_save);
+    } else {
+        tcg_gen_movi_tl(cpu_eip, s->hm_target);   /* CODE64 only: eip == pc */
+    }
+    s->pc_save = s->hm_target;
+    gen_jr(s);
+}
+
 static void gen_jcc(DisasContext *s, int b, int diff)
 {
     TCGLabel *l1 = gen_new_label();
 
+    if (hammock_ok(s, diff)) {
+        gen_jcc1(s, b, l1);         /* taken -> l1, cc_op now DYNAMIC (stored) */
+        s->hm_label = l1;
+        s->hm_target = s->pc + diff;
+        s->hm_pc_save = s->pc_save;
+        return;                     /* keep translating the fall-through path */
+    }
     gen_jcc1(s, b, l1);
     gen_jmp_rel_csize(s, 0, 1);
     gen_set_label(l1);
@@ -7255,6 +7336,7 @@ static void i386_tr_init_disas_context(DisasContextBase *dcbase, CPUState *cpu)
 
     dc->cc_op = CC_OP_DYNAMIC;
     dc->cc_op_dirty = false;
+    dc->hm_label = NULL;
     dc->popl_esp_hack = 0;
     /* select memory access functions */
     dc->mem_index = cpu_mmu_index(env, false);
@@ -7295,6 +7377,10 @@ static void i386_tr_insn_start(DisasContextBase *dcbase, CPUState *cpu)
     DisasContext *dc = container_of(dcbase, DisasContext, base);
     target_ulong pc_arg = dc->base.pc_next;
 
+    /* before prev_insn_end: undoing this insn (page-crossing retry) must not remove the label */
+    if (dc->hm_label && dc->base.pc_next == dc->hm_target) {
+        hammock_join(dc);
+    }
     dc->prev_insn_end = tcg_last_op();
     if (tb_cflags(dcbase->tb) & CF_PCREL) {
         pc_arg -= dc->cs_base;
@@ -7334,6 +7420,8 @@ static void i386_tr_translate_insn(DisasContextBase *dcbase, CPUState *cpu)
                 dc->base.is_jmp = DISAS_EOB_NEXT;
             } else if (!is_same_page(&dc->base, pc_next)) {
                 dc->base.is_jmp = DISAS_TOO_MANY;
+            } else if (dc->hm_label && pc_next > dc->hm_target) {
+                dc->base.is_jmp = DISAS_TOO_MANY;   /* target inside this insn: no join */
             }
         }
     }
@@ -7367,6 +7455,9 @@ static void i386_tr_tb_stop(DisasContextBase *dcbase, CPUState *cpu)
         break;
     default:
         g_assert_not_reached();
+    }
+    if (dc->hm_label) {
+        hammock_exit(dc);
     }
 }
 

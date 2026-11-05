@@ -293,6 +293,9 @@
       if (t.lazywasm) tune += "lazywasm=1\n";
       // split=0 (build 109 engine): turn off the sticky TB split at mid-block device I/O (safety ladder).
       if (t.split === 0) tune += "split=0\n";
+      // hammock=1 (1.1 engine): a conditional jump forward over a few bytes no longer ends the block -
+      // the skipped code is translated inline, so loops with small ifs run as one compiled block.
+      if (t.hammock) tune += "hammock=1\n";
       if (t.extra) tune += String(t.extra).replace(/[^a-z0-9=\n]/g, "") + "\n";   // harness experiments: raw key=value lines
       if (tune) mod.FS.writeFile("/bootbox-tune", tune);
     });

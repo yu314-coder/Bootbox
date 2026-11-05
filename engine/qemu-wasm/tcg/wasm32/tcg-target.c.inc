@@ -2350,6 +2350,21 @@ static void wfp_slow_call(TCGContext *s, const tcg_insn_unit *func, const TCGHel
  *  cvtsi/sq2ss/sd: exact under round-to-nearest (cvtsi2sd is always exact)
  *  cvtss2sd/cvtsd2ss: promote/demote, slow for NaN input or a non-default MXCSR
  */
+extern __thread bool wasm_fp_locals;
+static int wfp_local(int kind, int i);
+static void wfp_local_isnan(TCGContext *s, int loc, int kind);
+static void wfp_copy_upper(TCGContext *s, int d, int v, int kind);
+
+/* Pushes the float at ptr: from local `loc` when it was loaded there once (loc >= 0), else memory. */
+static void wfp_get(TCGContext *s, int ptr_global, int kind, int loc)
+{
+    if (loc >= 0) {
+        tcg_wasm_out_op_local_get(s, loc);
+    } else {
+        wfp_load(s, ptr_global, kind);
+    }
+}
+
 static bool tcg_wasm_out_fp_inline_x(TCGContext *s, const tcg_insn_unit *func,
                                      const TCGHelperInfo *info, const WasmFpInline *t, int x)
 {
@@ -2359,26 +2374,40 @@ static bool tcg_wasm_out_fp_inline_x(TCGContext *s, const tcg_insn_unit *func,
     switch (x) {
     case WFPX_UCOMISS: case WFPX_COMISS: case WFPX_UCOMISD: case WFPX_COMISD: {
         int kind = (x == WFPX_UCOMISS || x == WFPX_COMISS) ? WFP_SS : WFP_SD;
+        /* each operand is read once (into a float local) instead of four times */
+        int A = wasm_reg_locals ? wfp_local(kind, 0) : -1, B = wasm_reg_locals ? wfp_local(kind, 1) : -1;
         tcg_wasm_out8(s, 0x02); tcg_wasm_out8(s, 0x40);       /* block $done */
         tcg_wasm_out8(s, 0x02); tcg_wasm_out8(s, 0x40);       /* block $slow */
         wfp_ptr(s, env);
         tcg_wasm_out_op_loadstore(s, 0x2d, 0, t->daz_off);
         tcg_wasm_out8(s, 0x0d); tcg_wasm_out8(s, 0);           /* br_if $slow */
+        if (A >= 0) {
+            wasm_fp_locals = true;
+            wfp_load(s, a1, kind);
+            tcg_wasm_out_op_local_set(s, A);
+            wfp_load(s, a2, kind);
+            tcg_wasm_out_op_local_set(s, B);
+        }
         wfp_ptr(s, env);                                       /* store address */
         tcg_wasm_out_op_i32_const(s, 0x45);                    /* CC_Z | CC_P | CC_C */
         tcg_wasm_out_op_i32_const(s, 0x01);                    /* CC_C */
         tcg_wasm_out_op_i32_const(s, 0x40);                    /* CC_Z */
         tcg_wasm_out_op_i32_const(s, 0);
-        wfp_load(s, a1, kind);
-        wfp_load(s, a2, kind);
+        wfp_get(s, a1, kind, A);
+        wfp_get(s, a2, kind, B);
         tcg_wasm_out8(s, kind == WFP_SS ? 0x5b : 0x61);        /* eq */
         tcg_wasm_out8(s, 0x1b);                                /* select */
-        wfp_load(s, a1, kind);
-        wfp_load(s, a2, kind);
+        wfp_get(s, a1, kind, A);
+        wfp_get(s, a2, kind, B);
         tcg_wasm_out8(s, kind == WFP_SS ? 0x5d : 0x63);        /* lt */
         tcg_wasm_out8(s, 0x1b);
-        wfp_isnan(s, a1, kind);
-        wfp_isnan(s, a2, kind);
+        if (A >= 0) {
+            wfp_local_isnan(s, A, kind);
+            wfp_local_isnan(s, B, kind);
+        } else {
+            wfp_isnan(s, a1, kind);
+            wfp_isnan(s, a2, kind);
+        }
         tcg_wasm_out_op_i32_or(s);
         tcg_wasm_out8(s, 0x1b);
         tcg_wasm_out_op_i64_extend_i32_u(s);
@@ -2390,7 +2419,12 @@ static bool tcg_wasm_out_fp_inline_x(TCGContext *s, const tcg_insn_unit *func,
         bool src64 = x == WFPX_CVTTSD2SI || x == WFPX_CVTTSD2SQ;
         bool dst64 = x == WFPX_CVTTSS2SQ || x == WFPX_CVTTSD2SQ;
         int kind = src64 ? WFP_SD : WFP_SS;
+        int A = wasm_reg_locals ? wfp_local(kind, 0) : -1;     /* the source, read once */
         wfp_load(s, a1, kind);
+        if (A >= 0) {
+            wasm_fp_locals = true;
+            tcg_wasm_out_op_local_tee(s, A);
+        }
         tcg_wasm_out8(s, 0xfc);                                /* i32/i64.trunc_sat_f32/f64_s */
         tcg_wasm_out8(s, (dst64 ? 4 : 0) + (src64 ? 2 : 0));
         if (dst64) {
@@ -2399,7 +2433,7 @@ static bool tcg_wasm_out_fp_inline_x(TCGContext *s, const tcg_insn_unit *func,
             tcg_wasm_out_op_i32_const(s, INT32_MIN);
         }
         /* in range (NaN compares false) ? truncated : integer indefinite */
-        wfp_load(s, a1, kind);
+        wfp_get(s, a1, kind, A);
         if (src64) {
             if (dst64) {
                 wfp_f64_const(s, -9223372036854775808.0);
@@ -2408,13 +2442,13 @@ static bool tcg_wasm_out_fp_inline_x(TCGContext *s, const tcg_insn_unit *func,
                 wfp_f64_const(s, -2147483649.0);
                 tcg_wasm_out8(s, 0x64);                        /* f64.gt */
             }
-            wfp_load(s, a1, kind);
+            wfp_get(s, a1, kind, A);
             wfp_f64_const(s, dst64 ? 9223372036854775808.0 : 2147483648.0);
             tcg_wasm_out8(s, 0x63);                            /* f64.lt */
         } else {
             wfp_f32_const(s, dst64 ? -9223372036854775808.0f : -2147483648.0f);
             tcg_wasm_out8(s, 0x60);                            /* f32.ge */
-            wfp_load(s, a1, kind);
+            wfp_get(s, a1, kind, A);
             wfp_f32_const(s, dst64 ? 9223372036854775808.0f : 2147483648.0f);
             tcg_wasm_out8(s, 0x5d);                            /* f32.lt */
         }
@@ -2472,16 +2506,7 @@ static bool tcg_wasm_out_fp_inline_x(TCGContext *s, const tcg_insn_unit *func,
         wfp_load(s, a3, src_kind);
         tcg_wasm_out8(s, demote ? 0xb6 : 0xbb);                /* f32.demote_f64 / f64.promote_f32 */
         wfp_store(s, demote ? WFP_SS : WFP_SD);
-        if (demote) {                                          /* keep v's lanes 1..3 */
-            wfp_ptr(s, a1);
-            wfp_ptr(s, a2);
-            tcg_wasm_out_op_i32_load(s, 0, 4);
-            tcg_wasm_out_op_i32_store(s, 0, 4);
-        }
-        wfp_ptr(s, a1);
-        wfp_ptr(s, a2);
-        tcg_wasm_out_op_i64_load(s, 0, 8);
-        tcg_wasm_out_op_i64_store(s, 0, 8);
+        wfp_copy_upper(s, a1, a2, demote ? WFP_SS : WFP_SD);   /* keep v's upper lanes */
         wfp_slow_call(s, func, info);
         return true;
     }
@@ -2530,6 +2555,29 @@ static void wfp_mxcsr_check(TCGContext *s, const WasmFpInline *t, int env)
     }
 }
 
+/*
+ * Scalar ops write lane 0 of d and keep v's upper lanes. Legacy SSE encodes d == v (mulss xmm1, xmm2
+ * computes xmm1 = xmm1 * xmm2), so the copy is skipped unless the pointers differ.
+ */
+static void wfp_copy_upper(TCGContext *s, int d, int v, int kind)
+{
+    wfp_ptr(s, d);
+    wfp_ptr(s, v);
+    tcg_wasm_out_op_i32_ne(s);
+    tcg_wasm_out_op_if_noret(s);
+    if (kind == WFP_SS) {
+        wfp_ptr(s, d);
+        wfp_ptr(s, v);
+        tcg_wasm_out_op_i32_load(s, 0, 4);
+        tcg_wasm_out_op_i32_store(s, 0, 4);
+    }
+    wfp_ptr(s, d);
+    wfp_ptr(s, v);
+    tcg_wasm_out_op_i64_load(s, 0, 8);
+    tcg_wasm_out_op_i64_store(s, 0, 8);
+    tcg_wasm_out_op_end(s);
+}
+
 /* Pushes i32 1 if local `loc` (any lane, for packed kinds) is a NaN: x != x. */
 static void wfp_local_isnan(TCGContext *s, int loc, int kind)
 {
@@ -2569,15 +2617,11 @@ static void wfp_emit_locals(TCGContext *s, const tcg_insn_unit *func, const TCGH
     }
     wfp_load(s, src, kind);
     tcg_wasm_out_op_local_set(s, B);
-    if (!minmax) {
-        /* x86 NaN propagation and default-NaN sign differ from wasm: leave NaNs to softfloat */
-        if (op != WFP_SQRT) {
-            wfp_local_isnan(s, A, kind);
-            tcg_wasm_out_op_i32_or(s);
-        }
-        wfp_local_isnan(s, B, kind);
-        tcg_wasm_out_op_i32_or(s);
-    }
+    /*
+     * x86 NaN propagation and default-NaN sign differ from wasm, so NaNs go to softfloat. Only the
+     * RESULT is tested: add/sub/mul/div/sqrt of a NaN input always give a NaN, and d is written
+     * after the test, so the slow path still sees the original inputs.
+     */
     tcg_wasm_out8(s, 0x0d); tcg_wasm_out8(s, 0);               /* br_if $slow */
 
     if (minmax) {
@@ -2614,16 +2658,7 @@ static void wfp_emit_locals(TCGContext *s, const tcg_insn_unit *func, const TCGH
     tcg_wasm_out_op_local_get(s, R);
     wfp_store(s, kind);
     if (!vec) {
-        if (kind == WFP_SS) {
-            wfp_ptr(s, d);
-            wfp_ptr(s, v);
-            tcg_wasm_out_op_i32_load(s, 0, 4);
-            tcg_wasm_out_op_i32_store(s, 0, 4);
-        }
-        wfp_ptr(s, d);
-        wfp_ptr(s, v);
-        tcg_wasm_out_op_i64_load(s, 0, 8);
-        tcg_wasm_out_op_i64_store(s, 0, 8);
+        wfp_copy_upper(s, d, v, kind);
     }
     tcg_wasm_out_op_br(s, 1);                                  /* br $done */
     tcg_wasm_out_op_end(s);                                    /* end $slow */

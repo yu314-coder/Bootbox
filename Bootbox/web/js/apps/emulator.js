@@ -1144,15 +1144,18 @@
             // mid-block device I/O (split=0).
             // q64safe6 (build 112): level 0 has the Fast interpreter by default - a device parked lower
             // tries it once.
+            // hammock (short forward jumps kept inside a block, engine 1.1): NOT on by default yet - CPU-Z
+            // +5% single-core on the Mac, but the desktop's WebKit renders blank pages with it (an open
+            // engine bug). The lower levels pin it off so a future default can never reach them.
             const fastTci = !!g.fastTci && cfg().interp2 !== "classic";
             const SAFE_LEVELS = [
               { name: "full speed", tune: fastTci ? { fasttci: 1 } : undefined },
-              { name: "classic interpreter, modules stored with every block", tune: { lazywasm: 0, split: 0 } },
-              { name: "no TB chaining", tune: { chain: 0, lazywasm: 0, split: 0 } },
-              { name: "no TB chaining, no SIMD float inlining", tune: { chain: 0, fpinline: 0, lazywasm: 0, split: 0 } },
-              { name: "no chaining/float inlining/register locals", tune: { chain: 0, fpinline: 0, regloc: 0, lazywasm: 0, split: 0 } },
-              { name: "the above + fixed-size memory, fewer compiled blocks", tune: { chain: 0, fpinline: 0, regloc: 0, max: 8000, lazywasm: 0, split: 0 }, presize: true },
-              { name: "interpreter only (slow)", tune: { chain: 0, fpinline: 0, regloc: 0, max: 8000, jit: 1000000000, lazywasm: 0, split: 0 }, presize: true },
+              { name: "classic interpreter, modules stored with every block", tune: { lazywasm: 0, split: 0, hammock: 0 } },
+              { name: "no TB chaining", tune: { chain: 0, lazywasm: 0, split: 0, hammock: 0 } },
+              { name: "no TB chaining, no SIMD float inlining", tune: { chain: 0, fpinline: 0, lazywasm: 0, split: 0, hammock: 0 } },
+              { name: "no chaining/float inlining/register locals", tune: { chain: 0, fpinline: 0, regloc: 0, lazywasm: 0, split: 0, hammock: 0 } },
+              { name: "the above + fixed-size memory, fewer compiled blocks", tune: { chain: 0, fpinline: 0, regloc: 0, max: 8000, lazywasm: 0, split: 0, hammock: 0 }, presize: true },
+              { name: "interpreter only (slow)", tune: { chain: 0, fpinline: 0, regloc: 0, max: 8000, jit: 1000000000, lazywasm: 0, split: 0, hammock: 0 }, presize: true },
             ];
             let safe = cfg().q64safe6 || { level: 0 };
             try {

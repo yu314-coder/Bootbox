@@ -600,6 +600,17 @@ static void tci_args_l(uint32_t insn, const void *tb_ptr, void **l0)
     *l0 = diff ? (uint8_t *)tb_ptr + diff : NULL;
 }
 
+/*
+ * Bootbox: br's label, with NO null mapping. tci_args_l maps displacement 0 to NULL for exit_tb(0),
+ * but a br to the very next instruction also encodes 0: TCG keeps insn_start ops (which emit no TCI
+ * code) in code its reachable-code pass removed, so "br L; insn_start...; set_label L" survives as a
+ * zero-length branch. That jumped to address 0 (seen with short forward jcc kept inside the TB).
+ */
+static void tci_args_br(uint32_t insn, const void *tb_ptr, void **l0)
+{
+    *l0 = (uint8_t *)tb_ptr + sextract32(insn, 12, 20);
+}
+
 static void tci_args_r(uint32_t insn, TCGReg *r0)
 {
     *r0 = extract32(insn, 8, 4);
@@ -1110,7 +1121,7 @@ static uintptr_t tcg_qemu_tb_exec_tci_full(CPUArchState *env, uint32_t *start, i
             break;
 
         case INDEX_op_br:
-            tci_args_l(insn, tb_ptr, &ptr);
+            tci_args_br(insn, tb_ptr, &ptr);
             tb_ptr = ptr;
             continue;
         case INDEX_op_setcond_i32:
@@ -1904,7 +1915,7 @@ __attribute__((noinline)) uintptr_t tci_hot_loop(CPUArchState *env, uint32_t *st
             }
             break;
         case INDEX_op_br:
-            tci_args_l(insn, tb_ptr, &ptr);
+            tci_args_br(insn, tb_ptr, &ptr);
             tb_ptr = ptr;
             break;
         case INDEX_op_mb:
@@ -2010,6 +2021,9 @@ static inline uintptr_t tci_exec(CPUArchState *env)
     }
 }
 
+int bb_hammock;   /* /bootbox-tune hammock=1: short forward jcc kept inside the TB (target/i386/tcg/translate.c) */
+int bb_hm_max = 16, bb_hm_mod = 1, bb_hm_sel = 0, bb_hm_cpl = 0;   /* hmmax, hmmod/hmsel (pc filter), hmcpl (3 = user only) */
+
 void bootbox_tune_init(void)
 {
     static int state;   /* 0 = not read, 1 = reading, 2 = done */
@@ -2063,14 +2077,25 @@ void bootbox_tune_init(void)
                 bb_split_enabled = v != 0;
             } else if (!strcmp(key, "share")) {
                 bb_share_on = v != 0;
+            } else if (!strcmp(key, "hammock")) {
+                bb_hammock = v != 0;
+            } else if (!strcmp(key, "hmmax") && v >= 1 && v <= 127) {
+                bb_hm_max = v;
+            } else if (!strcmp(key, "hmmod") && v >= 1) {
+                bb_hm_mod = v;
+            } else if (!strcmp(key, "hmsel") && v >= 0) {
+                bb_hm_sel = v;
+            } else if (!strcmp(key, "hmcpl")) {
+                bb_hm_cpl = v;
             }
         }
         fclose(f);
         wasm_hot_num = (wasm_hot_share || wasm_sum_count) ? wasm_instantiate_num / 16 : wasm_instantiate_num;
-        fprintf(stderr, "[bootbox-tune] jit=%d max=%d fpinline=%d chain=%d/%s/%d regloc=%d hotshare=%d sumcnt=%d tsc=%d fasttci=%d lazywasm=%d\n",
+        fprintf(stderr, "[bootbox-tune] jit=%d max=%d fpinline=%d chain=%d/%s/%d regloc=%d hotshare=%d sumcnt=%d tsc=%d fasttci=%d lazywasm=%d hammock=%d\n",
                 wasm_instantiate_num, wasm_max_instance_alive, wasm_fp_inline_enabled,
                 wasm_tail_chain, wasm_chain_nested ? "nested" : "tail", wasm_chain_budget,
-                wasm_reg_locals, wasm_hot_share, wasm_sum_count, bootbox_tsc_lockfree, wasm_fast_tci, bb_lazy_wasm);
+                wasm_reg_locals, wasm_hot_share, wasm_sum_count, bootbox_tsc_lockfree, wasm_fast_tci, bb_lazy_wasm,
+                bb_hammock);
     }
     qatomic_set(&state, 2);
 }

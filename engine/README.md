@@ -16,6 +16,12 @@ The Bootbox changes are mostly in `tcg/wasm32.c`, `tcg/wasm32/tcg-target.c.inc` 
 - the typed helper-call dispatch split into small functions (`tcg/wasm32-tci-calls.c.inc`, generated; the
   generator script was not recovered with this tree, so edit the generated file directly)
 - an experimental cross-vCPU module sharing mode (`share=1`, off)
+- 1.1: leaner inlined SSE scalar ops (one NaN test on the result, no upper-lane copy when the
+  destination is the source, `comiss`/`cvtt*` read each operand once); `fpcheck` stays bit-identical
+- 1.1: TCI `br` decodes a zero displacement as "next instruction" (it used to jump to address 0)
+- 1.1, off by default (`hammock=1`): a short forward `jcc` stays inside the TB
+  (`target/i386/tcg/translate.c`). CPU-Z single-core +5% on the Mac, but the desktop's WebKit renders
+  blank pages with it - an open bug
 
 Runtime switches are read from `/bootbox-tune` (written by `Bootbox/web/vendor/qemu/run.js`).
 
