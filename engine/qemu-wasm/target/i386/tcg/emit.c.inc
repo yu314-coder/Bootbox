@@ -1954,9 +1954,11 @@ static void gen_VCMP(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 
 static void gen_VCOMI(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
-    SSEFunc_0_epp fn;
-    fn = s->prefix & PREFIX_DATA ? gen_helper_comisd : gen_helper_comiss;
-    fn(tcg_env, OP_PTR1, OP_PTR2);
+    if (s->prefix & PREFIX_DATA) {
+        gen_helper_comisd(cpu_cc_src, tcg_env, OP_PTR1, OP_PTR2);
+    } else {
+        gen_helper_comiss(cpu_cc_src, tcg_env, OP_PTR1, OP_PTR2);
+    }
     set_cc_op(s, CC_OP_EFLAGS);
 }
 
@@ -2341,9 +2343,11 @@ static void gen_VSHUF(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 
 static void gen_VUCOMI(DisasContext *s, CPUX86State *env, X86DecodedInsn *decode)
 {
-    SSEFunc_0_epp fn;
-    fn = s->prefix & PREFIX_DATA ? gen_helper_ucomisd : gen_helper_ucomiss;
-    fn(tcg_env, OP_PTR1, OP_PTR2);
+    if (s->prefix & PREFIX_DATA) {
+        gen_helper_ucomisd(cpu_cc_src, tcg_env, OP_PTR1, OP_PTR2);
+    } else {
+        gen_helper_ucomiss(cpu_cc_src, tcg_env, OP_PTR1, OP_PTR2);
+    }
     set_cc_op(s, CC_OP_EFLAGS);
 }
 

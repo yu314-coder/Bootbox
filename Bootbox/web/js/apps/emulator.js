@@ -56,7 +56,10 @@
       // all 4 vCPUs) → constant evict/recompile churn. Mac-measured cold Settings launch: v3 1-core 605s,
       // v4 4-core 314s, v4 + max=45000 53-109s. A host that can't hold that many just interprets past it.
       // lazywasm (build 107): Mac harness cold launch Settings 38.6 -> 34.0 s, Contacts 30.8 -> 21.4 s.
-      tune: { max: 45000, lazywasm: 1 } },
+      // 1.1: the Fast hot-loop interpreter and the lock-free guest TSC, like the Linux guests (Android was left
+      // on the Classic interpreter, which WebKit runs bimodally). macOS WebKit, same engine, Settings / Contacts /
+      // Settings again: 8.1 / 6.2 / 5.0 s -> 6.0 / 3.6 / 1.4 s (and 5.3 / 3.0 / 2.0 s in a repeat).
+      tune: { max: 45000, lazywasm: 1, tsc: 1 }, fastTci: true },
     // (The ARM64 guest — vendor/qemu-aarch64/, its own engine — is no longer offered: the systems are
     // Linux Desktop, Linux Terminal, Android, and the Windows images through the ISO/disk path.)
   ];
@@ -557,6 +560,82 @@
   // first log line (reproduced in native QEMU 8.2 too). Verified with a self-checking AVX/AVX2/FMA/F16C/BMI test
   // (1.88 M results, 0 mismatches) in the wasm engine.
   const AVX2_FLAGS = "+ssse3,+sse4.1,+sse4.2,+popcnt,+abm,+bmi1,+bmi2,+movbe,+xsave,+xsaveopt,+avx,+avx2,+fma,+f16c";
+  // Android Shell (1.1): a terminal on the Android guest that stays usable while Android's own UI is slow.
+  // Android draws every frame on the emulated CPU (seconds per screen on an iPad); a shell only moves text,
+  // which the iPad draws. vendor/qemu/adbshell.js speaks adb to the guest's adbd through the in-app
+  // netstack's /adb endpoint (c2w-src/iosnet). The ▤ Shell button on the Android screen opens the pane
+  // over the display (Android keeps running behind it); keys go to the shell while it is open.
+  // localStorage "bbNetBase" (dev/test only) points the guest network, display and shell at another netstack.
+  const NET_BASE = (() => { try { return localStorage.getItem("bbNetBase") || "ws://127.0.0.1:8889"; } catch (e) { return "ws://127.0.0.1:8889"; } })();
+  function loadScriptOnce(src) {
+    return new Promise((res, rej) => {
+      if (document.querySelector('script[data-bb-src="' + src + '"]')) return res();
+      const sc = document.createElement("script"); sc.src = src; sc.dataset.bbSrc = src;
+      sc.onload = () => res(); sc.onerror = () => rej(new Error("can't load " + src)); document.head.appendChild(sc);
+    });
+  }
+  function installAndroidShell(panel) {
+    const gui = panel && panel.guiHost;
+    if (!gui || gui.__bbShell) return;
+    gui.__bbShell = true;
+    const btn = document.createElement("button");
+    btn.textContent = "▤ Shell";
+    btn.title = "Android shell (root) - stays fast while Android's screen is busy";
+    btn.style.cssText = "position:absolute;top:6px;right:52px;z-index:46;opacity:.9;padding:4px 10px;border-radius:6px;" +
+      "border:1px solid #2f6bdb;background:#16263f;color:#dfe8f5;font:600 13px/1.2 -apple-system,system-ui,sans-serif;";
+    const pane = document.createElement("div");
+    pane.style.cssText = "position:absolute;left:0;right:0;top:34px;bottom:0;z-index:45;background:#0b0f1a;display:none;padding:4px 6px;box-sizing:border-box;";
+    const host = document.createElement("div");
+    host.style.cssText = "width:100%;height:100%;";
+    pane.appendChild(host);
+    gui.appendChild(pane); gui.appendChild(btn);
+    let term = null, sess = null, open = false;
+    const fit = () => {
+      try {
+        if (!term || !open) return;
+        const ds = term._core && term._core._renderService && term._core._renderService.dimensions;
+        const cw = ds && (ds.actualCellWidth || (ds.css && ds.css.cell && ds.css.cell.width));
+        const ch = ds && (ds.actualCellHeight || (ds.css && ds.css.cell && ds.css.cell.height));
+        if (!cw || !ch) return;
+        const cols = Math.max(20, Math.floor((host.clientWidth - 2) / cw)), rows = Math.max(6, Math.floor(host.clientHeight / ch));
+        if (cols !== term.cols || rows !== term.rows) { term.resize(cols, rows); if (sess) sess.resize(cols, rows); }
+      } catch (e) {}
+    };
+    const dim = (t) => { try { term.write("\x1b[2m" + t + "\x1b[0m\r\n"); } catch (e) {} };
+    const connect = () => {
+      dim("[Android shell over adb - root in the Android guest. 'exit' closes it; Enter reconnects.]");
+      sess = window.BootboxAdb.open(NET_BASE + "/adb", {
+        cols: term.cols, rows: term.rows,
+        onStatus: (t) => dim("[" + t + "]"),
+        onData: (u8) => { try { term.write(u8); } catch (e) {} },
+        onExit: () => { sess = null; dim("\r\n[shell closed - press Enter to open a new one]"); },
+      });
+    };
+    const show = async (on) => {
+      open = on;
+      pane.style.display = on ? "block" : "none";
+      btn.textContent = on ? "📱 Screen" : "▤ Shell";
+      if (!on) { window.__q64Shell = Object.assign(window.__q64Shell || {}, { open: false }); return; }
+      if (!term) {
+        try { await loadScriptOnce("vendor/qemu/adbshell.js"); } catch (e) { host.textContent = String(e); return; }
+        term = new Terminal({ fontSize: 14, theme: { background: "#0b0f1a" }, scrollback: 5000, cursorBlink: true });
+        term.open(host);
+        term.onData((d) => { if (sess) sess.write(d); else if (d === "\r") connect(); });
+        try { new ResizeObserver(fit).observe(host); } catch (e) {}
+        window.addEventListener("resize", fit);
+        host.addEventListener("pointerdown", () => { try { term.focus(); } catch (e) {} });
+        [0, 250, 900].forEach((t) => setTimeout(fit, t));
+        setTimeout(connect, 300);
+      }
+      window.__q64Shell = { open: true, term, paste: (s) => { try { term.paste(s); } catch (e) {} }, contains: (el) => pane.contains(el) };
+      setTimeout(fit, 50);
+      try { term.focus(); } catch (e) {}
+    };
+    btn.onclick = (ev) => { ev.stopPropagation(); show(!open); };
+    btn.addEventListener("pointerdown", (ev) => ev.stopPropagation(), true);
+    pane.addEventListener("pointerdown", (ev) => ev.stopPropagation());   // taps in the shell never reach Android
+  }
+
   function biosIsa() { try { return JSON.parse(VFS.read("/Apps/.bios.json") || "{}").isa || ""; } catch (e) { return ""; } }
 
   // The Linux desktop's Web (bbweb) asks for a page in the device's own browser. In the MiniOS shell that is
@@ -835,7 +914,7 @@
           ramInput.value = Math.min(g.maxRam || 1536,
             Math.max(g.minRam || 64, c.ram || g.ram || 512));   // restore RAM within this guest's safe range
           coresSel.style.display = (g.boot === "q64") ? "" : "none";   // cores apply to the 64-bit guests
-          interpSel.style.display = g.fastTci ? "" : "none";   // the hot-loop interpreter: Linux guests only
+          interpSel.style.display = g.fastTci ? "" : "none";   // the hot-loop interpreter: Linux guests + Android
           const maxCores = g.maxCores || 8, minCores = g.minCores || 1;
           // A warm-snapshot guest (Android) resumes ONLY at the vCPU count it was captured with, so
           // min == max pins and locks the selector; leaving it restores the user's remembered count.
@@ -1149,15 +1228,18 @@
             // it off too). Chrome likes it (desktop sysbench +38%, 7-Zip +10%) but WebKit - the iPad's
             // engine - does not: desktop under macOS WebKit, CPU-Z 12.1 -> 3.4, glmark2 30 -> 5. So it
             // stays OFF (opt-in tune only); every step down the ladder pins it off.
+            // 1.1 engine, on by default: bulk REP MOVS/STOS (one helper call per page instead of a block exit
+            // per element: Terminal glmark2 30 -> 53) and SSE integer/convert ops as wasm SIMD. The SIMD
+            // inlining goes off with the float inlining (level 3), bulk string ops one level lower.
             const fastTci = !!g.fastTci && cfg().interp2 !== "classic";
             const SAFE_LEVELS = [
               { name: "full speed", tune: fastTci ? { fasttci: 1 } : undefined },
               { name: "classic interpreter, modules stored with every block", tune: { lazywasm: 0, split: 0, hammock: 0 } },
               { name: "no TB chaining", tune: { chain: 0, lazywasm: 0, split: 0, hammock: 0 } },
-              { name: "no TB chaining, no SIMD float inlining", tune: { chain: 0, fpinline: 0, lazywasm: 0, split: 0, hammock: 0 } },
-              { name: "no chaining/float inlining/register locals", tune: { chain: 0, fpinline: 0, regloc: 0, lazywasm: 0, split: 0, hammock: 0 } },
-              { name: "the above + fixed-size memory, fewer compiled blocks", tune: { chain: 0, fpinline: 0, regloc: 0, max: 8000, lazywasm: 0, split: 0, hammock: 0 }, presize: true },
-              { name: "interpreter only (slow)", tune: { chain: 0, fpinline: 0, regloc: 0, max: 8000, jit: 1000000000, lazywasm: 0, split: 0, hammock: 0 }, presize: true },
+              { name: "no TB chaining, no SIMD float/integer inlining", tune: { chain: 0, fpinline: 0, simdinline: 0, lazywasm: 0, split: 0, hammock: 0 } },
+              { name: "no chaining/SIMD inlining/register locals/bulk string ops", tune: { chain: 0, fpinline: 0, simdinline: 0, repbulk: 0, regloc: 0, lazywasm: 0, split: 0, hammock: 0 } },
+              { name: "the above + fixed-size memory, fewer compiled blocks", tune: { chain: 0, fpinline: 0, simdinline: 0, repbulk: 0, regloc: 0, max: 8000, lazywasm: 0, split: 0, hammock: 0 }, presize: true },
+              { name: "interpreter only (slow)", tune: { chain: 0, fpinline: 0, simdinline: 0, repbulk: 0, regloc: 0, max: 8000, jit: 1000000000, lazywasm: 0, split: 0, hammock: 0 }, presize: true },
             ];
             let safe = cfg().q64safe6 || { level: 0 };
             try {
@@ -1194,8 +1276,8 @@
               engineBase: g.engineBase || undefined,   // terminal support files; Android may use a distinct engine module
               engineModuleBase: g.engineModuleBase || undefined,
               wasm: g.wasm || "qemu-system-x86_64.wasm",   // engine binary name (aarch64 guest = qemu-system-aarch64.wasm)
-              netWs: "ws://127.0.0.1:8889/",   // in-app gVisor netstack (MiniOSApp.startNetStack) -> real internet
-              vnc: "ws://127.0.0.1:8889/vnc",   // noVNC GUI bridge: netstack /vnc endpoint -> vn.Dial(guest x11vnc:5900)
+              netWs: NET_BASE + "/",   // in-app gVisor netstack (MiniOSApp.startNetStack) -> real internet
+              vnc: NET_BASE + "/vnc",   // noVNC GUI bridge: netstack /vnc endpoint -> vn.Dial(guest x11vnc:5900)
               ram: ramMB,
               smp: Math.max(g.minCores || 1, Math.min(g.maxCores || 8, +coresSel.value || (args && +args.cores) || 0)) || undefined,
               tune,   // engine JIT tunables (run.js writes /bootbox-tune; build-84+ engine reads it)
@@ -1221,6 +1303,7 @@
                 try { if (r && r.connectGui) panel64.onGuiOpen = (host) => r.connectGui(host, panel64.setGuiStatus); } catch (e) {}
                 if (g.gui) {   // full-screen desktop/Android guest
                   try { panel64.showGui(); } catch (e) {}   // the desktop IS the GUI → connect immediately
+                  if (g.android) { try { installAndroidShell(panel64); } catch (e) { console.log("[shell] " + e); } }
                   status.textContent = g.android
                     ? "Running — full Android 12 AOSP (64-bit x86_64) in QEMU. This is a warm-boot image: it resumes to the home screen in a few seconds (no cold boot). Touch the screen directly and use ⌨ Type for text."
                     : "Running — x86_64 Linux desktop. The panel appears ~1–2 min after the first boot. Tap Apps (bottom-left) or right-click/long-press the desktop for apps; the Benchmarks icon runs CPU-Z, 7-Zip, sysbench, GPU and web benchmarks; ⌨ Type or the Magic Keyboard types into the focused window.";
@@ -1403,7 +1486,9 @@
           const focusKbd = () => { try { kbd.focus({ preventScroll: true }); } catch (e) { try { kbd.focus(); } catch (e2) {} } };
           // --- 64-bit path: the QEMU guest reads a real terminal, so send ANSI bytes to the
           // xterm/pty (xterm.paste) instead of v86 PS/2 scancodes. qemuTerm is set in boot64. ---
-          const send64 = (s) => { try { qemuTerm && qemuTerm.paste(s); } catch (e) {} };
+          // Android Shell pane (1.1): while it is open, keys go to the adb shell instead of the screen.
+          const shellOn = () => { try { return !!(window.__q64Shell && window.__q64Shell.open); } catch (e) { return false; } };
+          const send64 = (s) => { try { if (shellOn()) { window.__q64Shell.paste(s); return; } qemuTerm && qemuTerm.paste(s); } catch (e) {} };
           // Cursor keys must respect the terminal's DECCKM (application-cursor-keys) mode: full-screen
           // TUIs (mc, ncdu, vi, htop) send ESC[?1h then expect ESC O A for ↑ (not ESC [ A). We paste
           // bytes directly (bypassing xterm's own mode-aware keymap), so we read the mode off xterm and
@@ -1411,7 +1496,7 @@
           const ARROW_L = { ArrowUp: "A", ArrowDown: "B", ArrowRight: "C", ArrowLeft: "D" };
           const appCursor = () => {
             try {
-              const t = qemuTerm; if (!t) return false;
+              const t = shellOn() ? window.__q64Shell.term : qemuTerm; if (!t) return false;
               if (t.modes && typeof t.modes.applicationCursorKeysMode === "boolean") return t.modes.applicationCursorKeysMode;
               const c = t._core || t.__core;
               const dm = c && ((c.coreService && c.coreService.decPrivateModes) || (c._coreService && c._coreService.decPrivateModes));
@@ -1428,7 +1513,7 @@
           const GUIKS = { Enter: 0xff0d, Backspace: 0xff08, Tab: 0xff09, Escape: 0xff1b, Delete: 0xffff,
             ArrowUp: 0xff52, ArrowDown: 0xff54, ArrowLeft: 0xff51, ArrowRight: 0xff53 };
           const guiRfb = () => { const r = self.__rfb; return (r && r._rfbConnectionState === "connected") ? r : null; };
-          const guiOn = () => { try { return !!(panel64Ref && panel64Ref.isGuiActive && panel64Ref.isGuiActive() && guiRfb()); } catch (e) { return false; } };
+          const guiOn = () => { try { return !shellOn() && !!(panel64Ref && panel64Ref.isGuiActive && panel64Ref.isGuiActive() && guiRfb()); } catch (e) { return false; } };
           // Android's VNC bridge turns a keysym into the bare Linux key ('A' -> KEY_A, '!' -> KEY_1),
           // so capitals/symbols need a real Shift around them there (X servers add Shift themselves).
           const SHIFTED = "ABCDEFGHIJKLMNOPQRSTUVWXYZ~!@#$%^&*()_+{}|:\"<>?";
@@ -1455,6 +1540,8 @@
           // Translate a key event into guest input; returns true if it consumed the key.
           const handleKey = (e) => {
             if (qemuTerm) {                                    // 64-bit
+              // the shell pane's own xterm handles keys typed into it (soft keyboard / focused web input)
+              if (shellOn() && e && e.target && window.__q64Shell.contains(e.target)) return false;
               if (guiOn()) {                                   // GUI tab active -> keys to the X desktop
                 if (GUIKS[e.key]) { guiKey(GUIKS[e.key], ctrlOn || e.ctrlKey); if (ctrlOn) setCtrl(false); return true; }
                 if (e.key && e.key.length === 1) { guiText(e.key, ctrlOn || e.ctrlKey); if (ctrlOn) setCtrl(false); return true; }

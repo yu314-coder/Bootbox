@@ -2388,7 +2388,6 @@ static bool tcg_wasm_out_fp_inline_x(TCGContext *s, const tcg_insn_unit *func,
             wfp_load(s, a2, kind);
             tcg_wasm_out_op_local_set(s, B);
         }
-        wfp_ptr(s, env);                                       /* store address */
         tcg_wasm_out_op_i32_const(s, 0x45);                    /* CC_Z | CC_P | CC_C */
         tcg_wasm_out_op_i32_const(s, 0x01);                    /* CC_C */
         tcg_wasm_out_op_i32_const(s, 0x40);                    /* CC_Z */
@@ -2411,7 +2410,7 @@ static bool tcg_wasm_out_fp_inline_x(TCGContext *s, const tcg_insn_unit *func,
         tcg_wasm_out_op_i32_or(s);
         tcg_wasm_out8(s, 0x1b);
         tcg_wasm_out_op_i64_extend_i32_u(s);
-        tcg_wasm_out_op_i64_store(s, 0, t->cc_src_off);
+        tcg_wasm_out_op_global_set_r(s, r0);                   /* the helper's return: new CC_SRC */
         wfp_slow_call(s, func, info);
         return true;
     }
@@ -2804,10 +2803,289 @@ found:;
     return true;
 }
 
+/*
+ * Bootbox: x86 SSE integer shuffles/packs/multiplies and packed float<->int conversions as wasm SIMD.
+ * llvmpipe's JIT'd shaders (the guest's software OpenGL) are full of pshufd, shufps, punpck, pack and
+ * cvtps2dq; each was a helper call (~7 ns + the call's spill/reload). All of these are exact in
+ * wasm SIMD: integer ops have one meaning, and the conversions map x86's "integer indefinite"
+ * (0x80000000 for NaN/out of range) with a compare + bitselect. cvtps2dq/cvtdq2ps depend on the
+ * rounding mode, so they run inline only under MXCSR round-to-nearest (else the helper). Shuffle
+ * immediates come from the call op's constant argument (wasm_cur_call_op, set by tcg.c).
+ * No slow path can unwind (pure helpers), so no resume block is needed.
+ */
+#define TCG_WASM_CUR_CALL_OP 1
+static __thread TCGOp *wasm_cur_call_op;
+#include "tcg/tcg-gvec-desc.h"
+
+/* The value of helper argument i when it is a translation-time constant. */
+static bool wsi_const_arg(const tcg_insn_unit *func, int i, int64_t *val)
+{
+    TCGOp *op = wasm_cur_call_op;
+    TCGTemp *ts;
+
+    if (!op || op->opc != INDEX_op_call || tcg_call_func(op) != (void *)func ||
+        i >= TCGOP_CALLI(op)) {
+        return false;
+    }
+    ts = arg_temp(op->args[TCGOP_CALLO(op) + i]);
+    if (ts->kind != TEMP_CONST) {
+        return false;
+    }
+    *val = ts->val;
+    return true;
+}
+
+static void wsi_load(TCGContext *s, int ptr_arg)
+{
+    wfp_ptr(s, WFP_ARG(ptr_arg));
+    wfp_simd(s, 0x00);                                         /* v128.load */
+    tcg_wasm_out_leb128_uint32_t(s, 0);
+    tcg_wasm_out_leb128_uint32_t(s, 0);
+}
+
+static void wsi_store(TCGContext *s)
+{
+    wfp_simd(s, 0x0b);                                         /* v128.store */
+    tcg_wasm_out_leb128_uint32_t(s, 0);
+    tcg_wasm_out_leb128_uint32_t(s, 0);
+}
+
+static void wsi_shuffle(TCGContext *s, const uint8_t lanes[16])
+{
+    wfp_simd(s, 0x0d);                                         /* i8x16.shuffle */
+    for (int i = 0; i < 16; i++) {
+        tcg_wasm_out8(s, lanes[i]);
+    }
+}
+
+static void wsi_const_u32x4(TCGContext *s, uint32_t v)
+{
+    wfp_simd(s, 0x0c);                                         /* v128.const */
+    for (int i = 0; i < 16; i++) {
+        tcg_wasm_out8(s, v >> (8 * (i & 3)));
+    }
+}
+
+/* 32-bit lane L of operand o (0 = first, 1 = second) as shuffle byte indices */
+static void wsi_lane32(uint8_t *l, int o, int L)
+{
+    for (int b = 0; b < 4; b++) {
+        l[b] = o * 16 + L * 4 + b;
+    }
+}
+
+static bool tcg_wasm_out_simd_inline(TCGContext *s, const tcg_insn_unit *func,
+                                     const TCGHelperInfo *info)
+{
+    const WasmSimdInline *e = NULL;
+    uint8_t lanes[16];
+    int64_t imm = 0;
+    int i;
+
+    if (!wasm32_simd_inline || !wasm_simd_inline_enabled) {
+        return false;
+    }
+    for (i = 0; i < wasm32_simd_inline_n; i++) {
+        if (wasm32_simd_inline[i].helper == (const void *)func) {
+            e = &wasm32_simd_inline[i];
+            break;
+        }
+    }
+    for (i = 0; !e && i < wasm32_gvec_inline_n; i++) {
+        if (wasm32_gvec_inline[i].helper == (const void *)func) {
+            e = &wasm32_gvec_inline[i];
+        }
+    }
+    if (!e) {
+        return false;
+    }
+    if (e->kind >= WSG_3) {
+        /* generic gvec helper: inline only a constant desc of exactly 16 bytes, no tail to clear */
+        int64_t desc;
+        if (!wsi_const_arg(func, e->kind <= WSG_3ORC ? 3 : 2, &desc) ||
+            simd_oprsz(desc) != 16 || simd_maxsz(desc) != 16) {
+            return false;
+        }
+        wfp_ptr(s, WFP_ARG(0));
+        wsi_load(s, 1);
+        switch (e->kind) {
+        case WSG_3:
+            wsi_load(s, 2);
+            wfp_simd(s, e->op);
+            break;
+        case WSG_3ORC:
+            wsi_load(s, 2);
+            wfp_simd(s, 0x4d);                                 /* v128.not */
+            wfp_simd(s, 0x50);                                 /* v128.or */
+            break;
+        case WSG_2:
+            if (e->op) {
+                wfp_simd(s, e->op);
+            }
+            break;
+        case WSG_2I:
+            tcg_wasm_out_op_i32_const(s, simd_data(desc));
+            wfp_simd(s, e->op);
+            break;
+        }
+        wsi_store(s);
+        return true;
+    }
+    switch (e->kind) {
+    case WSI_PSHUFD: case WSI_PSHUFLW: case WSI_PSHUFHW:
+        if (!wsi_const_arg(func, 2, &imm)) {
+            return false;
+        }
+        break;
+    case WSI_SHUFPS: case WSI_SHUFPD:
+        if (!wsi_const_arg(func, 3, &imm)) {
+            return false;
+        }
+        break;
+    }
+
+    switch (e->kind) {
+    case WSI_SHUF:                                             /* (env, d, v, s) */
+    case WSI_OP:
+        wfp_ptr(s, WFP_ARG(1));
+        wsi_load(s, 2);
+        wsi_load(s, 3);
+        if (e->kind == WSI_SHUF) {
+            wsi_shuffle(s, e->lanes);
+        } else {
+            wfp_simd(s, e->op);
+        }
+        wsi_store(s);
+        return true;
+    case WSI_PMULUDQ:
+        wfp_ptr(s, WFP_ARG(1));
+        wsi_load(s, 2);
+        wfp_simd(s, 0x0c);                                     /* v128.const low-dword mask */
+        for (i = 0; i < 16; i++) {
+            tcg_wasm_out8(s, (i & 7) < 4 ? 0xff : 0);
+        }
+        wfp_simd(s, 0x4e);                                     /* v128.and */
+        wsi_load(s, 3);
+        wfp_simd(s, 0x0c);
+        for (i = 0; i < 16; i++) {
+            tcg_wasm_out8(s, (i & 7) < 4 ? 0xff : 0);
+        }
+        wfp_simd(s, 0x4e);
+        wfp_simd(s, 0xd5);                                     /* i64x2.mul */
+        wsi_store(s);
+        return true;
+    case WSI_PMULH:
+        wfp_ptr(s, WFP_ARG(1));
+        wsi_load(s, 2);
+        wsi_load(s, 3);
+        wfp_simd(s, e->op);                                    /* i32x4.extmul_low_i16x8_s/u */
+        wsi_load(s, 2);
+        wsi_load(s, 3);
+        wfp_simd(s, e->op + 1);                                /* i32x4.extmul_high_i16x8_s/u */
+        for (i = 0; i < 8; i++) {                              /* the high half of each product */
+            lanes[2 * i] = 4 * i + 2;
+            lanes[2 * i + 1] = 4 * i + 3;
+        }
+        wsi_shuffle(s, lanes);
+        wsi_store(s);
+        return true;
+    case WSI_PSHUFB:
+        wfp_ptr(s, WFP_ARG(1));
+        wsi_load(s, 2);
+        wsi_load(s, 3);
+        wsi_const_u32x4(s, 0x8f8f8f8f);                        /* bit 7 set -> index >= 16 -> 0 */
+        wfp_simd(s, 0x4e);                                     /* v128.and */
+        wfp_simd(s, 0x0e);                                     /* i8x16.swizzle */
+        wsi_store(s);
+        return true;
+    case WSI_PSHUFD:                                           /* (d, s, imm) */
+        for (i = 0; i < 4; i++) {
+            wsi_lane32(lanes + 4 * i, 0, (imm >> (2 * i)) & 3);
+        }
+        goto unary_shuffle;
+    case WSI_PSHUFLW:
+    case WSI_PSHUFHW: {
+        int base = e->kind == WSI_PSHUFHW ? 4 : 0;
+        for (i = 0; i < 8; i++) {
+            int w = i;
+            if ((i & 4) == base) {
+                w = base + ((imm >> (2 * (i & 3))) & 3);
+            }
+            lanes[2 * i] = 2 * w;
+            lanes[2 * i + 1] = 2 * w + 1;
+        }
+        goto unary_shuffle;
+    }
+    unary_shuffle:
+        wfp_ptr(s, WFP_ARG(0));
+        wsi_load(s, 1);
+        wsi_load(s, 1);
+        wsi_shuffle(s, lanes);
+        wsi_store(s);
+        return true;
+    case WSI_SHUFPS:                                           /* (d, v, s, imm) */
+        wsi_lane32(lanes + 0, 0, imm & 3);
+        wsi_lane32(lanes + 4, 0, (imm >> 2) & 3);
+        wsi_lane32(lanes + 8, 1, (imm >> 4) & 3);
+        wsi_lane32(lanes + 12, 1, (imm >> 6) & 3);
+        goto binary_imm_shuffle;
+    case WSI_SHUFPD:
+        for (i = 0; i < 8; i++) {
+            lanes[i] = (imm & 1) * 8 + i;
+            lanes[8 + i] = 16 + ((imm >> 1) & 1) * 8 + i;
+        }
+        goto binary_imm_shuffle;
+    binary_imm_shuffle:
+        wfp_ptr(s, WFP_ARG(0));
+        wsi_load(s, 1);
+        wsi_load(s, 2);
+        wsi_shuffle(s, lanes);
+        wsi_store(s);
+        return true;
+    case WSI_CVTTPS2DQ:                                        /* (env, d, s) */
+    case WSI_CVTPS2DQ:
+    case WSI_CVTDQ2PS: {
+        bool guard = e->kind != WSI_CVTTPS2DQ;                 /* rounding-mode dependent */
+        const WasmFpInline *t = wasm32_fp_inline;
+        if (guard && !t) {
+            return false;
+        }
+        if (guard) {
+            tcg_wasm_out8(s, 0x02); tcg_wasm_out8(s, 0x40);   /* block $done */
+            tcg_wasm_out8(s, 0x02); tcg_wasm_out8(s, 0x40);   /* block $slow */
+            wfp_ptr(s, WFP_ARG(0));
+            tcg_wasm_out_op_loadstore(s, 0x2d, 0, t->round_off);   /* i32.load8_u: != nearest */
+            tcg_wasm_out8(s, 0x0d); tcg_wasm_out8(s, 0);       /* br_if $slow */
+        }
+        wfp_ptr(s, WFP_ARG(1));
+        wsi_load(s, 2);
+        if (e->kind == WSI_CVTDQ2PS) {
+            wfp_simd(s, 0xfa);                                 /* f32x4.convert_i32x4_s */
+        } else {
+            if (e->kind == WSI_CVTPS2DQ) {
+                wfp_simd(s, 0x6a);                             /* f32x4.nearest (ties to even) */
+            }
+            wfp_simd(s, 0xf8);                                 /* i32x4.trunc_sat_f32x4_s */
+            wsi_const_u32x4(s, 0x80000000u);                   /* integer indefinite */
+            wsi_load(s, 2);
+            wsi_const_u32x4(s, 0x4f000000u);                   /* 2^31 */
+            wfp_simd(s, 0x43);                                 /* f32x4.lt: false for NaN, >= 2^31 */
+            wfp_simd(s, 0x52);                                 /* v128.bitselect */
+        }
+        wsi_store(s);
+        if (guard) {
+            wfp_slow_call(s, func, info);
+        }
+        return true;
+    }
+    }
+    return false;
+}
+
 static void tcg_wasm_out_call(TCGContext *s, const tcg_insn_unit *func,
                          const TCGHelperInfo *info)
 {
-    if (tcg_wasm_out_fp_inline(s, func, info)) {
+    if (tcg_wasm_out_fp_inline(s, func, info) || tcg_wasm_out_simd_inline(s, func, info)) {
         return;
     }
 

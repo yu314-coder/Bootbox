@@ -23,6 +23,24 @@ The Bootbox changes are mostly in `tcg/wasm32.c`, `tcg/wasm32/tcg-target.c.inc` 
   (`target/i386/tcg/translate.c`). Correct, and faster in Chrome (desktop sysbench +38%, 7-Zip +10%),
   but much slower under WebKit/JavaScriptCore (desktop CPU-Z 12.1 -> 3.4, glmark2 30 -> 5)
 
+- 1.1: bulk `REP MOVS`/`REP STOS` (`target/i386/tcg/translate.c` `gen_rep_bulk` + `helper_rep_bulk` in
+  `mem_helper.c`, `repbulk=0` turns it off). TCG ran one iteration per block exit; the helper does every
+  iteration that cannot fault or touch I/O in one call (plain-RAM pages from the TLB, forward direction), the
+  ordinary iteration handles the rest with precise faults. Guest memset/memcpy 49 -> 10,800 MB/s; Terminal
+  glmark2 30 -> 53 (the clear scene was a third string-op iterations: frame copies, `clear_page`, `copy_user`)
+- 1.1: SSE integer shuffles/packs/multiplies and packed float<->int conversions as wasm SIMD
+  (`tcg_wasm_out_simd_inline`, `simdinline=0` turns it off); shuffle immediates come from the call's constant
+  arguments. The pure SSE helpers are `TCG_CALL_NO_RWG` (the `comis*` helpers now return the flags), so guest
+  registers are no longer written back and reloaded around every SSE op: CPU-Z single-thread +15% (WebKit
+  desktop 11.6 -> 13.4, Chrome Terminal 14.6 -> 17.0)
+- 1.1, opt-in (`gvecool=1`): the generic 16-byte vector ops (add/sub/saturating/min/max/logic/compare/shift/
+  move) too - `tcg-op-gvec.c` routes them to their out-of-line helper, which the backend emits as one SIMD
+  instruction instead of 8-16 64-bit ops. Off by default: in macOS WebKit 2 of 3 Terminal glmark2 runs with it
+  collapsed to a score of 7-9 (0 of 5 without it)
+- Correctness rigs for these (all identical to native QEMU and to Docker x86): `fpcheck`, `simdtest`
+  (every inlined op, all shuffle immediates, all rounding modes), `reptest` (overlaps, DF=1, addr32, the
+  register state at a page fault mid-copy)
+
 Runtime switches are read from `/bootbox-tune` (written by `Bootbox/web/vendor/qemu/run.js`).
 
 ## Building

@@ -1324,6 +1324,50 @@ static void gen_outs(DisasContext *s, MemOp ot)
     gen_bpt_io(s, s->tmp2_i32, ot);
 }
 
+/*
+ * Bootbox: REP MOVS / REP STOS first run as many iterations as are safe in one helper call
+ * (helper_rep_bulk, mem_helper.c); the ordinary single iteration below handles whatever it left
+ * (a page not in the TLB, MMIO, a fault) and loops back. Not with TF/single-step or icount, which
+ * must see every iteration, nor 16-bit addressing. /bootbox-tune repbulk=0 (wasm) / BB_REPBULK=0
+ * (native) turns it off.
+ */
+#ifdef __EMSCRIPTEN__
+extern int bb_repbulk;   /* tcg/wasm32.c */
+void bootbox_tune_init(void);
+static bool repbulk_on(void) { bootbox_tune_init(); return bb_repbulk > 0; }
+#else
+static bool repbulk_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char *e = getenv("BB_REPBULK"); on = !e || atoi(e) > 0; }
+    return on;
+}
+#endif
+
+static void gen_rep_bulk(DisasContext *s, MemOp ot, bool movs, TCGLabel *l2)
+{
+    TCGv dst, src;
+
+    if (s->aflag == MO_16 || !s->jmp_opt || (tb_cflags(s->base.tb) & CF_USE_ICOUNT) ||
+        !repbulk_on()) {
+        return;
+    }
+    dst = tcg_temp_new();
+    src = tcg_temp_new();
+    if (movs) {
+        gen_string_movl_A0_ESI(s);
+        tcg_gen_mov_tl(src, s->A0);
+    } else {
+        tcg_gen_movi_tl(src, 0);
+    }
+    gen_string_movl_A0_EDI(s);
+    tcg_gen_mov_tl(dst, s->A0);
+    gen_helper_rep_bulk(tcg_env, dst, src,
+                        tcg_constant_i32(ot | s->aflag << 2 | movs << 4 | CODE64(s) << 5 |
+                                         s->mem_index << 8));
+    gen_op_jz_ecx(s, l2);
+}
+
 /* Generate jumps to current or next instruction */
 static void gen_repz(DisasContext *s, MemOp ot,
                      void (*fn)(DisasContext *s, MemOp ot))
@@ -1331,6 +1375,9 @@ static void gen_repz(DisasContext *s, MemOp ot,
     TCGLabel *l2;
     gen_update_cc_op(s);
     l2 = gen_jz_ecx_string(s);
+    if (fn == gen_movs || fn == gen_stos) {
+        gen_rep_bulk(s, ot, fn == gen_movs, l2);
+    }
     fn(s, ot);
     gen_op_add_reg_im(s, s->aflag, R_ECX, -1);
     /*
@@ -7208,6 +7255,37 @@ static const WasmFpInline x86_wasm_fp_inline = {
     .cc_src_off = offsetof(CPUX86State, cc_src),
 };
 #undef WFP_ROW
+
+/* Integer SSE helpers the wasm32 backend emits as wasm SIMD (see tcg_wasm_out_simd_inline). */
+static const WasmSimdInline x86_wasm_simd_inline[] = {
+    { (const void *)helper_punpcklbw_xmm, WSI_SHUF, 0, { 0, 16, 1, 17, 2, 18, 3, 19, 4, 20, 5, 21, 6, 22, 7, 23 } },
+    { (const void *)helper_punpckhbw_xmm, WSI_SHUF, 0, { 8, 24, 9, 25, 10, 26, 11, 27, 12, 28, 13, 29, 14, 30, 15, 31 } },
+    { (const void *)helper_punpcklwd_xmm, WSI_SHUF, 0, { 0, 1, 16, 17, 2, 3, 18, 19, 4, 5, 20, 21, 6, 7, 22, 23 } },
+    { (const void *)helper_punpckhwd_xmm, WSI_SHUF, 0, { 8, 9, 24, 25, 10, 11, 26, 27, 12, 13, 28, 29, 14, 15, 30, 31 } },
+    { (const void *)helper_punpckldq_xmm, WSI_SHUF, 0, { 0, 1, 2, 3, 16, 17, 18, 19, 4, 5, 6, 7, 20, 21, 22, 23 } },
+    { (const void *)helper_punpckhdq_xmm, WSI_SHUF, 0, { 8, 9, 10, 11, 24, 25, 26, 27, 12, 13, 14, 15, 28, 29, 30, 31 } },
+    { (const void *)helper_punpcklqdq_xmm, WSI_SHUF, 0, { 0, 1, 2, 3, 4, 5, 6, 7, 16, 17, 18, 19, 20, 21, 22, 23 } },
+    { (const void *)helper_punpckhqdq_xmm, WSI_SHUF, 0, { 8, 9, 10, 11, 12, 13, 14, 15, 24, 25, 26, 27, 28, 29, 30, 31 } },
+    { (const void *)helper_packsswb_xmm, WSI_OP, 0x65 },     /* i8x16.narrow_i16x8_s */
+    { (const void *)helper_packuswb_xmm, WSI_OP, 0x66 },     /* i8x16.narrow_i16x8_u */
+    { (const void *)helper_packssdw_xmm, WSI_OP, 0x85 },     /* i16x8.narrow_i32x4_s */
+    { (const void *)helper_packusdw_xmm, WSI_OP, 0x86 },     /* i16x8.narrow_i32x4_u */
+    { (const void *)helper_pavgb_xmm, WSI_OP, 0x7b },        /* i8x16.avgr_u */
+    { (const void *)helper_pavgw_xmm, WSI_OP, 0x9b },        /* i16x8.avgr_u */
+    { (const void *)helper_pmaddwd_xmm, WSI_OP, 0xba },      /* i32x4.dot_i16x8_s */
+    { (const void *)helper_pmuludq_xmm, WSI_PMULUDQ },
+    { (const void *)helper_pmulhw_xmm, WSI_PMULH, 0xbc },    /* i32x4.extmul_low_i16x8_s */
+    { (const void *)helper_pmulhuw_xmm, WSI_PMULH, 0xbe },   /* i32x4.extmul_low_i16x8_u */
+    { (const void *)helper_pshufb_xmm, WSI_PSHUFB },
+    { (const void *)helper_pshufd_xmm, WSI_PSHUFD },
+    { (const void *)helper_pshuflw_xmm, WSI_PSHUFLW },
+    { (const void *)helper_pshufhw_xmm, WSI_PSHUFHW },
+    { (const void *)helper_shufps_xmm, WSI_SHUFPS },
+    { (const void *)helper_shufpd_xmm, WSI_SHUFPD },
+    { (const void *)helper_cvtdq2ps_xmm, WSI_CVTDQ2PS },
+    { (const void *)helper_cvtps2dq_xmm, WSI_CVTPS2DQ },
+    { (const void *)helper_cvttps2dq_xmm, WSI_CVTTPS2DQ },
+};
 #endif
 
 void tcg_x86_init(void)
@@ -7301,6 +7379,8 @@ void tcg_x86_init(void)
 #if defined(EMSCRIPTEN) && !defined(CONFIG_TCG_INTERPRETER)
     QEMU_BUILD_BUG_ON(float_round_nearest_even != 0);
     wasm32_fp_inline = &x86_wasm_fp_inline;
+    wasm32_simd_inline = x86_wasm_simd_inline;
+    wasm32_simd_inline_n = ARRAY_SIZE(x86_wasm_simd_inline);
 #endif
 }
 

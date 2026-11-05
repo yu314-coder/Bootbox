@@ -96,4 +96,43 @@ typedef struct WasmFpInline {
 extern const WasmFpInline *wasm32_fp_inline;
 extern int wasm_fp_inline_enabled;   /* /bootbox-tune "fpinline=0" turns it off */
 
+/*
+ * Target integer-SIMD helpers the wasm backend emits as wasm SIMD (tcg_wasm_out_simd_inline): exact
+ * integer shuffles/packs/multiplies, plus packed float<->int conversions (exact; MXCSR's sticky
+ * flags are not updated, as with the float ops above). Shapes:
+ *   WSI_SHUF/OP/PMULUDQ/PMULH/PSHUFB  helper(env, d, v, s)
+ *   WSI_PSHUFD/LW/HW                  helper(d, s, imm)       imm must be a translation-time constant
+ *   WSI_SHUFPS/PD                     helper(d, v, s, imm)
+ *   WSI_CVT*                          helper(env, d, s)
+ */
+enum {
+    WSI_SHUF,       /* d = i8x16.shuffle(v, s, lanes) */
+    WSI_OP,         /* d = <SIMD opcode op>(v, s) */
+    WSI_PMULUDQ,    /* d.q[i] = v.l[2i] * s.l[2i] */
+    WSI_PMULH,      /* d.w[i] = high half of v.w[i] * s.w[i]; op = the extmul_low opcode (s/u) */
+    WSI_PSHUFB,     /* d.b[i] = s.b[i] & 0x80 ? 0 : v.b[s.b[i] & 15] */
+    WSI_PSHUFD, WSI_PSHUFLW, WSI_PSHUFHW,
+    WSI_SHUFPS, WSI_SHUFPD,
+    WSI_CVTDQ2PS, WSI_CVTPS2DQ, WSI_CVTTPS2DQ,
+    /* generic 16-byte gvec helpers (accel/tcg/tcg-runtime-gvec.c), desc = last argument: */
+    WSG_3,          /* (d, a, b, desc): d = <op>(a, b) */
+    WSG_3ORC,       /* (d, a, b, desc): d = a | ~b */
+    WSG_2,          /* (d, a, desc):    d = <op>(a), op 0 = copy */
+    WSG_2I,         /* (d, a, desc):    d = <shift op>(a, simd_data(desc)) */
+};
+typedef struct WasmSimdInline {
+    const void *helper;
+    uint8_t kind;
+    uint16_t op;
+    uint8_t lanes[16];
+} WasmSimdInline;
+extern const WasmSimdInline *wasm32_simd_inline;
+extern int wasm32_simd_inline_n;
+extern int wasm_simd_inline_enabled;   /* /bootbox-tune "simdinline=0" turns it off */
+extern int wasm_gvec_ool_enabled;      /* /bootbox-tune "gvecool=1": gvec->helper routing (off by default) */
+extern const WasmSimdInline wasm32_gvec_inline[];   /* tcg/wasm32.c */
+extern const int wasm32_gvec_inline_n;
+/* tcg-op-gvec.c: expand 16-byte ops with these helpers as an out-of-line call (inlined as SIMD) */
+bool wasm32_gvec_prefer_ool(const void *gen_fn, uint32_t oprsz, uint32_t maxsz);
+
 #endif

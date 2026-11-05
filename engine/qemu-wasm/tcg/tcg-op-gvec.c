@@ -24,6 +24,119 @@
 #include "tcg/tcg-op-gvec-common.h"
 #include "tcg/tcg-gvec-desc.h"
 
+#if defined(__EMSCRIPTEN__) && !defined(CONFIG_TCG_INTERPRETER)
+#include "wasm32.h"
+void bootbox_tune_init(void);
+/*
+ * Bootbox (wasm32 backend): without host vector registers TCG expands a 16-byte op such as paddd
+ * into 64-bit integer ops - 8 to 16 of them with the loads and stores - while wasm SIMD does it in
+ * one instruction. The backend inlines these out-of-line helpers as v128.load/op/v128.store
+ * (tcg_wasm_out_simd_inline + wasm32_gvec_inline in tcg/wasm32.c), so prefer the helper call for
+ * exactly 16-byte ops (x86 SSE). The interpreter also gains: one direct call instead of 8-16 ops.
+ */
+bool wasm32_gvec_prefer_ool(const void *gen_fn, uint32_t oprsz, uint32_t maxsz)
+{
+    static const void *const ok[] = {
+        (const void *)gen_helper_gvec_add8,
+        (const void *)gen_helper_gvec_add16,
+        (const void *)gen_helper_gvec_add32,
+        (const void *)gen_helper_gvec_add64,
+        (const void *)gen_helper_gvec_sub8,
+        (const void *)gen_helper_gvec_sub16,
+        (const void *)gen_helper_gvec_sub32,
+        (const void *)gen_helper_gvec_sub64,
+        (const void *)gen_helper_gvec_mul16,
+        (const void *)gen_helper_gvec_mul32,
+        (const void *)gen_helper_gvec_mul64,
+        (const void *)gen_helper_gvec_ssadd8,
+        (const void *)gen_helper_gvec_ssadd16,
+        (const void *)gen_helper_gvec_usadd8,
+        (const void *)gen_helper_gvec_usadd16,
+        (const void *)gen_helper_gvec_sssub8,
+        (const void *)gen_helper_gvec_sssub16,
+        (const void *)gen_helper_gvec_ussub8,
+        (const void *)gen_helper_gvec_ussub16,
+        (const void *)gen_helper_gvec_smin8,
+        (const void *)gen_helper_gvec_smin16,
+        (const void *)gen_helper_gvec_smin32,
+        (const void *)gen_helper_gvec_umin8,
+        (const void *)gen_helper_gvec_umin16,
+        (const void *)gen_helper_gvec_umin32,
+        (const void *)gen_helper_gvec_smax8,
+        (const void *)gen_helper_gvec_smax16,
+        (const void *)gen_helper_gvec_smax32,
+        (const void *)gen_helper_gvec_umax8,
+        (const void *)gen_helper_gvec_umax16,
+        (const void *)gen_helper_gvec_umax32,
+        (const void *)gen_helper_gvec_and,
+        (const void *)gen_helper_gvec_or,
+        (const void *)gen_helper_gvec_xor,
+        (const void *)gen_helper_gvec_andc,
+        (const void *)gen_helper_gvec_eq8,
+        (const void *)gen_helper_gvec_eq16,
+        (const void *)gen_helper_gvec_eq32,
+        (const void *)gen_helper_gvec_eq64,
+        (const void *)gen_helper_gvec_ne8,
+        (const void *)gen_helper_gvec_ne16,
+        (const void *)gen_helper_gvec_ne32,
+        (const void *)gen_helper_gvec_ne64,
+        (const void *)gen_helper_gvec_lt8,
+        (const void *)gen_helper_gvec_lt16,
+        (const void *)gen_helper_gvec_lt32,
+        (const void *)gen_helper_gvec_lt64,
+        (const void *)gen_helper_gvec_le8,
+        (const void *)gen_helper_gvec_le16,
+        (const void *)gen_helper_gvec_le32,
+        (const void *)gen_helper_gvec_le64,
+        (const void *)gen_helper_gvec_ltu8,
+        (const void *)gen_helper_gvec_ltu16,
+        (const void *)gen_helper_gvec_ltu32,
+        (const void *)gen_helper_gvec_leu8,
+        (const void *)gen_helper_gvec_leu16,
+        (const void *)gen_helper_gvec_leu32,
+        (const void *)gen_helper_gvec_orc,
+        (const void *)gen_helper_gvec_mov,
+        (const void *)gen_helper_gvec_not,
+        (const void *)gen_helper_gvec_neg8,
+        (const void *)gen_helper_gvec_neg16,
+        (const void *)gen_helper_gvec_neg32,
+        (const void *)gen_helper_gvec_neg64,
+        (const void *)gen_helper_gvec_abs8,
+        (const void *)gen_helper_gvec_abs16,
+        (const void *)gen_helper_gvec_abs32,
+        (const void *)gen_helper_gvec_abs64,
+        (const void *)gen_helper_gvec_shl8i,
+        (const void *)gen_helper_gvec_shl16i,
+        (const void *)gen_helper_gvec_shl32i,
+        (const void *)gen_helper_gvec_shl64i,
+        (const void *)gen_helper_gvec_shr8i,
+        (const void *)gen_helper_gvec_shr16i,
+        (const void *)gen_helper_gvec_shr32i,
+        (const void *)gen_helper_gvec_shr64i,
+        (const void *)gen_helper_gvec_sar8i,
+        (const void *)gen_helper_gvec_sar16i,
+        (const void *)gen_helper_gvec_sar32i,
+        (const void *)gen_helper_gvec_sar64i
+    };
+    if (oprsz != 16 || maxsz != 16 || !gen_fn) {
+        return false;
+    }
+    bootbox_tune_init();
+    if (!wasm_simd_inline_enabled || !wasm_gvec_ool_enabled) {
+        return false;
+    }
+    for (int i = 0; i < ARRAY_SIZE(ok); i++) {
+        if (ok[i] == gen_fn) {
+            return true;
+        }
+    }
+    return false;
+}
+#define GVEC_PREFER_OOL(fn, oprsz, maxsz) wasm32_gvec_prefer_ool((const void *)(fn), oprsz, maxsz)
+#else
+#define GVEC_PREFER_OOL(fn, oprsz, maxsz) false
+#endif
+
 #define MAX_UNROLL  4
 
 #ifdef CONFIG_DEBUG_TCG
@@ -1212,7 +1325,9 @@ void tcg_gen_gvec_2(uint32_t dofs, uint32_t aofs,
         break;
 
     case 0:
-        if (g->fni8 && check_size_impl(oprsz, 8)) {
+        if (GVEC_PREFER_OOL(g->fno, oprsz, maxsz)) {
+            tcg_gen_gvec_2_ool(dofs, aofs, oprsz, maxsz, g->data, g->fno);
+        } else if (g->fni8 && check_size_impl(oprsz, 8)) {
             expand_2_i64(dofs, aofs, oprsz, g->load_dest, g->fni8);
         } else if (g->fni4 && check_size_impl(oprsz, 4)) {
             expand_2_i32(dofs, aofs, oprsz, g->load_dest, g->fni4);
@@ -1276,7 +1391,9 @@ void tcg_gen_gvec_2i(uint32_t dofs, uint32_t aofs, uint32_t oprsz,
         break;
 
     case 0:
-        if (g->fni8 && check_size_impl(oprsz, 8)) {
+        if (g->fno && GVEC_PREFER_OOL(g->fno, oprsz, maxsz)) {
+            tcg_gen_gvec_2_ool(dofs, aofs, oprsz, maxsz, c, g->fno);
+        } else if (g->fni8 && check_size_impl(oprsz, 8)) {
             expand_2i_i64(dofs, aofs, oprsz, c, g->load_dest, g->fni8);
         } else if (g->fni4 && check_size_impl(oprsz, 4)) {
             expand_2i_i32(dofs, aofs, oprsz, c, g->load_dest, g->fni4);
@@ -1423,7 +1540,9 @@ void tcg_gen_gvec_3(uint32_t dofs, uint32_t aofs, uint32_t bofs,
         break;
 
     case 0:
-        if (g->fni8 && check_size_impl(oprsz, 8)) {
+        if (GVEC_PREFER_OOL(g->fno, oprsz, maxsz)) {
+            tcg_gen_gvec_3_ool(dofs, aofs, bofs, oprsz, maxsz, g->data, g->fno);
+        } else if (g->fni8 && check_size_impl(oprsz, 8)) {
             expand_3_i64(dofs, aofs, bofs, oprsz, g->load_dest, g->fni8);
         } else if (g->fni4 && check_size_impl(oprsz, 4)) {
             expand_3_i32(dofs, aofs, bofs, oprsz, g->load_dest, g->fni4);
@@ -3781,7 +3900,16 @@ void tcg_gen_gvec_cmp(TCGCond cond, unsigned vece, uint32_t dofs,
         break;
 
     case 0:
-        if (vece == MO_64 && check_size_impl(oprsz, 8)) {
+        if (GVEC_PREFER_OOL(fns[cond] ? fns[cond][vece] : fns[tcg_swap_cond(cond)][vece], oprsz, maxsz)) {
+            gen_helper_gvec_3 * const *fn = fns[cond];
+            if (fn == NULL) {
+                uint32_t tmp = aofs;
+                aofs = bofs, bofs = tmp;
+                cond = tcg_swap_cond(cond);
+                fn = fns[cond];
+            }
+            tcg_gen_gvec_3_ool(dofs, aofs, bofs, oprsz, maxsz, 0, fn[vece]);
+        } else if (vece == MO_64 && check_size_impl(oprsz, 8)) {
             expand_cmp_i64(dofs, aofs, bofs, oprsz, cond);
         } else if (vece == MO_32 && check_size_impl(oprsz, 4)) {
             expand_cmp_i32(dofs, aofs, bofs, oprsz, cond);

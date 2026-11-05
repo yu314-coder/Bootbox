@@ -1704,6 +1704,105 @@ static uintptr_t tcg_qemu_tb_exec_tci_full(CPUArchState *env, uint32_t *start, i
  * concurrently, so a thread that loses the race waits until the values are in place.
  */
 const WasmFpInline *wasm32_fp_inline;
+const WasmSimdInline *wasm32_simd_inline;
+/*
+ * Generic gvec helpers the backend emits as wasm SIMD when the call's desc is 16/16 bytes
+ * (tcg_wasm_out_simd_inline). tcg-op-gvec.c routes 16-byte ops to these helpers instead of
+ * expanding them into 64-bit integer ops (wasm32_gvec_prefer_ool) - keep the two lists in step.
+ * Opcodes verified against reference semantics in mbench/simd/opcheck.mjs.
+ */
+#include "exec/helper-proto-common.h"
+const WasmSimdInline wasm32_gvec_inline[] = {
+    { (const void *)helper_gvec_add8, WSG_3, 0x6e },
+    { (const void *)helper_gvec_add16, WSG_3, 0x8e },
+    { (const void *)helper_gvec_add32, WSG_3, 0xae },
+    { (const void *)helper_gvec_add64, WSG_3, 0xce },
+    { (const void *)helper_gvec_sub8, WSG_3, 0x71 },
+    { (const void *)helper_gvec_sub16, WSG_3, 0x91 },
+    { (const void *)helper_gvec_sub32, WSG_3, 0xb1 },
+    { (const void *)helper_gvec_sub64, WSG_3, 0xd1 },
+    { (const void *)helper_gvec_mul16, WSG_3, 0x95 },
+    { (const void *)helper_gvec_mul32, WSG_3, 0xb5 },
+    { (const void *)helper_gvec_mul64, WSG_3, 0xd5 },
+    { (const void *)helper_gvec_ssadd8, WSG_3, 0x6f },
+    { (const void *)helper_gvec_ssadd16, WSG_3, 0x8f },
+    { (const void *)helper_gvec_usadd8, WSG_3, 0x70 },
+    { (const void *)helper_gvec_usadd16, WSG_3, 0x90 },
+    { (const void *)helper_gvec_sssub8, WSG_3, 0x72 },
+    { (const void *)helper_gvec_sssub16, WSG_3, 0x92 },
+    { (const void *)helper_gvec_ussub8, WSG_3, 0x73 },
+    { (const void *)helper_gvec_ussub16, WSG_3, 0x93 },
+    { (const void *)helper_gvec_smin8, WSG_3, 0x76 },
+    { (const void *)helper_gvec_smin16, WSG_3, 0x96 },
+    { (const void *)helper_gvec_smin32, WSG_3, 0xb6 },
+    { (const void *)helper_gvec_umin8, WSG_3, 0x77 },
+    { (const void *)helper_gvec_umin16, WSG_3, 0x97 },
+    { (const void *)helper_gvec_umin32, WSG_3, 0xb7 },
+    { (const void *)helper_gvec_smax8, WSG_3, 0x78 },
+    { (const void *)helper_gvec_smax16, WSG_3, 0x98 },
+    { (const void *)helper_gvec_smax32, WSG_3, 0xb8 },
+    { (const void *)helper_gvec_umax8, WSG_3, 0x79 },
+    { (const void *)helper_gvec_umax16, WSG_3, 0x99 },
+    { (const void *)helper_gvec_umax32, WSG_3, 0xb9 },
+    { (const void *)helper_gvec_and, WSG_3, 0x4e },
+    { (const void *)helper_gvec_or, WSG_3, 0x50 },
+    { (const void *)helper_gvec_xor, WSG_3, 0x51 },
+    { (const void *)helper_gvec_andc, WSG_3, 0x4f },
+    { (const void *)helper_gvec_eq8, WSG_3, 0x23 },
+    { (const void *)helper_gvec_eq16, WSG_3, 0x2d },
+    { (const void *)helper_gvec_eq32, WSG_3, 0x37 },
+    { (const void *)helper_gvec_eq64, WSG_3, 0xd6 },
+    { (const void *)helper_gvec_ne8, WSG_3, 0x24 },
+    { (const void *)helper_gvec_ne16, WSG_3, 0x2e },
+    { (const void *)helper_gvec_ne32, WSG_3, 0x38 },
+    { (const void *)helper_gvec_ne64, WSG_3, 0xd7 },
+    { (const void *)helper_gvec_lt8, WSG_3, 0x25 },
+    { (const void *)helper_gvec_lt16, WSG_3, 0x2f },
+    { (const void *)helper_gvec_lt32, WSG_3, 0x39 },
+    { (const void *)helper_gvec_lt64, WSG_3, 0xd8 },
+    { (const void *)helper_gvec_le8, WSG_3, 0x29 },
+    { (const void *)helper_gvec_le16, WSG_3, 0x33 },
+    { (const void *)helper_gvec_le32, WSG_3, 0x3d },
+    { (const void *)helper_gvec_le64, WSG_3, 0xda },
+    { (const void *)helper_gvec_ltu8, WSG_3, 0x26 },
+    { (const void *)helper_gvec_ltu16, WSG_3, 0x30 },
+    { (const void *)helper_gvec_ltu32, WSG_3, 0x3a },
+    { (const void *)helper_gvec_leu8, WSG_3, 0x2a },
+    { (const void *)helper_gvec_leu16, WSG_3, 0x34 },
+    { (const void *)helper_gvec_leu32, WSG_3, 0x3e },
+    { (const void *)helper_gvec_orc, WSG_3ORC, 0x00 },
+    { (const void *)helper_gvec_mov, WSG_2, 0x00 },
+    { (const void *)helper_gvec_not, WSG_2, 0x4d },
+    { (const void *)helper_gvec_neg8, WSG_2, 0x61 },
+    { (const void *)helper_gvec_neg16, WSG_2, 0x81 },
+    { (const void *)helper_gvec_neg32, WSG_2, 0xa1 },
+    { (const void *)helper_gvec_neg64, WSG_2, 0xc1 },
+    { (const void *)helper_gvec_abs8, WSG_2, 0x60 },
+    { (const void *)helper_gvec_abs16, WSG_2, 0x80 },
+    { (const void *)helper_gvec_abs32, WSG_2, 0xa0 },
+    { (const void *)helper_gvec_abs64, WSG_2, 0xc0 },
+    { (const void *)helper_gvec_shl8i, WSG_2I, 0x6b },
+    { (const void *)helper_gvec_shl16i, WSG_2I, 0x8b },
+    { (const void *)helper_gvec_shl32i, WSG_2I, 0xab },
+    { (const void *)helper_gvec_shl64i, WSG_2I, 0xcb },
+    { (const void *)helper_gvec_shr8i, WSG_2I, 0x6d },
+    { (const void *)helper_gvec_shr16i, WSG_2I, 0x8d },
+    { (const void *)helper_gvec_shr32i, WSG_2I, 0xad },
+    { (const void *)helper_gvec_shr64i, WSG_2I, 0xcd },
+    { (const void *)helper_gvec_sar8i, WSG_2I, 0x6c },
+    { (const void *)helper_gvec_sar16i, WSG_2I, 0x8c },
+    { (const void *)helper_gvec_sar32i, WSG_2I, 0xac },
+    { (const void *)helper_gvec_sar64i, WSG_2I, 0xcc },
+};
+const int wasm32_gvec_inline_n = ARRAY_SIZE(wasm32_gvec_inline);
+int wasm32_simd_inline_n;
+int wasm_simd_inline_enabled = 1;
+/*
+ * /bootbox-tune gvecool=1: route 16-byte gvec ops (paddd, pand, movdqa...) to helpers the backend emits as
+ * SIMD. OFF by default: in macOS WebKit (the iPad's engine) 2 of 3 Terminal glmark2 runs with it collapsed
+ * (score 7-9 instead of 35-40; 0 of 5 without it), while the x86 SIMD inlining alone is fine. Chrome likes it.
+ */
+int wasm_gvec_ool_enabled;
 int wasm_fp_inline_enabled = 1;
 int wasm_tail_chain;
 int wasm_chain_nested;
@@ -2023,6 +2122,7 @@ static inline uintptr_t tci_exec(CPUArchState *env)
 
 int bb_hammock;   /* /bootbox-tune hammock=1: short forward jcc kept inside the TB (target/i386/tcg/translate.c) */
 int bb_hm_max = 16, bb_hm_mod = 1, bb_hm_sel = 0, bb_hm_cpl = 0;   /* hmmax, hmmod/hmsel (pc filter), hmcpl (3 = user only) */
+int bb_repbulk = 1;   /* /bootbox-tune repbulk=0: REP MOVS/STOS one iteration per TB again (helper_rep_bulk) */
 
 void bootbox_tune_init(void)
 {
@@ -2087,15 +2187,21 @@ void bootbox_tune_init(void)
                 bb_hm_sel = v;
             } else if (!strcmp(key, "hmcpl")) {
                 bb_hm_cpl = v;
+            } else if (!strcmp(key, "repbulk")) {
+                bb_repbulk = v != 0;
+            } else if (!strcmp(key, "simdinline")) {
+                wasm_simd_inline_enabled = v != 0;
+            } else if (!strcmp(key, "gvecool")) {
+                wasm_gvec_ool_enabled = v != 0;
             }
         }
         fclose(f);
         wasm_hot_num = (wasm_hot_share || wasm_sum_count) ? wasm_instantiate_num / 16 : wasm_instantiate_num;
-        fprintf(stderr, "[bootbox-tune] jit=%d max=%d fpinline=%d chain=%d/%s/%d regloc=%d hotshare=%d sumcnt=%d tsc=%d fasttci=%d lazywasm=%d hammock=%d\n",
+        fprintf(stderr, "[bootbox-tune] jit=%d max=%d fpinline=%d chain=%d/%s/%d regloc=%d hotshare=%d sumcnt=%d tsc=%d fasttci=%d lazywasm=%d hammock=%d repbulk=%d simdinline=%d gvecool=%d\n",
                 wasm_instantiate_num, wasm_max_instance_alive, wasm_fp_inline_enabled,
                 wasm_tail_chain, wasm_chain_nested ? "nested" : "tail", wasm_chain_budget,
                 wasm_reg_locals, wasm_hot_share, wasm_sum_count, bootbox_tsc_lockfree, wasm_fast_tci, bb_lazy_wasm,
-                bb_hammock);
+                bb_hammock, bb_repbulk, wasm_simd_inline_enabled, wasm_gvec_ool_enabled);
     }
     qatomic_set(&state, 2);
 }

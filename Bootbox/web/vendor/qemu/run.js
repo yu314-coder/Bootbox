@@ -296,6 +296,10 @@
       // hammock=1 (1.1 engine): a conditional jump forward over a few bytes no longer ends the block -
       // the skipped code is translated inline, so loops with small ifs run as one compiled block.
       if (t.hammock) tune += "hammock=1\n";
+      // repbulk=0 / simdinline=0 (1.1 engine, both on by default): REP MOVS/STOS one iteration per block
+      // again / SSE integer ops and packed conversions as helper calls instead of wasm SIMD (safety ladder).
+      if (t.repbulk === 0) tune += "repbulk=0\n";
+      if (t.simdinline === 0) tune += "simdinline=0\n";
       if (t.extra) tune += String(t.extra).replace(/[^a-z0-9=\n]/g, "") + "\n";   // harness experiments: raw key=value lines
       if (tune) mod.FS.writeFile("/bootbox-tune", tune);
     });
@@ -779,10 +783,13 @@
           // Auto-retry until the guest's X server (Xvnc) is up. FAST cadence for the first ~10s
           // (Xvnc usually appears within moments of a tap once the guest is warm — 4s ticks made
           // every connect feel slow), then back off to 4s for the long cold-boot tail.
-          if (guiRetries++ < 60) {
-            var wait = guiRetries <= 8 ? 1200 : 4000;
+          // Android (touchGuest): the display IS the whole UI, so never give up - after the first
+          // ~4 min keep trying every 15 s (a busy or briefly unreachable guest comes back on its own;
+          // before 1.1 the pane froze on the last frame until the user tapped the display bar).
+          if (guiRetries++ < 60 || opts.touchGuest) {
+            var wait = guiRetries <= 8 ? 1200 : guiRetries <= 60 ? 4000 : 15000;
             guiStatus(statusCb, "Connecting to " + (opts.vncLabel || "the Linux desktop") + "…", true);
-            setTimeout(function () { connectGui(guiHost, statusCb); }, wait);
+            setTimeout(function () { if (!rfb) connectGui(guiHost, statusCb); }, wait);
           }
           else {
             // ~4 min of refused connections: the guest's display server isn't running. Stop retrying

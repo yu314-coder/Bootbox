@@ -1102,7 +1102,7 @@ SSE_HELPER_CMP(cmptrues, FPU_CMPS,  !FPU_FALSE)
 #if SHIFT == 1
 static const int comis_eflags[4] = {CC_C, CC_Z, 0, CC_Z | CC_P | CC_C};
 
-void helper_ucomiss(CPUX86State *env, Reg *d, Reg *s)
+target_ulong helper_ucomiss(CPUX86State *env, Reg *d, Reg *s)
 {
     FloatRelation ret;
     float32 s0, s1;
@@ -1110,10 +1110,10 @@ void helper_ucomiss(CPUX86State *env, Reg *d, Reg *s)
     s0 = d->ZMM_S(0);
     s1 = s->ZMM_S(0);
     ret = float32_compare_quiet(s0, s1, &env->sse_status);
-    CC_SRC = comis_eflags[ret + 1];
+    return comis_eflags[ret + 1];   /* Bootbox: the caller stores CC_SRC */
 }
 
-void helper_comiss(CPUX86State *env, Reg *d, Reg *s)
+target_ulong helper_comiss(CPUX86State *env, Reg *d, Reg *s)
 {
     FloatRelation ret;
     float32 s0, s1;
@@ -1121,10 +1121,10 @@ void helper_comiss(CPUX86State *env, Reg *d, Reg *s)
     s0 = d->ZMM_S(0);
     s1 = s->ZMM_S(0);
     ret = float32_compare(s0, s1, &env->sse_status);
-    CC_SRC = comis_eflags[ret + 1];
+    return comis_eflags[ret + 1];   /* Bootbox: the caller stores CC_SRC */
 }
 
-void helper_ucomisd(CPUX86State *env, Reg *d, Reg *s)
+target_ulong helper_ucomisd(CPUX86State *env, Reg *d, Reg *s)
 {
     FloatRelation ret;
     float64 d0, d1;
@@ -1132,10 +1132,10 @@ void helper_ucomisd(CPUX86State *env, Reg *d, Reg *s)
     d0 = d->ZMM_D(0);
     d1 = s->ZMM_D(0);
     ret = float64_compare_quiet(d0, d1, &env->sse_status);
-    CC_SRC = comis_eflags[ret + 1];
+    return comis_eflags[ret + 1];   /* Bootbox: the caller stores CC_SRC */
 }
 
-void helper_comisd(CPUX86State *env, Reg *d, Reg *s)
+target_ulong helper_comisd(CPUX86State *env, Reg *d, Reg *s)
 {
     FloatRelation ret;
     float64 d0, d1;
@@ -1143,7 +1143,7 @@ void helper_comisd(CPUX86State *env, Reg *d, Reg *s)
     d0 = d->ZMM_D(0);
     d1 = s->ZMM_D(0);
     ret = float64_compare(d0, d1, &env->sse_status);
-    CC_SRC = comis_eflags[ret + 1];
+    return comis_eflags[ret + 1];   /* Bootbox: the caller stores CC_SRC */
 }
 #endif
 

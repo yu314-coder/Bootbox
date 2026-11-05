@@ -5506,6 +5506,10 @@ static void tcg_reg_alloc_call(TCGContext *s, TCGOp *op)
     TCGRegSet allocated_regs = s->reserved_regs;
     int i;
 
+#ifdef TCG_WASM_CUR_CALL_OP
+    wasm_cur_call_op = op;   /* lets the wasm backend see constant helper arguments */
+#endif
+
     /*
      * Move inputs into place in reverse order,
      * so that we place stacked arguments first.
