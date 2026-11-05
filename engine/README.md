@@ -19,9 +19,9 @@ The Bootbox changes are mostly in `tcg/wasm32.c`, `tcg/wasm32/tcg-target.c.inc` 
 - 1.1: leaner inlined SSE scalar ops (one NaN test on the result, no upper-lane copy when the
   destination is the source, `comiss`/`cvtt*` read each operand once); `fpcheck` stays bit-identical
 - 1.1: TCI `br` decodes a zero displacement as "next instruction" (it used to jump to address 0)
-- 1.1, off by default (`hammock=1`): a short forward `jcc` stays inside the TB
-  (`target/i386/tcg/translate.c`). CPU-Z single-core +5% on the Mac, but the desktop's WebKit renders
-  blank pages with it - an open bug
+- 1.1 (`hammock=1`, off by default): a short forward `jcc` stays inside the TB
+  (`target/i386/tcg/translate.c`). Correct, and faster in Chrome (desktop sysbench +38%, 7-Zip +10%),
+  but much slower under WebKit/JavaScriptCore (desktop CPU-Z 12.1 -> 3.4, glmark2 30 -> 5)
 
 Runtime switches are read from `/bootbox-tune` (written by `Bootbox/web/vendor/qemu/run.js`).
 

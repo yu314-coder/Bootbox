@@ -1144,9 +1144,11 @@
             // mid-block device I/O (split=0).
             // q64safe6 (build 112): level 0 has the Fast interpreter by default - a device parked lower
             // tries it once.
-            // hammock (short forward jumps kept inside a block, engine 1.1): NOT on by default yet - CPU-Z
-            // +5% single-core on the Mac, but the desktop's WebKit renders blank pages with it (an open
-            // engine bug). The lower levels pin it off so a future default can never reach them.
+            // hammock (1.1 engine): a short forward jump no longer ends a block. Correct (native QEMU and
+            // wasm difftest, fpcheck, web benchmark identical; the blank first browser page happens with
+            // it off too). Chrome likes it (desktop sysbench +38%, 7-Zip +10%) but WebKit - the iPad's
+            // engine - does not: desktop under macOS WebKit, CPU-Z 12.1 -> 3.4, glmark2 30 -> 5. So it
+            // stays OFF (opt-in tune only); every step down the ladder pins it off.
             const fastTci = !!g.fastTci && cfg().interp2 !== "classic";
             const SAFE_LEVELS = [
               { name: "full speed", tune: fastTci ? { fasttci: 1 } : undefined },
