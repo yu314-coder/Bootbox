@@ -52,19 +52,21 @@ info)
   timeout 900 wine "$EXE" -bench 2>/dev/null
   R=$(ls -t ./*.txt 2>/dev/null | head -1)
   if [ -n "$R" ]; then
-    SC=$(cat "$R")
+    SC=$(tr -d '\r' < "$R")   # CPU-Z writes Windows line endings
     ST=$(echo "$SC" | cut -d',' -f1 | tr -d '"')
     MT=$(echo "$SC" | cut -d',' -f2 | tr -d '"')
     echo ""
+    N=$(nproc)
     echo "=========== CPU-Z $MODE-bit BENCHMARK ==========="
     echo "  Single-thread score : ${ST:-?}"
-    echo "  Multi-thread  score : ${MT:-?}"
-    echo "  (raw: $SC)"
+    echo "  Multi-thread  score : ${MT:-?}   ($N cores)"
+    echo "  (raw: $SC; the guest has $N CPUs: $(grep -c ^processor /proc/cpuinfo) in /proc/cpuinfo)"
     echo "================================================="
-    echo "These are tiny vs a native CPU (hundreds per core): every guest instruction is emulated"
-    echo "in software, and CPU-Z's bench is scalar SSE floating point, which runs through QEMU's"
-    echo "softfloat helpers -- roughly 1000x native here, vs ~100-200x for general integer code."
-    echo "Multi-thread / single-thread = how many emulated cores really ran in parallel."
+    echo "These are tiny vs a native CPU (hundreds per core): every guest instruction is translated"
+    echo "in software, roughly 50-100x slower than native."
+    echo "Multi-thread / single-thread = how many emulated cores really ran in parallel. More emulated"
+    echo "cores than the device has fast (performance) cores add little: the rest run on its efficiency"
+    echo "cores, and a hot device slows every core down."
   else
     echo "no result .txt produced. Wine may not have completed the benchmark under emulation."
     echo "Try the GUI instead:  WINEESYNC=1 wine /root/cpuz/$EXE   (then Bench tab -> Bench CPU)"

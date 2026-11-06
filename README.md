@@ -35,6 +35,7 @@
 </p>
 
 <p align="center">
+  <a href="#whats-new-in-11">What's new</a> ·
   <a href="#what-it-boots">What it boots</a> ·
   <a href="#performance">Performance</a> ·
   <a href="#feature-highlights">Features</a> ·
@@ -78,13 +79,38 @@ built for learning Linux, scripting, retro computing and experiments.
 
 ---
 
+## What's new in 1.1
+
+1.1 is in TestFlight; the App Store still has 1.0.
+
+- **Windows 98 SE and Windows 2000 in one tap.** Pre-installed disk images download from this
+  repository's `windows-v1` release and boot in the 32-bit engine (v86). Windows 2000 has internet.
+- **An on-screen PC keyboard** (the **Keys** button) with F1–F12, Esc, Tab, arrows and
+  Ctrl/Alt/Shift/Win, for every system.
+- **An optional AVX2 CPU** for the 64-bit Linux systems (UEFI Setup → Advanced → Instruction Set),
+  for programs that require AVX2, FMA or BMI2. It is off by default because it costs multi-core speed.
+- **A faster engine:** `rep movs`/`rep stos` copies run in bulk, and SSE integer shuffles, packs and
+  multiplies run as WebAssembly SIMD. See [Performance](#performance).
+- **Android:** the fast interpreter (app launches 1.5–3× faster), a **▤ Shell** button that opens a
+  root Android terminal, and a display that keeps reconnecting instead of freezing on its last frame.
+- The Terminal's GPU benchmark warms the shader cache first, so it measures drawing, not compiling.
+- **Linux Desktop image v16:** closing the Linux browser (✕ or its last tab) quits it instead of
+  leaving ~220 MB of WebKit processes running; the pre-started browser's first page draws; the
+  Benchmarks hub stops re-rendering every 4 s; the desktop GPU benchmark also warms up first.
+- The CPU-Z test and the cores menu show how many cores the guest is really running with, and a new
+  core count says "on reboot" until the system restarts.
+
+---
+
 ## What it boots
 
 | System | Arch | Cores | Highlights | Download |
 |---|---|---|---|---|
 | **Linux (Desktop)** | x86-64 | **1–8 (default 2)** | Openbox + tint2 desktop · **WebKit web browser** (links can also open in the device's own browser) · PCManFM · terminal · Python 3.12 · **Benchmarks hub** (CPU-Z, 7-Zip, sysbench, glmark2, web) | ~240 MB, once |
 | **Linux (Terminal)** | x86-64 | **1–8 (default 2)** | Alpine · Python 3.12 + pip · real internet · file browser · `mc` · **wine-staging 11.5, esync on by default, warm prefix** | ~310 MB, once |
-| **Android 12 AOSP** | x86-64 | 4 | Full Android framework + ART · System UI · Launcher3 · touch/keyboard · resumes from a home-screen snapshot in seconds · writable `/data` | ~900 MB, once |
+| **Android 12 AOSP** | x86-64 | 4 | Full Android framework + ART · System UI · Launcher3 · touch/keyboard · **▤ Shell** (root terminal) · resumes from a home-screen snapshot in seconds · writable `/data` | ~900 MB, once |
+| **Windows 98 SE** (1.1) | i686 (v86) | 1 | Pre-installed, boots to the desktop · 256 MB RAM · 640×480 | ~89 MB, once |
+| **Windows 2000 Pro** (1.1) | i686 (v86) | 1 | Pre-installed SP4 with auto-logon · **internet** · 512 MB RAM · 640×480 | ~340 MB, once |
 | **Your own images** | i686 (v86) | 1 | Import `.iso`/`.img` (for example your own Windows install media) via the Files app; paired save-states resume in ~1 s | — |
 
 The **app itself is ~68 MB.** Guest images are **not bundled** — each system downloads
@@ -96,20 +122,27 @@ engine, which few users boot) are fetched on demand.
 
 ## Performance
 
-Measured on an Apple M4 Mac with the engine the app ships (Linux guest, 4 vCPUs), in Chrome's and
-in WebKit's WebAssembly engines. iPads land in the same range or somewhat lower.
+Measured with the 1.1 engine on an Apple M4 Mac (Linux Desktop guest, 4 vCPUs, Chrome's WebAssembly
+engine) while the Mac was also busy with other work, so these are on the low side.
 
 | Benchmark | Score |
 |---|---|
-| CPU-Z, single / multi thread | **15.4 / 42.0** (WebKit: 12.0–12.7 / 29–31) |
-| 7-Zip, single / multi thread | **301 / 907** MIPS |
-| GPU: glmark2 on Mesa llvmpipe (every pixel drawn by the emulated CPU) | **45** |
-| Web benchmark in the Linux browser (1000 = WebKit natively on an M4) | **4–7** |
-| Android 12 cold app launch: Settings / Contacts | **21 s / 15 s** |
+| CPU-Z, single / multi thread | **16.2 / 43.2** |
+| 7-Zip, single / multi thread | **295 / 789** MIPS |
+| sysbench CPU, single / multi thread | **192 / 653** events/s |
+| GPU: glmark2 on Mesa llvmpipe (every pixel drawn by the emulated CPU) | **38** (Desktop) · **41–60** (Terminal, depending on how busy the Mac was) |
+| Web benchmark in the Linux browser (1000 = WebKit natively on an M4) | **4–7** (1.0) |
+| Android 12 app launch after resume, Settings / Contacts (WebKit, `am start -W`) | **4.9 s / 2.8 s** |
+
+WebKit, the engine the iPad runs, is slower than Chrome on the same code: on this Mac CPU-Z scored
+about 12 single-thread under WebKit with the 1.0 engine. An iPad Air (M3) scored 8.4 / 25.6 in
+the Terminal with an early 1.1 build.
 
 For scale: a modern native CPU core scores roughly 700–900 in CPU-Z single-thread, so the emulated PC
-runs at a few percent of native. A month earlier the same CPU-Z test scored 0.59 / 1.48. What made
-the difference, build by build:
+runs at a few percent of native. Native QEMU on the same Mac, emulating the same guest without
+WebAssembly, scores 15–22 single-thread, so most of the remaining gap is QEMU's x86 translator rather
+than the WebAssembly layer. Before the changes below, the same CPU-Z test scored 0.59 / 1.48.
+What made the difference, build by build:
 
 - **Compiled blocks no longer wait for the garbage collector** (Build 85). Evicted block instances
   stayed counted against the live-instance cap until JavaScript's GC ran, so big guests quietly ran
@@ -129,6 +162,15 @@ the difference, build by build:
   chewed on for seconds during every boot.
 - **Fast interpreter by default** (Build 112). A compact interpreter loop WebKit can fully
   optimize; the classic one sometimes stayed slow (2 of 3 test runs were 3–4× slower).
+- **Leaner inlined SSE float ops** (1.1): one NaN test on the result instead of on each input, and no
+  upper-lane copy when the destination is also the source.
+- **Bulk string copies** (1.1): `rep movs`/`rep stos` used to cost one block run per iteration;
+  Terminal glmark2 30 → 53 ([note 11](#engineering-notes-the-fun-bugs)).
+- **SSE integer ops as WebAssembly SIMD, no register save/reload around SSE helpers** (1.1):
+  CPU-Z single-thread about +10% ([note 12](#engineering-notes-the-fun-bugs)).
+- **Android on the fast interpreter** (1.1). Android was the one guest still on the classic loop;
+  with the fast one and the lock-free guest clock, Settings opens in 4.9 s instead of 8.1 s and
+  Contacts in 2.8 s instead of 6.2 s under WebKit.
 
 ---
 
@@ -207,9 +249,16 @@ included. The guest is software-emulated because Apple exposes Hypervisor.framew
 Virtualization.framework on macOS, not iPadOS; performance is therefore suitable for the
 Android compatibility testing rather than graphics-heavy games. A cold boot under WebAssembly
 takes many minutes, so Bootbox doesn't do one: the image carries a **snapshot taken at the home
-screen** (captured on four cores) and resumes from it in seconds. Apps then cold-launch in roughly
-15–20 s on an M4 Mac (Settings 21 s, Contacts 15 s). The image downloads once (~900 MB) and stays
+screen** (captured on four cores) and resumes from it in seconds. After the resume, Settings opens
+in about 5 s and Contacts in about 3 s under WebKit on an M4 Mac (`am start -W`; 1.0 took 8.1 s and
+6.2 s). iPads take about two to three times as long. The image downloads once (~900 MB) and stays
 outside the app bundle.
+
+Android's own UI is drawn by the emulated CPU, so it can lag while an app starts. The **▤ Shell**
+button (1.1) opens a root Android shell beside it, drawn by the iPad: the app speaks adb's wire
+protocol (`vendor/qemu/adbshell.js`) to the guest's `adbd` through the in-app network stack, so
+commands like `am start -n com.android.settings/.Settings`, `pm list packages` or `logcat` stay
+responsive while Android is busy.
 
 ### Python that actually works
 - `pip install` is backed by **uv** (a static Rust resolver — no slow Python import tree)
@@ -217,10 +266,10 @@ outside the app bundle.
 - **10-minute download timeouts** baked in — large wheels (scipy is 35 MB) download fine
   over the emulated NIC
 - **`pip install numpy` just works**: a baked-in constraints file resolves to the
-  NumPy 1.x line, whose wheels do *runtime* CPU-feature dispatch. (NumPy 2.x wheels are
-  compiled for x86-64-v2 and crash on the emulated CPU — and raising the CPUID is unsafe:
-  the wasm TCG backend mis-executes SSE4-era instructions.) scipy/pandas/matplotlib/pillow
-  ship Alpine (musllinux) wheels; for scikit-learn use `apk add py3-scikit-learn`.
+  NumPy 1.x line, whose wheels do *runtime* CPU-feature dispatch. (NumPy 2.x wheels need
+  x86-64-v2, which the default emulated CPU doesn't advertise; see engineering note 6.)
+  scipy/pandas/matplotlib/pillow ship Alpine (musllinux) wheels; for scikit-learn use
+  `apk add py3-scikit-learn`.
 - Common TUI/file tools are pre-installed (`ncdu`, `htop`, `tree`, `tmux`, `nano`, `less`).
 
 ### A built-in file browser + iPad ↔ guest transfers
@@ -232,8 +281,8 @@ are shown. The first listing right after boot is slow only because the emulated 
 finishing boot; once settled a listing is **<0.5 s**.
 
 ### Windows programs
-Classic Windows boots in **v86** from install media or disk images you supply (Bootbox doesn't ship
-Windows), and 32-bit `.exe` run in **BoxedWine**
+Classic Windows boots in **v86**: Windows 98 SE and Windows 2000 as one-tap downloads (1.1), or install
+media and disk images you supply. 32-bit `.exe` run in **BoxedWine**
 (import an `.exe` → Compatibility Center → 🍷 Run with Wine → the window renders via noVNC).
 
 **Wine in the 64-bit guest (experimental, v2):** the first attempt (Wine 9.0) deadlocked on-device
@@ -266,15 +315,17 @@ files are hard links — zero copies even for multi-GB disk images.
 ### Real internet, no proxies
 `Iosnet.xcframework` embeds a **gVisor userspace TCP/IP stack** (from container2wasm's
 `c2w-net`): the guest's virtio NIC frames travel over a local WebSocket into native
-sockets. `pip`, `apk`, `wget`, DNS — everything works, fully on-device.
+sockets. `pip`, `apk`, `wget`, DNS — everything works, fully on-device. The same stack carries the
+Linux desktop's and Android's screens to noVNC and, since 1.1, the adb connection behind Android's
+▤ Shell. Its Go source is in [`Frameworks/Iosnet-src/`](Frameworks/Iosnet-src/).
 
 ### A boot experience, not a settings screen
 GRUB-style **boot menu** with per-system notes → classic Aptio-blue **UEFI Setup**
 (functional RAM / CPU-cores / boot-order / network toggles, plus some loving theater) →
 serial console on the left, GUI on the right. The terminal fills its pane, taps focus it,
 keyboard routing follows your last tap, and full-screen TUIs (`ncdu`, `mc`, `vi`) get the
-right arrow-key sequences (application-cursor mode). A 🔧 File-Sync diagnostics panel is
-built into the boot menu.
+right arrow-key sequences (application-cursor mode). The **Keys** button (1.1) adds an on-screen PC
+keyboard for the keys an iPad lacks. A 🔧 File-Sync diagnostics panel is built into the boot menu.
 
 ---
 
@@ -295,7 +346,8 @@ Bootbox/                    Swift host app
     js/apps/biosmenu.js         boot menu + UEFI setup
     js/apps/emulator.js         guest orchestration, toolbar (RAM/cores), download-on-demand
     vendor/qemu/                QEMU-Wasm glue: run.js (boot, RAM/-smp overrides, noVNC
-                                pre-warm), panel.js (terminal/GUI/Files panes)
+                                pre-warm), panel.js (terminal/GUI/Files panes),
+                                adbshell.js (adb client for Android's ▤ Shell)
     vendor/qemu-aload/          x86-64 engine (patched QEMU-Wasm, -g-stripped) + loader
     vendor/qemu-aarch64/        ARM64 engine loader (engine wasm + rootfs download on demand)
     vendor/qemu-desktop/        desktop-guest loader (shares the x86-64 engine binary)
@@ -305,6 +357,7 @@ Bootbox/                    Swift host app
     vendor/novnc/               noVNC (guest GUI)
 FileProvider/               Files-app integration (classic NSFileProviderExtension)
 Frameworks/Iosnet.xcframework   gVisor netstack (Go, via gomobile)
+Frameworks/Iosnet-src/      its Go source (WebSocket endpoints for the NIC, VNC and adb)
 engine/                     the x86-64 engine's source (QEMU-Wasm, GPL-2.0) + build recipe
 ubuntu-build/               Dockerfiles for the guest rootfs images (see below)
 docs/                       App Store review checklist, privacy policy, screenshots, icon,
@@ -400,7 +453,7 @@ are download-on-demand.)
 
 ## Engineering notes (the fun bugs)
 
-Six of the problems this app had to solve are unusual enough to write down:
+Some of the problems this app had to solve are unusual enough to write down:
 
 **1. Why `-smp 2` used to boot with one CPU.**
 QEMU parsed it, created both vCPUs, both threads ran, the second CPU even *answered the
@@ -444,12 +497,13 @@ guest kernel ran. (This was a latent crash in the shipped 1.5 GB ARM config too.
 lower the ARM `tb-size` to 192 (matching x86-64), freeing ~308 MB — now it boots at 1536 MB.
 
 **6. Why `pip install numpy` needs NumPy 1.x here.**
-NumPy 2.x musllinux wheels are compiled for the x86-64-v2 baseline (SSSE3/SSE4/POPCNT).
-The emulated CPU doesn't advertise those — and it must not: advertising them makes guest
-code take SIMD paths that the wasm TCG backend *mis-executes* (silently wrong results, Go
-runtime crashes). NumPy 1.x wheels detect CPU features at **runtime** and run correctly.
-A baked `pip`/`uv` constraints file pins the working line so a plain `pip install numpy`
-does the right thing.
+NumPy 2.x musllinux wheels are compiled for the x86-64-v2 baseline (SSSE3/SSE4/POPCNT), and
+the default emulated CPU (`qemu64`) doesn't advertise those. Advertising them used to break
+guests outright: the wasm TCG backend's POPCNT wrote its result into its *source* register
+(Go runtime panics, every new Android process crashing at the same address). That bug is
+fixed, and 1.1 offers an opt-in AVX2 CPU in UEFI Setup, but the default stays `qemu64`.
+NumPy 1.x wheels detect CPU features at **runtime** and run correctly on it; a baked
+`pip`/`uv` constraints file pins that line so a plain `pip install numpy` does the right thing.
 
 **7. Why big guests ran 18× slower than they should.**
 Each hot translated block becomes its own small WebAssembly module, and a cap limits how many live
@@ -482,6 +536,26 @@ Sampling WebKit's own content process showed costs Chrome never has:
 
 The fixes, in order: pre-grow the table once, cache the clock object, split the switch into 21
 small functions kept out of line, and make the compact interpreter loop the default.
+
+**11. Why a third of the GPU benchmark was one instruction.**
+A QEMU plugin that counts executed guest instructions by opcode showed that in glmark2's clear
+scene, 33% of everything the emulated CPU ran was `rep movs`/`rep stos` iterations: frame copies,
+the kernel's `clear_page` and `copy_user`. QEMU translates a string instruction as a block that does
+*one* iteration and jumps back to itself, so a 4 KB page clear costs hundreds of block runs. A
+helper now does every iteration that can't fault or touch a device in one call (pages that are
+plain RAM in the TLB, forward direction, overlaps cut to the safe distance) and leaves the rest to
+the ordinary path, so a page fault still stops on the exact iteration with the exact registers.
+Guest memset went from 49 to 10,800 MB/s and the Terminal's glmark2 from 30 to 53.
+
+**12. Why every SSE instruction saved and reloaded the guest's registers.**
+SSE instructions are C helper calls in QEMU. A helper may read or write any guest register, so
+TCG wrote every cached register back to memory before each call and reloaded them after, even
+when the backend had already replaced the call with a single wasm SIMD instruction. Marking the
+pure SSE helpers as not touching guest registers (`TCG_CALL_NO_RWG`) removed that traffic. The
+`comiss`/`comisd` helpers wrote the flags directly, so they now return them instead. With the SIMD
+inlining, CPU-Z single-thread rose about 10%; three test suites (float math, every inlined SIMD op with every shuffle
+immediate and rounding mode, string copies with mid-copy faults) stay bit-identical to native
+QEMU and to real x86.
 
 ---
 
@@ -525,7 +599,9 @@ Bootbox stands on excellent open source:
 
 Modified engine sources are published per the GPL: the app's engine in
 [`engine/qemu-wasm/`](engine/qemu-wasm/), the guest-image build changes in the two forks above.
-Guest Linux images are built from Alpine Linux packages; classic-Windows images are user-supplied.
+Guest Linux images are built from Alpine Linux packages. Windows 98 SE and Windows 2000 are Microsoft
+software; the one-tap entries download pre-installed images from the `windows-v1` release, and any
+other Windows image is user-supplied.
 
 ---
 

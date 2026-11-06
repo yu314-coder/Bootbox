@@ -7,6 +7,9 @@
 # console request (bbweb-launch.c open_native); `web --linux` / the Linux browser stay for bootbox:// pages.
 # v15: hub "Run all" (bench-all), glmark2 from the hub works (benchmarks get a clean env), and the boot
 # terminal waits for a real width before bash draws its prompt (the iPad showed it one letter per line).
+# v16: closing the Linux browser quits it (it only hid, leaving ~220 MB of processes behind); the first page
+# of the pre-started browser draws (it stayed blank grey until a reload) and no strip stays unpainted; the
+# hub stops re-rendering every 4 s (~1/4 core while open); gpu-bench warms the shader cache untimed first.
 # v2 (build 73): graphical browser (Dillo) + file manager (PCManFM) + a real wallpaper. HISTORY: dillo/BadWolf "flooded the single-threaded Xvnc until the GUI froze" — but that
 # was tested BEFORE the cx16 engine fix, when every guest allocation took a stop-the-world exclusive
 # section (kernel SLUB uses lock cmpxchg16b). With the spinlock engine those light GUI apps get

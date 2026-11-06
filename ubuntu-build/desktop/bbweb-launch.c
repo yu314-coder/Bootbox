@@ -77,6 +77,7 @@ static unsigned long rgb(Display *d, const char *spec) {
 }
 
 int main(int argc, char **argv) {
+  char **orig_argv = argv;
   int linux_only = argc > 1 && !strcmp(argv[1], "--linux");   // this Linux browser, never the native one
   if (linux_only) { argv++; argc--; }
   // The URL / search words, joined (the engine treats "" as the start page).
@@ -103,7 +104,8 @@ int main(int argc, char **argv) {
   int ready[2] = { -1, -1 };
   pid_t pid = -1;
   if (starting) {
-    if (lock >= 0) close(lock);
+    // keep the lock fd: if the engine holding it exits instead of listening (it was just closed and is
+    // quitting, v16), the lock frees up and this launcher starts over and starts a new engine.
   } else {
   if (pipe(ready) != 0) ready[0] = ready[1] = -1;
   pid = fork();
@@ -177,8 +179,15 @@ int main(int argc, char **argv) {
     if (time(NULL) - t0 > 240) break;
     if (starting) {                                     // someone else's engine: hand over once it listens
       if (send_to_running(url)) break;
+      if (lock >= 0 && flock(lock, LOCK_EX | LOCK_NB) == 0) {   // ...or it exited without listening
+        close(lock);
+        if (d) XCloseDisplay(d);
+        execv("/proc/self/exe", orig_argv);
+        return 1;
+      }
     } else if (waitpid(pid, NULL, WNOHANG) == pid) break;
   }
+  if (starting && lock >= 0) close(lock);
   if (d) XCloseDisplay(d);
   return 0;
 }

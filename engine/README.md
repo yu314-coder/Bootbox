@@ -31,8 +31,9 @@ The Bootbox changes are mostly in `tcg/wasm32.c`, `tcg/wasm32/tcg-target.c.inc` 
 - 1.1: SSE integer shuffles/packs/multiplies and packed float<->int conversions as wasm SIMD
   (`tcg_wasm_out_simd_inline`, `simdinline=0` turns it off); shuffle immediates come from the call's constant
   arguments. The pure SSE helpers are `TCG_CALL_NO_RWG` (the `comis*` helpers now return the flags), so guest
-  registers are no longer written back and reloaded around every SSE op: CPU-Z single-thread +15% (WebKit
-  desktop 11.6 -> 13.4, Chrome Terminal 14.6 -> 17.0)
+  registers are no longer written back and reloaded around every SSE op: CPU-Z single-thread about +10%
+  (Chrome, Terminal guest, paired runs: 16.7 / 15.5 against 15.1 / 14.7). With `gvecool=1` as well, single
+  runs reached 17.0 in Chrome and 13.4 on the WebKit desktop (from 11.6)
 - 1.1, opt-in (`gvecool=1`): the generic 16-byte vector ops (add/sub/saturating/min/max/logic/compare/shift/
   move) too - `tcg-op-gvec.c` routes them to their out-of-line helper, which the backend emits as one SIMD
   instruction instead of 8-16 64-bit ops. Off by default: in macOS WebKit 2 of 3 Terminal glmark2 runs with it

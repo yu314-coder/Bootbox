@@ -4,8 +4,9 @@
 // loaded LLVM + the llvmpipe driver, ~100 MB of libraries), no smooth-scroll animation, no autoplay.
 // Started by the `bbweb` launcher (bbweb-launch.c), which shows a card until BBWEB_READY_FD is written.
 // Single instance: later launches send their URL over /tmp/.bbweb.sock -> a new tab, window to front.
-// It stays running when its window is closed (hidden, one tab back on the start page), and xstart
-// pre-starts it hidden after boot (`--prewarm`), so opening Web is instant instead of ~20 s.
+// xstart pre-starts it hidden after boot (`--prewarm`), so the first Web tap is instant instead of ~20 s.
+// Closing the window (or its last tab) quits it (v16; it used to only hide, which left ~220 MB of
+// processes running and looked like the browser never closed).
 // bootbox://app/ pages: start, hub (Benchmarks), webbench; .../run/<id> starts a whitelisted
 // benchmark, .../results and .../save?j=<json> read and append ~/.bootbox/results.jsonl.
 // Lite (toolbar): mobile site versions, no images - much lighter pages on the emulated CPU.
@@ -51,10 +52,18 @@ static void phase(const char *what) {
   printf("phase %s %s\n", b, what);
   fflush(stdout);
 }
+// v16: a freshly opened window sometimes showed a strip of the page unpainted (grey, e.g. the hub's left
+// margin) until something covered and uncovered it: WebKit had drawn it, GTK had not copied it to the
+// window. Redrawing the view shortly after a load finishes (and once more for late layout) copies it all.
+static gboolean redraw_view(gpointer w) { gtk_widget_queue_draw(GTK_WIDGET(w)); g_object_unref(w); return G_SOURCE_REMOVE; }
 static void on_load_changed(WebKitWebView *v, WebKitLoadEvent e, gpointer d) {
-  (void)v; (void)d;
+  (void)d;
   phase(e == WEBKIT_LOAD_STARTED ? "load-started" : e == WEBKIT_LOAD_COMMITTED ? "load-committed" :
         e == WEBKIT_LOAD_FINISHED ? "load-finished" : "load-redirected");
+  if (e == WEBKIT_LOAD_FINISHED) {
+    g_timeout_add(300, redraw_view, g_object_ref(v));
+    g_timeout_add(1500, redraw_view, g_object_ref(v));
+  }
 }
 
 static WebKitWebView *current_view(void) {
@@ -109,19 +118,20 @@ static void on_view_changed(WebKitWebView *v, GParamSpec *ps, gpointer d) {
   if (v == current_view()) sync_toolbar();
 }
 
-// Closing the window (or its last tab) only hides it: the engine and its web process stay up, so the
-// next Web tap shows the window at once. One tab is kept, back on the light start page.
-static void hide_browser(void) {
-  while (gtk_notebook_get_n_pages(GTK_NOTEBOOK(nb)) > 1) gtk_notebook_remove_page(GTK_NOTEBOOK(nb), -1);
-  if (current_view()) webkit_web_view_load_uri(current_view(), HOME_URI);
+// Closing the window (or its last tab) quits: the window goes at once, then the engine leaves its main
+// loop and exits, and WebKit's web and network processes exit with it. The socket goes first, so a
+// launcher started meanwhile starts a new engine instead of handing its URL to this one (bbweb-launch.c).
+static void quit_browser(void) {
+  unlink(SOCK_PATH);
   gtk_widget_hide(win);
+  gtk_main_quit();
 }
-static gboolean on_delete(GtkWidget *w, GdkEvent *e, gpointer d) { (void)w; (void)e; (void)d; hide_browser(); return TRUE; }
+static gboolean on_delete(GtkWidget *w, GdkEvent *e, gpointer d) { (void)w; (void)e; (void)d; quit_browser(); return TRUE; }
 
 static void close_tab(WebKitWebView *v) {
   int i = gtk_notebook_page_num(GTK_NOTEBOOK(nb), GTK_WIDGET(v));
   if (i < 0) return;
-  if (gtk_notebook_get_n_pages(GTK_NOTEBOOK(nb)) == 1) { hide_browser(); return; }
+  if (gtk_notebook_get_n_pages(GTK_NOTEBOOK(nb)) == 1) { quit_browser(); return; }
   gtk_notebook_remove_page(GTK_NOTEBOOK(nb), i);
 }
 static void on_close_clicked(GtkButton *b, gpointer v) { (void)b; close_tab(WEBKIT_WEB_VIEW(v)); }
@@ -431,14 +441,15 @@ static gboolean on_incoming(GSocketService *svc, GSocketConnection *c, GObject *
   GDataInputStream *in = g_data_input_stream_new(g_io_stream_get_input_stream(G_IO_STREAM(c)));
   gchar *line = g_data_input_stream_read_line(in, NULL, NULL, NULL);
   gboolean was_hidden = !gtk_widget_get_visible(win);
-  if (line && *g_strstrip(line)) {
-    // Hidden (closed or pre-started) with just the start page: reuse that tab rather than open a 2nd.
-    WebKitWebView *v = current_view();
-    const char *u = v ? webkit_web_view_get_uri(v) : NULL;
-    if (was_hidden && v && gtk_notebook_get_n_pages(GTK_NOTEBOOK(nb)) == 1 && (!u || !strcmp(u, HOME_URI))) {
-      gchar *t = to_uri(line); webkit_web_view_load_uri(v, t); g_free(t);
-    } else add_tab(NULL, line, TRUE);
-  }
+  gboolean has_url = line && *g_strstrip(line);
+  if (prewarm) {
+    // First show of the pre-started engine: a fresh tab (same web process) replaces the start page it
+    // loaded unmapped. That view never painted once its window appeared - pages stayed blank grey until
+    // a reload (desktop v12-v15) - while a view created just before the window is shown draws normally.
+    WebKitWebView *old = current_view();
+    add_tab(old, has_url ? line : HOME_URI, TRUE);
+    if (old) gtk_notebook_remove_page(GTK_NOTEBOOK(nb), gtk_notebook_page_num(GTK_NOTEBOOK(nb), GTK_WIDGET(old)));
+  } else if (has_url) add_tab(NULL, line, TRUE);
   g_free(line);
   g_object_unref(in);
   if (was_hidden) gtk_widget_show_all(win);

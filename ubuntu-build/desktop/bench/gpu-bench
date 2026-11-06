@@ -2,7 +2,7 @@
 # gpu-bench - glmark2 (the standard OpenGL ES benchmark) on Mesa's software rasterizer (llvmpipe).
 # There is no GPU in an iPad's WebAssembly sandbox: every pixel is computed by the emulated CPU, so
 # this measures engine speed x cores, which is what any graphical app here gets.
-#   gpu-bench        -> quick: 2 scenes (clear 8 s + build 30 s - its first ~10 s compile shaders), 320x240
+#   gpu-bench        -> quick: 2 scenes (clear 8 s + build 30 s, after an untimed shader warm-up), 320x240
 #   gpu-bench full   -> the whole glmark2 suite (long)
 export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER="${GPU:-llvmpipe}"
 LP_NUM_THREADS=$(nproc); export LP_NUM_THREADS
@@ -13,6 +13,14 @@ for i in 1 2 3 4 5 6 7 8 9 10; do timeout 5 xwininfo -display :1 -root >/dev/nul
 trap 'pkill -f "Xvnc :1 " 2>/dev/null' EXIT
 VIS="red=1:green=1:blue=1:alpha=0:depth=1:stencil=0"
 echo "glmark2-es2 on Mesa $GALLIUM_DRIVER ($LP_NUM_THREADS render threads). Shaders compile on the emulated CPU first."
+if [ "$1" != "full" ]; then
+  # Untimed warm-up (v16, as the Terminal's GPU bench in app 1.1): llvmpipe compiles each shader to x86 code
+  # with LLVM the first time it draws - seconds on the emulated CPU, and inside the timed build scene that
+  # counted as rendering. One throwaway frame of each scene fills Mesa's shader cache first.
+  W=$(date +%s)
+  DISPLAY=:1 glmark2-es2 --visual-config "$VIS" --size 320x240 -b clear:duration=0.1 -b build:use-vbo=true:duration=0.1 >/dev/null 2>&1
+  echo "(shader compile warm-up: $(( $(date +%s) - W )) s, not counted)"
+fi
 S=$(date +%s)
 if [ "$1" = "full" ]; then
   DISPLAY=:1 glmark2-es2 --visual-config "$VIS" --size 320x240 | tee /tmp/gpu-bench.out

@@ -67,9 +67,14 @@ async function onRun(e) {
 grid.addEventListener("click", onRun);
 document.getElementById("runall").addEventListener("click", onRun);
 const when = t => { const d = new Date(t * 1000); return d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); };
+let lastRes = null;
 async function refresh() {
-  let res = [];
-  try { res = await (await fetch("bootbox://app/results?" + Date.now())).json(); } catch (e) { return; }
+  let txt, res = [];
+  try { txt = await (await fetch("bootbox://app/results?" + Date.now())).text(); res = JSON.parse(txt); } catch (e) { return; }
+  // Unchanged results: touch nothing. Rewriting every card and the history table each 4 s kept the browser's
+  // web process at ~1/4 of a core (most of one vCPU) for as long as the hub was open, benchmarks included.
+  if (txt === lastRes) return;
+  lastRes = txt;
   document.title = "Benchmarks" + (res.length ? " (" + res.length + ")" : "");   // also the image build's read-back test
   const latest = {};
   for (const r of res) latest[r.id] = r;

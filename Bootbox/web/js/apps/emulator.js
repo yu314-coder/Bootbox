@@ -107,8 +107,8 @@
       // v13-v14 (builds 102-103): faster Linux browser (one web process, mimalloc, ad blocker); Web opens
       // in the app's native browser. v15 (build 106): hub "Run all", glmark2 from the hub, the boot
       // terminal waits for its real width before the first prompt.
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v15/qemu-desktop15-rootfs.data.gz",
-        name: "qemu-desktop15-rootfs-1277329886.data.gz", mb: 419, size: 439105856 },
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v16/qemu-desktop16-rootfs.data.gz",
+        name: "qemu-desktop16-rootfs-1276163988.data.gz", mb: 417, size: 437536010 },
     ] },
     // Android is a full AOSP x86_64 userspace on Bootbox's QEMU guest kernel.
     // The rootfs is download-on-demand; the x86_64 engine is shared with Linux.
@@ -939,9 +939,18 @@
           setCfg({ interp2: interpSel.value, q64safe6: { level: 0 } });   // a manual pick restarts the safety ladder
           try { status.textContent = "Interpreter set to " + (interpSel.value === "fast" ? "Fast" : "Classic") + " — applies on the next boot (press ⏻ Start to reboot)."; } catch (e) {}
         });
+        // While a 64-bit guest runs, a different choice here only applies on the next boot: say so in the
+        // menu itself ("8 on reboot"), so a screenshot of the toolbar never shows a core count the running
+        // guest doesn't have (window.__q64Smp = the -smp it booted with).
+        function markCores() {
+          const live = window.__q64Live && window.__q64Smp;
+          for (const o of coresSel.options)
+            o.textContent = o.value + (live && o.selected && +o.value !== +window.__q64Smp ? " on reboot" : " cores");
+        }
         coresSel.addEventListener("change", () => {
           setCfg({ cores64: +coresSel.value || 2 });
-          try { status.textContent = "CPU cores set to " + coresSel.value + " — applies on the next boot (press ⏻ Start to reboot)."; } catch (e) {}
+          markCores();
+          try { status.textContent = "CPU cores set to " + coresSel.value + " — applies on the next boot (press ⏻ Start to reboot)." + (window.__q64Live && window.__q64Smp ? " The guest is running with " + window.__q64Smp + " now." : ""); } catch (e) {}
         });
 
         async function boot() {
@@ -1279,7 +1288,7 @@
               netWs: NET_BASE + "/",   // in-app gVisor netstack (MiniOSApp.startNetStack) -> real internet
               vnc: NET_BASE + "/vnc",   // noVNC GUI bridge: netstack /vnc endpoint -> vn.Dial(guest x11vnc:5900)
               ram: ramMB,
-              smp: Math.max(g.minCores || 1, Math.min(g.maxCores || 8, +coresSel.value || (args && +args.cores) || 0)) || undefined,
+              smp: (window.__q64Smp = Math.max(g.minCores || 1, Math.min(g.maxCores || 8, +coresSel.value || (args && +args.cores) || 0)) || undefined),
               tune,   // engine JIT tunables (run.js writes /bootbox-tune; build-84+ engine reads it)
               initialMemoryMB: level.presize ? ramMB + 900 : undefined,
               compressedVnc: !!g.android,
