@@ -850,15 +850,21 @@
         // Detect emulation speed of this device. WKWebView gets WASM JIT, but its
         // strength varies (sideloaded/real device = fast; constrained = slow). We
         // benchmark a hot loop and tune defaults: slow → stay 32-bit; fast → 64-bit ok.
-        if (!cachedPerf) {
+        // One run at launch can land while the page is still busy loading (an M5 iPad Pro showed
+        // "Medium"), so a result that isn't "fast" is re-measured a few times once the page has
+        // settled and the best run counts. Real slowness (no JIT: seconds per run) isn't re-run.
+        const perfLoop = () => {
           const t0 = performance.now();
           let x = 0; for (let i = 0; i < 4e7; i++) { x = ((x + i * 3) ^ (i >> 2)) >>> 0; }
           window.__perfSink = x;
-          const ms = performance.now() - t0;
+          return performance.now() - t0;
+        };
+        const perfSet = (ms, runs) => {
           const tier = ms < 90 ? "fast" : ms < 380 ? "medium" : "slow";
-          cachedPerf = { tier, ms: Math.round(ms), jit: ms < 380 };
-          try { console.log("[perf] JS benchmark " + Math.round(ms) + " ms (" + tier + "), " + (navigator.hardwareConcurrency || "?") + " cores"); } catch (e) {}
-        }
+          cachedPerf = { tier, ms: Math.round(ms), jit: ms < 380, runs };
+          try { console.log("[perf] JS benchmark " + Math.round(ms) + " ms (" + tier + ", best of " + runs + "), " + (navigator.hardwareConcurrency || "?") + " cores"); } catch (e) {}
+        };
+        if (!cachedPerf) perfSet(perfLoop(), 1);
         // Tap the speed badge: the web benchmark (JS / DOM / canvas) natively in this device's own
         // WebView - the same page the Linux desktop's browser runs emulated, same scale (1000 = M4).
         perfEl.style.cursor = "pointer";
@@ -873,7 +879,7 @@
           ov.querySelector("button").onclick = () => ov.remove();
           document.body.appendChild(ov);
         });
-        (function showPerf() {
+        function showPerf() {
           const p = cachedPerf;
           const icon = p.tier === "fast" ? "⚡" : p.tier === "slow" ? "🐢" : "⏱";
           const label = p.tier === "fast" ? "Fast (JIT)" : p.tier === "medium" ? "Medium" : "Slow — enable JIT";
@@ -898,7 +904,16 @@
                 " JS benchmark: " + p.ms + " ms.";
             }).catch(() => {});
           }
-        })();
+        }
+        showPerf();
+        // re-measure a launch-time result that isn't "fast" (2, 5 and 10 s later; best run wins)
+        [2000, 5000, 10000].forEach((delay) => setTimeout(() => {
+          const p = cachedPerf;
+          if (!perfEl.isConnected || p.tier === "fast" || p.ms >= 760) return;
+          const ms = perfLoop();
+          if (ms < p.ms) { perfSet(ms, (p.runs || 1) + 1); showPerf(); }
+          else p.runs = (p.runs || 1) + 1;
+        }, delay));
 
         function syncGuest() {
           const g = GUESTS.find(x => x.id === guestSel.value) || GUESTS[0];
