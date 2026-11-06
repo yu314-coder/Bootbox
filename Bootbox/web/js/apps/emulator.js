@@ -1235,8 +1235,9 @@
             // hammock (1.1 engine): a short forward jump no longer ends a block. Correct (native QEMU and
             // wasm difftest, fpcheck, web benchmark identical; the blank first browser page happens with
             // it off too). Chrome likes it (desktop sysbench +38%, 7-Zip +10%) but WebKit - the iPad's
-            // engine - does not: desktop under macOS WebKit, CPU-Z 12.1 -> 3.4, glmark2 30 -> 5. So it
-            // stays OFF (opt-in tune only); every step down the ladder pins it off.
+            // engine - gains nothing (desktop CPU-Z 11.8 / 33.2 against 12.6 / 35.6; the "12.1 -> 3.4"
+            // first measured was the Mac test rig throttling a hidden window). So it stays OFF (opt-in
+            // tune only); every step down the ladder pins it off.
             // 1.1 engine, on by default: bulk REP MOVS/STOS (one helper call per page instead of a block exit
             // per element: Terminal glmark2 30 -> 53) and SSE integer/convert ops as wasm SIMD. The SIMD
             // inlining goes off with the float inlining (level 3), bulk string ops one level lower.

@@ -20,8 +20,10 @@ The Bootbox changes are mostly in `tcg/wasm32.c`, `tcg/wasm32/tcg-target.c.inc` 
   destination is the source, `comiss`/`cvtt*` read each operand once); `fpcheck` stays bit-identical
 - 1.1: TCI `br` decodes a zero displacement as "next instruction" (it used to jump to address 0)
 - 1.1 (`hammock=1`, off by default): a short forward `jcc` stays inside the TB
-  (`target/i386/tcg/translate.c`). Correct, and faster in Chrome (desktop sysbench +38%, 7-Zip +10%),
-  but much slower under WebKit/JavaScriptCore (desktop CPU-Z 12.1 -> 3.4, glmark2 30 -> 5)
+  (`target/i386/tcg/translate.c`). Correct, and faster in Chrome (desktop sysbench +38%, 7-Zip +10%), but no
+  gain under WebKit/JavaScriptCore (desktop bench-all 11.8 / 33.2 against 12.6 / 35.6 without it). The
+  "collapse" first measured under WebKit (CPU-Z 12.1 -> 3.4) was the Mac test rig, not the engine: WebKit
+  throttles a page whose window is not on screen, and that run happened while no one was connected
 
 - 1.1: bulk `REP MOVS`/`REP STOS` (`target/i386/tcg/translate.c` `gen_rep_bulk` + `helper_rep_bulk` in
   `mem_helper.c`, `repbulk=0` turns it off). TCG ran one iteration per block exit; the helper does every
@@ -36,8 +38,9 @@ The Bootbox changes are mostly in `tcg/wasm32.c`, `tcg/wasm32/tcg-target.c.inc` 
   runs reached 17.0 in Chrome and 13.4 on the WebKit desktop (from 11.6)
 - 1.1, opt-in (`gvecool=1`): the generic 16-byte vector ops (add/sub/saturating/min/max/logic/compare/shift/
   move) too - `tcg-op-gvec.c` routes them to their out-of-line helper, which the backend emits as one SIMD
-  instruction instead of 8-16 64-bit ops. Off by default: in macOS WebKit 2 of 3 Terminal glmark2 runs with it
-  collapsed to a score of 7-9 (0 of 5 without it)
+  instruction instead of 8-16 64-bit ops. Off by default: it is faster in Chrome but not under WebKit, the
+  iPad's engine (Terminal, 3 alternating runs each: CPU-Z 11.6 / 28.3 with it, 11.8 / 28.3 without; glmark2
+  33 against 33). The glmark2 "collapses" once blamed on it were the hidden-window throttling above
 - Correctness rigs for these (all identical to native QEMU and to Docker x86): `fpcheck`, `simdtest`
   (every inlined op, all shuffle immediates, all rounding modes), `reptest` (overlaps, DF=1, addr32, the
   register state at a page fault mid-copy)
