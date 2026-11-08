@@ -1,41 +1,40 @@
 /* ============================================================================
  * Bootbox firmware — two screens, like a real PC:
  *
- *   • Boot Manager (renderMenu) — the "select operating system" page you normally
- *     see: the systems (Linux Desktop / Terminal, Android, the one-tap Windows
- *     images) and your own imported images, each with what it is, whether it is
- *     downloaded and how much space it takes. Pick one and boot. ↑↓/Enter or tap.
+ *   • Boot Menu  (renderMenu)  — the "select operating system" page you normally
+ *     see: a boot manager that lists the systems (Linux Desktop / Terminal,
+ *     Android, the one-tap Windows images) and your imported images. Pick one and
+ *     boot. ↑↓/Enter or tap. GRUB / UEFI-boot-manager style.
  *
  *   • UEFI Setup (renderSetup) — the firmware setup you DON'T normally see: tabbed
- *     (Main / Advanced / Boot / Security / Storage / Tools / Save & Exit). The
- *     functional settings come first; options that are only there for the
- *     real-firmware feel are marked "cosmetic". Storage lists and deletes what
- *     Bootbox keeps on the device; Tools has the Files-app diagnostics.
+ *     (Main / Advanced / Boot / Storage / Tools / Save & Exit), every setting
+ *     functional. Storage lists and deletes what Bootbox keeps on the device;
+ *     Tools has the Files-app diagnostics.
  * ========================================================================== */
 (function () {
   // The boot menu: two Linux front-ends of the 64-bit x86_64 engine, Android and the two v86
   // Windows images. (The ARM64 guest is no longer listed.) The Windows 98 / 2000 one-tap images were out
   // of 1.0 for App Review (guideline 5.2) and are back in 1.1 at the user's direction (Nov 2026).
   const SYSTEMS = [
-    { id: "x64pwd", name: "Linux (Desktop)", sub: "Windows, taskbar, file manager, web browser, Python", icon: "desktop", tag: "Desktop",
-      guest: "x64pwd", ram: 1536, cpu: "x86-64",
-      note: "A full-screen 64-bit Linux desktop: windows (Openbox) and a taskbar with a clock, a terminal, a file manager, a web browser (WebKit) and Python 3.12 with pip. Tap Apps (bottom left) or long-press the desktop for programs; the Benchmarks icon runs CPU-Z, 7-Zip and more. Downloaded once, then the disk is read straight from this device's storage as needed." },
-    { id: "x64pw", name: "Linux (Terminal)", sub: "Console · Python 3.12 + pip · Wine for .exe · internet", icon: "terminal", tag: "Terminal",
-      guest: "x64pw", ram: 1536, cpu: "x86-64",
-      note: "64-bit Alpine Linux in a terminal, with Python 3.12 + pip, Wine (32- and 64-bit Windows .exe) and real internet. The terminal is on the left; the panel on the right has quick buttons and shows graphical output when you start an X app or a Wine program. Downloaded once, then read straight from this device's storage as needed." },
-    { id: "android64", name: "Android", sub: "Android 12 (AOSP) · quad-core · touch + keyboard", icon: "android", tag: "Android",
-      guest: "android64", ram: 1280, fixedRam: true, fixedCores: 4, cpu: "x86-64",
-      note: "Android 12 AOSP (System UI + Launcher3) on 4 emulated cores. It resumes from a snapshot taken at the home screen, so it opens in seconds instead of a multi-minute cold boot. Touch the screen directly; use ⌨ Type for text. No Google Play, no GPU acceleration." },
-    { id: "win98", name: "Windows 98 SE", sub: "One-tap download + boot", icon: "window", tag: "Windows",
-      img: "vmres://iso/win98.img", kind: "hda", ram: 256, fixedRam: true, fixedCores: 1, cpu: "x86 (32-bit)", dlMB: 89,
+    { id: "x64pwd", name: "Linux (Desktop)", sub: "64-bit Linux desktop · windows, taskbar, terminal, file manager, web browser", icon: "🖥️", svg: "desktop", tag: "DESKTOP",
+      guest: "x64pwd", ram: 1536,
+      note: "A full-screen 64-bit (x86_64) Linux desktop: windows (Openbox) + taskbar/clock (tint2), a terminal, a file manager, a web browser (WebKit) and Python 3.12 with pip. Tap Apps (bottom-left) or right-click the desktop for programs; the Benchmarks icon runs CPU-Z, 7-Zip and more. Downloaded once (~240 MB), then the guest disk is read straight from this device's storage as needed." },
+    { id: "x64pw", name: "Linux (Terminal)", sub: "64-bit Linux console · Python 3.12 + pip · Wine for .exe · internet", icon: "🐍", svg: "terminal", tag: "TERMINAL",
+      guest: "x64pw", ram: 1536,
+      note: "64-bit (x86_64) Alpine Linux in a terminal — cores 1–8 in UEFI Setup. Python 3.12 + pip, Wine (32 & 64-bit .exe) and real internet. Terminal on the LEFT; the panel on the RIGHT has quick buttons and shows graphical output when you start an X app or a Wine .exe. Downloaded once (~310 MB), then the guest disk is read straight from this device's storage as needed." },
+    { id: "android64", name: "Android", sub: "Android 12 AOSP · 64-bit x86_64 · quad-core · touch + keyboard", icon: "🤖", svg: "android", tag: "ANDROID",
+      guest: "android64", ram: 1280,
+      note: "Android 12 AOSP (System UI + Launcher3) on 4 emulated cores. It resumes from a snapshot taken at the home screen, so it opens in seconds instead of a multi-minute cold boot. Touch the screen directly; ⌨ Type for text. Downloaded once (~901 MB). No Google Play, no GPU acceleration." },
+    { id: "win98", name: "Windows 98 SE", sub: "One-tap download + boot · ~89 MB", icon: "🪟", svg: "window", tag: "WIN", dlMB: 89,
+      img: "vmres://iso/win98.img", kind: "hda", ram: 256, fixedRam: true,
       downloadName: "win98.img.gz", imgName: "win98.img", gz: true,
       downloadUrl: "https://github.com/yu314-coder/Bootbox/releases/download/windows-v1/win98.img.gz",
-      note: "Windows 98 SE, booted from a hard disk image at 256 MB RAM (Windows 9x can't use much more) with 640×480 standard VGA. Verified booting to the desktop." },
-    { id: "win2000", name: "Windows 2000 Pro", sub: "One-tap download + boot · has internet", icon: "window", tag: "Windows",
-      img: "vmres://iso/win2000.img", kind: "hda", ram: 512, fixedRam: true, fixedCores: 1, cpu: "x86 (32-bit)", dlMB: 340,
+      note: "Windows 98 SE · one-tap download (~89 MB) + boot. Verified booting to the desktop in v86. Boots as a hard disk at 256 MB RAM (Win9x can't use much more). 640×480 standard VGA." },
+    { id: "win2000", name: "Windows 2000 Pro", sub: "One-tap download + boot · has internet · ~340 MB", icon: "🪟", svg: "window", tag: "WIN", dlMB: 340,
+      img: "vmres://iso/win2000.img", kind: "hda", ram: 512, fixedRam: true,
       downloadName: "win2000.img.gz", imgName: "win2000.img", gz: true,
       downloadUrl: "https://github.com/yu314-coder/Bootbox/releases/download/windows-v1/win2000.img.gz",
-      note: "Windows 2000 SP4 with auto-logon, 512 MB RAM and 640×480 VGA. The only Windows here with working internet (its network driver works with Bootbox's relay, where Windows 98's hangs). Heavier and slower than Windows 98." },
+      note: "Windows 2000 SP4 · one-tap download (~340 MB) + boot. The only Windows here with WORKING INTERNET (NT NDIS NIC via the relay, where Win9x's driver hangs). Heavier/slower than Win98. 512 MB RAM · 640×480 VGA · auto-logon." },
   ];
 
   const CFG = "/Apps/.bios.json";
@@ -54,7 +53,6 @@
     if (n < 1073741824) { const m = n / 1048576; return (m < 100 ? m.toFixed(1) : Math.round(m)) + " MB"; }
     return (n / 1073741824).toFixed(n < 10737418240 ? 1 : 0) + " GB";
   }
-  const fmtMB = mb => mb >= 1000 ? (mb / 1024).toFixed(1) + " GB" : mb + " MB";
 
   /* ------------------------------------------------------------------ *
    *  What is stored on the device (System "storage", native)           *
@@ -65,10 +63,6 @@
     if (sys.downloadName) return [sys.downloadName, sys.imgName].filter(Boolean);
     const files = (window.BootboxPacks || {})[sys.guest] || [];
     return files.flatMap(f => [f.name, f.name.replace(/\.gz$/, "")]);
-  }
-  function downloadMB(sys) {
-    if (sys.dlMB) return sys.dlMB;
-    return ((window.BootboxPacks || {})[sys.guest] || []).reduce((a, f) => a + (f.mb || 0), 0);
   }
   const isSystemFile = n => /\.(data|data\.gz|wasm\.gz)$/i.test(n) || /^win(98|2000)\.img(\.gz)?$/i.test(n);
   function systemStatus(sys, store) {
@@ -180,67 +174,11 @@
       .fw-btn.big{min-height:52px;padding:0 26px;font-size:16px;border-radius:12px}
       .fw-btn .ico{width:18px;height:18px}
 
-      /* ---- Boot Manager ---- */
-      .bm2-main{flex:1;min-height:0;display:grid;grid-template-columns:minmax(330px,42%) 1fr;gap:18px;padding:18px max(20px,env(safe-area-inset-right)) 18px max(20px,env(safe-area-inset-left))}
-      .bm2-col{min-height:0;display:flex;flex-direction:column;background:rgba(11,19,33,.78);border:1px solid var(--line);border-radius:16px;overflow:hidden}
-      .bm2-scroll{overflow-y:auto;-webkit-overflow-scrolling:touch;padding:8px;min-height:0;flex:1}
-      .bm2-h{display:flex;align-items:baseline;gap:8px;padding:12px 10px 6px;color:var(--dim);font:700 11.5px var(--mono);letter-spacing:1.2px;text-transform:uppercase}
-      .bm2-h small{margin-left:auto;text-transform:none;letter-spacing:0;font-weight:500;font-size:12px;font-family:-apple-system,system-ui,sans-serif;color:var(--dim)}
-      .bm2-row{width:100%;display:flex;align-items:center;gap:13px;padding:12px;border-radius:12px;border:1px solid transparent;
-        background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer;transition:background .1s}
-      .bm2-row:hover{background:rgba(255,255,255,.035)}
-      .bm2-row.sel{background:linear-gradient(90deg,rgba(74,163,255,.17),rgba(74,163,255,.07));border-color:rgba(74,163,255,.55)}
       .bm2-ic{width:42px;height:42px;border-radius:11px;display:grid;place-items:center;flex:0 0 auto;
         background:linear-gradient(145deg,#16243c,#0e1829);border:1px solid var(--line2);color:#9fcbff}
       .bm2-ic .ico{width:23px;height:23px}
-      .bm2-row.sel .bm2-ic{color:#d6ebff;border-color:rgba(74,163,255,.6);background:linear-gradient(145deg,#1d3a63,#122540)}
-      .bm2-tx{display:flex;flex-direction:column;min-width:0;flex:1}
-      .bm2-tx b{font-weight:650;font-size:15.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .bm2-tx small{color:var(--muted);font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .bm2-st{flex:0 0 auto;font:600 11.5px var(--mono);padding:4px 8px;border-radius:7px;color:var(--muted);background:rgba(255,255,255,.04);border:1px solid var(--line)}
-      .bm2-st.ok{color:var(--ok);background:rgba(63,209,139,.08);border-color:rgba(63,209,139,.3)}
-      .bm2-st.warn{color:var(--warn);background:rgba(255,195,90,.08);border-color:rgba(255,195,90,.3)}
-      .bm2-st.res{color:#c9b6ff;background:rgba(160,130,255,.1);border-color:rgba(160,130,255,.35)}
-      .bm2-empty{padding:10px 12px 14px;color:var(--dim);font-size:13px;line-height:1.5}
-      .bm2-detail{padding:26px 28px;overflow-y:auto;-webkit-overflow-scrolling:touch}
-      .bm2-hero{display:flex;align-items:center;gap:18px}
-      .bm2-big{width:76px;height:76px;border-radius:20px;display:grid;place-items:center;flex:0 0 auto;color:#d9ecff;
-        background:linear-gradient(145deg,#2463b0,#123766);border:1px solid rgba(120,180,255,.45);box-shadow:0 10px 30px rgba(20,90,190,.35)}
-      .bm2-big .ico{width:42px;height:42px}
-      .bm2-kicker{color:var(--accent);font:700 11.5px var(--mono);letter-spacing:1.3px;text-transform:uppercase}
-      .bm2-hero h1{margin:3px 0 2px;font-size:28px;line-height:1.15;font-weight:750;letter-spacing:-.3px}
-      .bm2-lead{color:var(--muted);font-size:14.5px}
-      .bm2-specs{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px;margin:22px 0 18px}
-      .bm2-spec{padding:12px 14px;border-radius:12px;background:rgba(255,255,255,.03);border:1px solid var(--line)}
-      .bm2-spec span{display:block;color:var(--dim);font:700 10.5px var(--mono);letter-spacing:1px;text-transform:uppercase}
-      .bm2-spec b{display:block;margin-top:4px;font-size:15px;font-weight:650}
-      .bm2-spec b.ok{color:var(--ok)}
-      .bm2-note{color:#b7c5dd;font-size:14.5px;line-height:1.6;margin:0 0 20px;-webkit-user-select:text;user-select:text}
-      .bm2-prog{margin:0 0 18px;padding:14px 16px;border-radius:12px;background:rgba(74,163,255,.07);border:1px solid rgba(74,163,255,.3);font-size:14px;display:none}
-      .bm2-prog.on{display:block}
-      .bm2-prog.err{background:rgba(255,123,114,.08);border-color:rgba(255,123,114,.4);color:#ffc7c2}
       .bm2-bar{height:7px;border-radius:99px;background:rgba(255,255,255,.07);overflow:hidden;margin-top:9px}
       .bm2-bar i{display:block;height:100%;width:0;border-radius:99px;background:linear-gradient(90deg,#1d74e0,#5ab0ff);transition:width .25s}
-      .bm2-actions{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
-      .bm2-auto{color:var(--warn);font:600 13px var(--mono)}
-      .bm2-store{display:flex;align-items:center;gap:10px;color:var(--muted);font:500 12.5px var(--mono);min-width:0}
-      .bm2-store .bm2-bar{width:110px;margin:0;flex:0 0 auto}
-      .bm2-main>*{min-width:0}
-      @media (max-width:860px){
-        .bm2-main{display:flex;flex-direction:column;overflow-y:auto;-webkit-overflow-scrolling:touch}
-        .bm2-col{overflow:visible;min-height:auto;flex:none}.bm2-scroll{overflow:visible;flex:none}
-        .bm2-detail{padding:20px}
-        .fw-keys{display:none}
-      }
-      @media (max-width:520px){
-        .bm2-main{padding:12px;gap:12px}
-        .bm2-hero{gap:14px}.bm2-hero h1{font-size:23px}.bm2-big{width:58px;height:58px;border-radius:16px}.bm2-big .ico{width:32px;height:32px}
-        .bm2-specs{grid-template-columns:1fr 1fr}
-        .bm2-store .bm2-bar{display:none}
-        .fw-sub,#fw-clock{display:none}
-        .bm2-actions .fw-btn.big{flex:1}
-      }
-
       /* ---- UEFI Setup ---- */
       .u2-tabs{display:flex;gap:6px;padding:12px max(20px,env(safe-area-inset-right)) 0 max(20px,env(safe-area-inset-left));overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:none}
       .u2-tab{flex:0 0 auto;min-height:38px;padding:0 15px;border-radius:10px 10px 0 0;border:1px solid transparent;border-bottom:none;
@@ -251,9 +189,6 @@
       .u2-panel{overflow-y:auto;-webkit-overflow-scrolling:touch;padding:14px 16px 24px;min-height:0}
       .u2-help{border-left:1px solid var(--line);padding:20px;background:rgba(6,10,18,.45);color:#b7c5dd;font-size:14px;line-height:1.6;overflow-y:auto}
       .u2-help b{display:block;color:var(--text);font-size:15px;margin-bottom:8px}
-      .u2-help .k{display:inline-block;margin-top:12px;padding:3px 8px;border-radius:6px;font:700 10.5px var(--mono);letter-spacing:.8px;text-transform:uppercase}
-      .u2-help .k.fx{color:var(--ok);background:rgba(63,209,139,.1)}
-      .u2-help .k.cos{color:var(--dim);background:rgba(255,255,255,.05)}
       .u2-sec{margin:16px 2px 7px;color:var(--dim);font:700 11.5px var(--mono);letter-spacing:1.2px;text-transform:uppercase}
       .u2-sec:first-child{margin-top:4px}
       .u2-card{border:1px solid var(--line);border-radius:12px;background:rgba(255,255,255,.02);overflow:hidden}
@@ -265,7 +200,6 @@
       .u2-lab{flex:1;min-width:0;display:flex;flex-direction:column}
       .u2-lab b{font-weight:600;font-size:14.5px}
       .u2-lab small{color:var(--dim);font-size:12px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .u2-cos{margin-left:6px;padding:1px 6px;border-radius:5px;font:600 10px var(--mono);letter-spacing:.5px;color:var(--dim);border:1px solid var(--line2);vertical-align:2px}
       .u2-val{color:#9fcbff;font:600 13.5px var(--mono);text-align:right;max-width:58%;-webkit-user-select:text;user-select:text}
       .u2-row.info .u2-val{color:var(--muted)}
       .u2-sw{position:relative;width:46px;height:28px;border-radius:99px;background:#2a3954;flex:0 0 auto;transition:background .15s}
@@ -294,7 +228,6 @@
       @media (max-width:860px){
         .u2-body{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) auto}
         .u2-help{border-left:none;border-top:1px solid var(--line);max-height:132px;padding:12px 16px;font-size:13px;line-height:1.5}
-        .u2-help .k{margin-top:6px}
       }
       @media (max-width:520px){
         .u2-tabs{padding:10px 12px 0}.u2-body{margin:0 12px}
@@ -324,147 +257,154 @@
   }
 
   /* ------------------------------------------------------------------ *
-   *  Boot Manager — "select operating system"                          *
+   *  Boot Menu — "select operating system"                              *
    * ------------------------------------------------------------------ */
   function renderMenu(container, hooks) {
     hooks = hooks || {};
-    ensureStyle();
     const cfg = readCfg();
-    let entries = [], sel = 0, timer = null, count = 0, store = null, busy = false;
+    let entries = [];
+    let sel = 0, timer = null, count = 0;
 
     function importRows(names) {
       return (names || []).map(n => {
         const disk = /\.(img|raw|qcow2|hdd|vdi)$/i.test(n);   // a disk image boots as a hard disk, not a CD
         const snap = snapshotBases.has(n);   // a paired NAME.state.gz save-state was imported alongside it
-        return { id: "import:" + n, name: n, imported: true,
-          sub: snap ? "Disk image · instant resume from its saved state" : (disk ? "Disk image · boots as a hard disk" : "CD / ISO image"),
-          icon: disk ? "disk" : "cd", tag: snap ? "Resume" : "Imported", cpu: "x86 (32-bit)",
+        return { id: "import:" + n, name: n,
+          sub: snap ? "Imported disk · ⚡ instant resume from a saved snapshot"
+                    : (disk ? "Imported disk image · boots as a hard disk" : "Imported image · boots from CD/ISO"),
+          icon: disk ? "🖴" : "💿", tag: snap ? "RESUME" : "IMPORT",
           img: "vmres://iso/" + n, kind: disk ? "hda" : "cdrom",
           // Snapshots are captured at 1 GB; a paired-snapshot import must boot at that
           // exact RAM (v86 save-state restore requires the memory size to match).
-          ram: snap ? 1024 : 512, fixedRam: snap || undefined, snap,
-          note: snap ? "Your disk image plus its saved state (" + n + ".state.gz): it resumes the saved desktop in about a second, at 1 GB RAM."
-                     : "Your own image, booted in the 32-bit PC emulator (v86). Add, rename or delete images in the Files app › Bootbox." };
+          ram: snap ? 1024 : undefined, fixedRam: snap || undefined,
+          note: snap ? "Imported disk + a paired save-state (" + n + ".state.gz): resumes the pre-booted desktop in ~1s — drivers, apps and network already up — at 1 GB RAM. Manage these in the Files app (Bootbox)."
+                     : "Your imported image. Manage these in the Files app (Bootbox)." };
       });
     }
+    // Setup is reached from the footer button (and the S key), not a list row.
     // A one-tap download lands in the same folder as imports; list it only once, as its own entry.
     function build(names) {
       const own = new Set(SYSTEMS.map(s => s.imgName).filter(Boolean));
       return SYSTEMS.concat(importRows((names || []).filter(n => !own.has(n))));
     }
 
-    container.innerHTML = `<div class="fw">
-      ${topBar("Boot Manager", "bm-ver")}
-      <div class="bm2-main">
-        <div class="bm2-col">
-          <div class="bm2-scroll" id="bm-list"></div>
+    container.innerHTML = `
+      <style>
+        .bm{height:100%;display:flex;flex-direction:column;color:#cfe3ff;
+          font-family:"Cascadia Mono",Consolas,monospace;
+          background:radial-gradient(130% 90% at 50% -10%,#0d1b33,#05080f)}
+        .bm-top{display:flex;align-items:center;gap:10px;padding:12px 22px;border-bottom:1px solid #15314f;color:#9cc4ee;font-size:13px}
+        .bm-brand{display:inline-flex;align-items:center;gap:8px;font-weight:800;color:#eaf4ff;letter-spacing:.5px}
+        .bm-glyph{display:grid;grid-template-columns:1fr 1fr;gap:2px;width:18px;height:18px}
+        .bm-glyph i{background:#3ba0ff;border-radius:2px;box-shadow:0 0 6px #2f6bdb}
+        .bm-right{margin-left:auto;opacity:.55}
+        .bm-mid{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:18px}
+        .bm-box{width:min(720px,94%);background:rgba(8,18,32,.82);border:1px solid #1d3a59;border-radius:12px;
+          display:flex;flex-direction:column;min-height:0;overflow:hidden;box-shadow:0 14px 50px #000a}
+        .bm-boxhead{padding:11px 18px;background:linear-gradient(#102742,#0c1e35);color:#7fb6ff;font-weight:700;
+          letter-spacing:1px;border-bottom:1px solid #1d3a59;font-size:13px}
+        .bm-list{padding:8px;overflow-y:auto;min-height:0}
+        .bm-row{display:flex;align-items:center;gap:14px;padding:12px 14px;border-radius:9px;cursor:pointer;
+          border:1px solid transparent;transition:background .1s}
+        .bm-row:hover{background:#0f1d31}
+        .bm-row.sel{background:#10294a;border-color:#3ba0ff;box-shadow:0 0 0 1px #3ba0ff inset}
+        .bm-row .ic{font-size:23px;width:28px;text-align:center}
+        .bm-row .nm{display:flex;flex-direction:column;font-weight:700;color:#eaf4ff;font-size:15px}
+        .bm-row .nm .sub{font-weight:400;opacity:.62;font-size:12px;margin-top:2px}
+        .bm-row .tag{margin-left:auto;font-size:10px;font-weight:800;letter-spacing:.5px;padding:4px 9px;
+          border-radius:5px;background:#13325a;color:#9fd0ff}
+        .bm-row.setup{margin-top:4px;border-top:1px dashed #1d3a59;border-radius:0 0 9px 9px}
+        .bm-row.setup .tag{background:#3a2c5a;color:#d8c2ff}
+        .bm-note{width:min(720px,94%);color:#88a8cc;font-size:12px;min-height:32px;max-height:64px;overflow-y:auto;line-height:1.4;text-align:center}
+        .bm-keys{color:#5f80a8;font-size:12px;letter-spacing:.3px}
+        .bm-foot{display:flex;align-items:center;gap:12px;padding:12px 22px;border-top:1px solid #15314f;background:#070f1c}
+        .bm-count{color:#ffce6b;font-size:13px}
+        .bm-grow{flex:1}
+        .bm-btn{background:#10243d;border:1px solid #1d4060;color:#cfe3ff;border-radius:8px;padding:9px 16px;
+          cursor:pointer;font-family:inherit;font-weight:600;font-size:13px}
+        .bm-btn:hover{background:#163150}
+        .bm-btn.primary{background:#0067c0;border-color:#1f86e0;color:#fff;font-weight:800}
+        .bm-btn.primary:hover{background:#0a76d8}
+      </style>
+      <div class="bm">
+        <div class="bm-top">
+          <span class="bm-brand"><span class="bm-glyph"><i></i><i></i><i></i><i></i></span>Bootbox UEFI</span>
+          <span style="opacity:.7">Boot Manager</span>
+          <span class="bm-right">x86-64 · emulated in WebAssembly</span>
         </div>
-        <div class="bm2-col bm2-detail" id="bm-detail"></div>
-      </div>
-      <footer class="fw-foot">
-        <div class="bm2-store" id="bm-store"></div>
-        <span class="fw-grow"></span>
-        <span class="fw-keys">↑↓ select · ⏎ boot · S setup</span>
-        <button class="fw-btn" id="bm-setup">${icon("gear")}UEFI Setup</button>
-      </footer>
-    </div>`;
-    startClock(container);
+        <div class="bm-mid">
+          <div class="bm-box">
+            <div class="bm-boxhead">▸ Select operating system</div>
+            <div class="bm-list" id="bm-list"></div>
+          </div>
+          <div class="bm-note" id="bm-note"></div>
+          <div class="bm-keys">↑ ↓ highlight &nbsp;·&nbsp; ⏎ boot &nbsp;·&nbsp; S setup</div>
+        </div>
+        <div class="bm-foot">
+          <span class="bm-count" id="bm-count"></span>
+          <span class="bm-grow"></span>
+          <button class="bm-btn" id="bm-diag" title="File-sync diagnostics">🔧 File Sync</button>
+          <button class="bm-btn" id="bm-setup">⚙ UEFI Setup</button>
+          <button class="bm-btn primary" id="bm-boot">Boot ▶</button>
+        </div>
+      </div>`;
+
+    // --- File-sync diagnostics overlay (helps debug the Files-app "Syncing Paused") ---
+    async function showDiag() {
+      let text = "Loading…";
+      try { const r = await Bridge.call("system", "fpdiag"); text = (r && (r.data || r)) || "(no data)"; }
+      catch (e) { text = "diagnostics unavailable: " + ((e && e.message) || e); }
+      const ov = document.createElement("div");
+      ov.style.cssText = "position:fixed;inset:0;z-index:99999;background:rgba(2,6,14,.92);display:flex;flex-direction:column;padding:18px;font-family:Consolas,monospace";
+      ov.innerHTML =
+        '<div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">' +
+          '<b style="color:#8fc2ff;font-size:15px;flex:1">🔧 File-Sync Diagnostics</b>' +
+          '<button id="dg-reset" class="bm-btn">Reset sync location</button>' +
+          '<button id="dg-close" class="bm-btn primary">Close</button></div>' +
+        '<pre id="dg-pre" style="flex:1;overflow:auto;white-space:pre-wrap;color:#bfe0ff;background:#060d18;border:1px solid #1d3a59;border-radius:8px;padding:12px;font-size:12px;margin:0"></pre>';
+      document.body.appendChild(ov);
+      ov.querySelector("#dg-pre").textContent = typeof text === "string" ? text : JSON.stringify(text, null, 2);
+      ov.querySelector("#dg-close").onclick = () => ov.remove();
+      ov.querySelector("#dg-reset").onclick = async () => {
+        try { await Bridge.call("system", "fpreset"); ov.querySelector("#dg-pre").textContent = "Reset requested — reopen the Files app in ~10s, then reopen this to re-check."; }
+        catch (e) { ov.querySelector("#dg-pre").textContent = "reset failed: " + ((e && e.message) || e); }
+      };
+    }
 
     const listEl = container.querySelector("#bm-list");
-    const detailEl = container.querySelector("#bm-detail");
-    const storeEl = container.querySelector("#bm-store");
+    const noteEl = container.querySelector("#bm-note");
+    const countEl = container.querySelector("#bm-count");
     const alive = () => !!container.querySelector("#bm-list");
 
-    function statusChip(e) {
-      if (e.imported) return e.snap ? `<span class="bm2-st res">Resume</span>` : "";
-      const s = systemStatus(e, store);
-      if (!s.known) return `<span class="bm2-st">${fmtMB(downloadMB(e))}</span>`;
-      if (s.ready) return `<span class="bm2-st ok">Ready</span>`;
-      if (s.partial) return `<span class="bm2-st warn">Incomplete</span>`;
-      return `<span class="bm2-st">↓ ${fmtMB(downloadMB(e))}</span>`;
-    }
-
-    function paintList() {
-      const sys = entries.filter(e => !e.imported), imp = entries.filter(e => e.imported);
-      const row = (e) => {
-        const i = entries.indexOf(e);
-        return `<button class="bm2-row${i === sel ? " sel" : ""}" data-i="${i}">
-          <span class="bm2-ic">${icon(e.icon)}</span>
-          <span class="bm2-tx"><b>${esc(e.name)}</b><small>${esc(e.sub)}</small></span>${statusChip(e)}</button>`;
-      };
-      listEl.innerHTML = `<div class="bm2-h">Systems</div>${sys.map(row).join("")}
-        <div class="bm2-h">Your images<small>Files › Bootbox</small></div>
-        ${imp.length ? imp.map(row).join("") : `<div class="bm2-empty">Put a .iso or .img file in the Files app under <b>Bootbox</b> (or drag one onto Bootbox) and it shows up here.</div>`}`;
-      listEl.querySelectorAll(".bm2-row").forEach(r => {
-        r.onclick = () => { cancelAuto(); sel = +r.dataset.i; paint(); };
-        r.ondblclick = () => { cancelAuto(); sel = +r.dataset.i; go(); };
+    function paint() {
+      listEl.innerHTML = "";
+      entries.forEach((e, i) => {
+        const row = document.createElement("div");
+        row.className = "bm-row" + (i === sel ? " sel" : "") + (e.kind === "setup" ? " setup" : "");
+        row.innerHTML = `<span class="ic">${e.icon || "💿"}</span>
+          <span class="nm">${e.name}<span class="sub">${e.sub || ""}</span></span>
+          <span class="tag">${e.tag || "32-BIT"}</span>`;
+        row.onclick = () => { cancelAuto(); sel = i; paint(); };
+        row.ondblclick = () => { cancelAuto(); sel = i; go(); };
+        listEl.appendChild(row);
       });
-    }
-
-    function specs(e) {
-      const c = readCfg();
-      const cores = e.fixedCores || (e.guest ? (+emuCfg().cores64 || 2) : 1);
-      const ram = e.fixedRam ? e.ram : Math.max(c.ram || 0, e.ram || 256);
-      const out = [["Processor", (e.cpu || "x86") + " · " + cores + (cores === 1 ? " core" : " cores")],
-                   ["Memory", ram >= 1024 ? parseFloat((ram / 1024).toFixed(2)) + " GB" : ram + " MB"]];
-      if (e.imported) {
-        const f = store && store.files.find(x => x.area === "imports" && x.name === e.name);
-        out.push(["Boots as", e.kind === "hda" ? "Hard disk" : "CD-ROM"]);
-        if (f) out.push(["Size", fmtBytes(f.size)]);
-      } else {
-        const s = systemStatus(e, store);
-        out.push(["Download", fmtMB(downloadMB(e))]);
-        if (s.known) out.push(["On this iPad", s.ready ? fmtBytes(s.bytes) : (s.partial ? "Incomplete" : "Not downloaded"), s.ready ? "ok" : ""]);
-        else out.push(["Status", "Downloads on first boot"]);
-      }
-      return out.map(([k, v, cls]) => `<div class="bm2-spec"><span>${k}</span><b class="${cls || ""}">${esc(v)}</b></div>`).join("");
-    }
-
-    function paintDetail() {
-      const e = entries[sel];
-      if (!e) { detailEl.innerHTML = ""; return; }
-      const s = e.imported ? { ready: true } : systemStatus(e, store);
-      const verb = s.known && !s.ready ? "Download & boot" : "Boot";
-      detailEl.innerHTML = `
-        <div class="bm2-hero"><span class="bm2-big">${icon(e.icon)}</span>
-          <div><div class="bm2-kicker">${esc(e.tag)}</div><h1>${esc(e.name)}</h1><div class="bm2-lead">${esc(e.sub)}</div></div></div>
-        <div class="bm2-specs">${specs(e)}</div>
-        <p class="bm2-note">${esc(e.note)}</p>
-        <div class="bm2-prog" id="bm-prog"></div>
-        <div class="bm2-actions">
-          <button class="fw-btn primary big" id="bm-boot"${busy ? " disabled" : ""}>${icon("play")}${verb}</button>
-          <span class="bm2-auto" id="bm-count"></span>
-        </div>`;
-      detailEl.querySelector("#bm-boot").onclick = () => { cancelAuto(); go(); };
-    }
-
-    function paintStore() {
-      if (!store) { storeEl.innerHTML = ""; return; }
-      const used = store.files.reduce((a, f) => a + (f.alloc || f.size || 0), 0);
-      const pct = store.free > 0 ? Math.max(2, Math.round(used / (used + store.free) * 100)) : 0;
-      storeEl.innerHTML = `<div class="bm2-bar"><i style="width:${pct}%"></i></div><span>Bootbox ${fmtBytes(used)} · ${fmtBytes(store.free)} free</span>`;
-      const ver = container.querySelector("#bm-ver");
-      if (ver && store.version) ver.textContent = "v" + store.version + " (" + store.build + ")";
-    }
-
-    function paint() { paintList(); paintDetail(); }
-
-    function prog(html, cls) {
-      const p = detailEl.querySelector("#bm-prog");
-      if (!p) return;
-      p.className = "bm2-prog on" + (cls ? " " + cls : "");
-      p.innerHTML = html;
-    }
-    function showProgress(received, total, verb) {
-      const pct = total > 0 ? Math.min(100, Math.floor(received / total * 100)) : 0;
-      prog(`${verb || "Downloading"}… <b>${pct}%</b> &nbsp;<span style="color:var(--muted)">${fmtBytes(received)} of ${total > 0 ? fmtBytes(total) : "?"}</span>
-        <div class="bm2-bar"><i style="width:${pct}%"></i></div>`);
+      noteEl.textContent = (entries[sel] || {}).note || "";
     }
 
     function go() {
       const e = entries[sel];
-      if (!e || busy) return;
+      if (!e) return;
+      if (e.kind === "setup") return hooks.onSetup && hooks.onSetup();
       bootEntry(e);
+    }
+
+    const fmtMB = b => (b / 1048576).toFixed(0);
+    function showProgress(received, total, verb) {
+      const pct = total > 0 ? Math.min(100, Math.floor(received / total * 100)) : 0;
+      noteEl.innerHTML =
+        `${verb || "Downloading"}… <b style="color:#9fd0ff">${pct}%</b> &nbsp; ${fmtMB(received)} / ${total > 0 ? fmtMB(total) : "?"} MB` +
+        `<div style="height:6px;background:#0c1a2e;border:1px solid #1d3a59;border-radius:4px;margin-top:6px;overflow:hidden">` +
+        `<div style="height:100%;width:${pct}%;background:linear-gradient(90deg,#0067c0,#3ba0ff);transition:width .2s"></div></div>`;
     }
 
     // Kick off a host download and resolve when it finishes, streaming progress
@@ -513,53 +453,56 @@
       });
     }
 
-    const setBusy = (b) => { busy = b; const btn = detailEl.querySelector("#bm-boot"); if (btn) btn.disabled = b; };
-
     async function bootEntry(e) {
       cancelAuto();
       writeCfg({ lastBoot: e.id });
+      // Windows (and other bring-your-own-image) entries: can't be bundled/hosted, so
+      // require the user to import their own disk image first.
+      if (e.requiresImport) {
+        const have = await listImported();
+        if (!have.includes(e.importName)) {
+          noteEl.innerHTML = "<b style='color:#ffd479'>Import your own disk image first.</b><br>" +
+            (e.note || "") + "<br>Expected file name: <b>" + e.importName + "</b>  (add it via the Files app → Bootbox, or drag it onto the app).";
+          return;
+        }
+      }
       if (e.downloadUrl && e.downloadName) {
-        setBusy(true);
         const have = await listImported();
         const finalName = e.gz ? e.imgName : e.downloadName;   // what the VM actually boots
         // 1) fetch the archive (unless we already have it or the expanded image)
         if (!have.includes(finalName) && !have.includes(e.downloadName)) {
-          prog("Fetching " + esc(e.name) + " — first boot only…");
+          const what = e.gz ? "image" : "ISO";
+          noteEl.textContent = "Fetching the " + e.name + " " + what + " — first boot only…";
           try { await downloadWithProgress(e.downloadUrl, e.downloadName, showProgress); }
-          catch (err) { setBusy(false); prog("Download failed: " + esc((err && err.message) || err) + " — check your network, or import the image yourself.", "err"); return; }
+          catch (err) { noteEl.textContent = "Download failed: " + ((err && err.message) || err) + " — check your network, or import the image yourself."; return; }
         }
         // 2) decompress the archive into the raw image (gz entries only)
         if (e.gz && !have.includes(finalName)) {
-          prog("Decompressing " + esc(e.name) + " — first boot only. Keep Bootbox open until it's ready…");
+          noteEl.textContent = "Decompressing " + e.name + " — first boot only. Keep Bootbox open; don't switch apps until it's Ready…";
           try { await gunzipWithProgress(e.downloadName, finalName, (r, t) => showProgress(r, t, "Decompressing")); }
-          catch (err) { setBusy(false); prog("Decompress failed: " + esc((err && err.message) || err), "err"); return; }
+          catch (err) { noteEl.textContent = "Decompress failed: " + ((err && err.message) || err); return; }
         }
-        prog("Ready — starting " + esc(e.name) + "…");
-        setBusy(false);
+        noteEl.textContent = "Ready — starting " + e.name + " …";
       }
       hooks.onBoot && hooks.onBoot(systemToArgs(e, readCfg()));
     }
 
-    // Auto-boot (UEFI Setup › Boot › Auto-boot): boots the last system after a countdown, but only
-    // one that is already on the device, so an unattended iPad never starts a big download.
-    function startAuto() {
+    // Auto-boot (UEFI Setup › Boot › Auto-boot): boots the last system after a countdown, but only one
+    // that is already on the device, so an unattended iPad never starts a big download. Any key/tap stops it.
+    function startAuto(store) {
       const secs = +cfg.autoBoot || 0, e = entries[sel];
       if (!secs || !e || !cfg.lastBoot || e.id !== cfg.lastBoot) return;
-      if (!e.imported) { const s = systemStatus(e, store); if (!s.known || !s.ready) return; }
+      if (!e.id.startsWith("import:")) { const s = systemStatus(e, store); if (!s.known || !s.ready) return; }
       count = secs;
       const tick = () => {
-        const c = detailEl.querySelector("#bm-count");
         if (!alive()) return cancelAuto();
-        if (c) c.textContent = "Booting in " + count + " s — tap or press any key to stop";
+        countEl.textContent = "Auto-boot " + e.name + " in " + count + "s — press any key to stop";
         if (count <= 0) { cancelAuto(); bootEntry(e); return; }
         count--;
       };
       tick(); timer = setInterval(tick, 1000);
     }
-    function cancelAuto() {
-      if (timer) { clearInterval(timer); timer = null; }
-      const c = detailEl && detailEl.querySelector("#bm-count"); if (c) c.textContent = "";
-    }
+    function cancelAuto() { if (timer) { clearInterval(timer); timer = null; } if (countEl) countEl.textContent = ""; }
 
     function onKey(e) {
       if (!alive()) { window.removeEventListener("keydown", onKey); return; }
@@ -571,22 +514,23 @@
       else { cancelAuto(); }
     }
     window.addEventListener("keydown", onKey);
-    container.querySelector(".fw").addEventListener("pointerdown", () => cancelAuto(), true);
-    container.querySelector("#bm-setup").onclick = () => { cancelAuto(); hooks.onSetup && hooks.onSetup(); };
 
-    // Initial paint (no imports yet), then enrich with imported images and storage.
+    container.querySelector("#bm-boot").onclick = () => { cancelAuto(); go(); };
+    container.querySelector("#bm-setup").onclick = () => { cancelAuto(); hooks.onSetup && hooks.onSetup(); };
+    container.querySelector("#bm-diag").onclick = () => { cancelAuto(); showDiag(); };
+
+    // Initial paint (no imports yet), then enrich with imported ISOs.
     entries = build([]);
     const li = cfg.lastBoot ? entries.findIndex(e => e.id === cfg.lastBoot) : -1;
     sel = li >= 0 ? li : 0;
     paint();
-    Promise.all([listImported(), loadStore()]).then(([names, st]) => {
+    container.querySelector(".bm").addEventListener("pointerdown", () => cancelAuto(), true);
+    Promise.all([listImported(), loadStore()]).then(([names, store]) => {
       if (!alive()) return;
-      store = st;
-      const cur = entries[sel] && entries[sel].id;
       entries = build(names);
-      const i = entries.findIndex(e => e.id === (cur || cfg.lastBoot));
+      const i = cfg.lastBoot ? entries.findIndex(e => e.id === cfg.lastBoot) : -1;
       if (i >= 0) sel = i;
-      paint(); paintStore(); startAuto();
+      paint(); startAuto(store);
     });
   }
 
@@ -596,9 +540,8 @@
   function renderSetup(container, hooks) {
     hooks = hooks || {};
     ensureStyle();
-    const DEF = { ram: 256, cores: 2, bootOrder: "cd-hd", vtx: true, htt: false, secureBoot: false,
-      bootMode: "UEFI", fastBoot: true, sataMode: "AHCI", usbLegacy: true, numlock: true, memRemap: false,
-      netInternet: true, resumeState: true, nx: true, tpm: false, txt: false, bgRun: "About 30 s", isa: "SSE3 (standard)", autoBoot: 0 };
+    const DEF = { ram: 256, cores: 2, bootOrder: "cd-hd", netInternet: true, resumeState: true, bgRun: "About 30 s",
+      isa: "SSE3 (standard)", autoBoot: 0 };
     let s = Object.assign({}, DEF, readCfg());
     // Reflect the emulator's actual internet + resume state (it stores these in its own config).
     try { const ec = emuCfg(); s.netInternet = (ec.netRelay !== "off"); s.resumeState = (ec.resumeState !== false); if (+ec.cores64) s.cores = +ec.cores64; } catch (e) {}
@@ -614,9 +557,8 @@
     }
 
     let tab = 0, foc = 0;
-    const TABS = ["Main", "Advanced", "Boot", "Security", "Storage", "Tools", "Save & Exit"];
+    const TABS = ["Main", "Advanced", "Boot", "Storage", "Tools", "Save & Exit"];
     const bootLabel = { "cd-hd": "CD → Disk", "hd-cd": "Disk → CD", "cd": "CD only" };
-    const COS = "Only for the real-firmware feel — it has no effect in Bootbox.";
 
     function now() { const d = new Date(); return { date: d.toLocaleDateString(), time: pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds()) }; }
 
@@ -678,49 +620,29 @@
       }
       if (tab === 1) return [
         { t: "sep", label: "CPU" },
-        { t: "stepper", label: "CPU Cores", sub: "Linux (Desktop & Terminal)", key: "cores", min: 1, max: 8, step: 1, fx: true,
+        { t: "stepper", label: "CPU Cores", sub: "Linux (Desktop & Terminal)", key: "cores", min: 1, max: 8, step: 1,
           help: "Each core is a full emulated CPU running on its own iPad core. 4 cores give the best single-thread speed; 8 cores give the most total throughput on iPads with many cores, but run hotter and use more battery. 1 = battery saver. Applies on the next boot. Android always uses 4 (its snapshot) and the Windows images use 1." },
-        { t: "select", label: "Instruction Set", sub: "Linux (Desktop & Terminal)", key: "isa", opts: ["SSE3 (standard)", "AVX2 (x86-64-v3)"], render: v => /^AVX2/.test(v) ? "AVX2" : "SSE3", fx: true,
+        { t: "select", label: "Instruction Set", sub: "Linux (Desktop & Terminal)", key: "isa", opts: ["SSE3 (standard)", "AVX2 (x86-64-v3)"], render: v => /^AVX2/.test(v) ? "AVX2" : "SSE3",
           help: "'AVX2' adds SSSE3, SSE4.1/4.2, POPCNT, AVX, AVX2, FMA, F16C, BMI1/2, LZCNT and MOVBE, so programs built for x86-64-v3 (newer NumPy, AVX-only tools) run. It is for compatibility, not speed: every AVX instruction is emulated, and programs that switch to AVX code can get much slower (CPU-Z multi-thread drops to about a third). Applies on the next boot." },
-        { t: "toggle", label: "Hyper-Threading", key: "htt", cos: true, help: COS },
-        { t: "toggle", label: "Intel® VT-x", key: "vtx", cos: true, help: COS },
-        { t: "toggle", label: "Execute Disable Bit", key: "nx", cos: true, help: COS },
         { t: "sep", label: "Memory" },
-        { t: "stepper", label: "Guest RAM", sub: "minimum for every system", key: "ram", min: 256, max: 3584, step: 256, fx: true, render: v => v <= 256 ? "Auto" : v + " MB",
+        { t: "stepper", label: "Guest RAM", sub: "minimum for every system", key: "ram", min: 256, max: 3584, step: 256, render: v => v <= 256 ? "Auto" : v + " MB",
           help: "Memory for the next boot. Auto = each system's own size (Linux 1.5 GB; Android and the Windows images use fixed sizes). Raise it for big pip installs or many open apps — it doesn't make the CPU faster. If a guest fails to start, lower it." },
-        { t: "toggle", label: "Memory Remap Above 4G", key: "memRemap", cos: true, help: COS },
         { t: "sep", label: "Network" },
-        { t: "toggle", label: "Guest Internet", key: "netInternet", fx: true, help: "Connects the guests' network card to the internet through Bootbox's built-in relay. Turn off for a fully offline VM." },
+        { t: "toggle", label: "Guest Internet", key: "netInternet", help: "Connects the guests' network card to the internet through Bootbox's built-in relay. Turn off for a fully offline VM." },
         { t: "sep", label: "Power" },
-        { t: "select", label: "Run in Background", key: "bgRun", opts: ["About 30 s", "Off"], render: v => v === "Off" ? "Off" : "30 s", fx: true,
+        { t: "select", label: "Run in Background", key: "bgRun", opts: ["About 30 s", "Off"], render: v => v === "Off" ? "Off" : "30 s",
           help: "When you switch to another app, iOS pauses Bootbox. '30 s' lets the guest keep running for the short time iOS allows (to finish a save or a download step); 'Off' pauses at once. Either way the guest stays in memory and continues when you come back." },
-        { t: "sep", label: "Storage Controller" },
-        { t: "select", label: "SATA Mode", key: "sataMode", opts: ["AHCI", "IDE"], cos: true, help: COS },
-        { t: "toggle", label: "USB Legacy Support", key: "usbLegacy", cos: true, help: COS },
       ];
       if (tab === 2) return [
         { t: "sep", label: "Startup" },
-        { t: "select", label: "Auto-boot", sub: "boot the last system after a countdown", key: "autoBoot", opts: [0, 5, 10], render: v => +v ? v + " s" : "Off", fx: true,
+        { t: "select", label: "Auto-boot", sub: "boot the last system after a countdown", key: "autoBoot", opts: [0, 5, 10], render: v => +v ? v + " s" : "Off",
           help: "Boot the system you used last after a short countdown when Bootbox opens (tap or press a key to stop it). Only a system that is already downloaded is auto-booted." },
-        { t: "select", label: "Boot Order", sub: "your own images (v86)", key: "bootOrder", opts: ["cd-hd", "hd-cd", "cd"], render: v => bootLabel[v], fx: true,
+        { t: "select", label: "Boot Order", sub: "your own images (v86)", key: "bootOrder", opts: ["cd-hd", "hd-cd", "cd"], render: v => bootLabel[v],
           help: "The order in which the 32-bit PC tries its boot devices for your imported images." },
-        { t: "toggle", label: "Resume Saved State", key: "resumeState", fx: true, help: "On: a VM with a saved state (💾 Save) resumes where you left off. Off: always start fresh, ignoring saved states." },
-        { t: "sep", label: "Firmware" },
-        { t: "select", label: "Boot Mode", key: "bootMode", opts: ["UEFI", "Legacy"], cos: true, help: COS },
-        { t: "toggle", label: "Fast Boot", key: "fastBoot", cos: true, help: COS },
-        { t: "toggle", label: "NumLock", key: "numlock", cos: true, help: COS },
+        { t: "toggle", label: "Resume Saved State", key: "resumeState", help: "On: a VM with a saved state (💾 Save) resumes where you left off. Off: always start fresh, ignoring saved states." },
       ];
-      if (tab === 3) return [
-        { t: "sep", label: "Security" },
-        { t: "toggle", label: "Secure Boot", key: "secureBoot", cos: true, help: COS },
-        { t: "info", label: "Secure Boot Mode", value: "Setup" },
-        { t: "toggle", label: "TPM Security Device", key: "tpm", cos: true, help: COS },
-        { t: "toggle", label: "Intel® TXT", key: "txt", cos: true, help: COS },
-        { t: "info", label: "Administrator Password", value: "Not set" },
-        { t: "note", text: "Bootbox runs every system inside the app's sandbox; there is no firmware to lock. These switches only complete the picture of a PC firmware." },
-      ];
-      if (tab === 4) return storageFields();
-      if (tab === 5) return [
+      if (tab === 3) return storageFields();
+      if (tab === 4) return [
         { t: "sep", label: "Files app" },
         { t: "action", label: "File-sync diagnostics", act: "diag", help: "What the Files app integration sees: the files in the Bootbox folder, the registered location and the extension's activity log." },
         { t: "action", label: "Reset the Files location", act: "fpreset", help: "Re-register Bootbox in the Files app (your files are kept). Use it if the Bootbox location stops updating." },
@@ -734,7 +656,7 @@
         { t: "action", label: "Discard Changes and Exit", act: "discard", help: "Return to the boot menu without saving." },
         { t: "action", label: "Load Optimized Defaults", act: "defaults", help: "Reset every setting to its default (not saved until you save)." },
         { t: "sep", label: "Boot Override" },
-        ...SYSTEMS.map(x => ({ t: "action", label: x.name, sub: "save and boot now", act: "boot:" + x.id, icon: x.icon, help: x.note })),
+        ...SYSTEMS.map(x => ({ t: "action", label: x.name, sub: "save and boot now", act: "boot:" + x.id, icon: x.svg, help: x.note })),
       ];
     }
 
@@ -761,10 +683,9 @@
 
     function setHelp(f) {
       if (f && f.help) {
-        helpEl.innerHTML = "<b>" + esc(f.label) + "</b>" + esc(f.help) +
-          (f.cos ? '<br><span class="k cos">Cosmetic</span>' : f.fx ? '<br><span class="k fx">Functional</span>' : "");
+        helpEl.innerHTML = "<b>" + esc(f.label) + "</b>" + esc(f.help);
       } else {
-        helpEl.innerHTML = "<b>Bootbox Setup</b>Tap a setting to change it. Settings marked <i>cosmetic</i> are only there for the real-firmware feel. Changes apply when you <b style='display:inline;font-size:inherit'>Save &amp; Exit</b>.";
+        helpEl.innerHTML = "<b>Bootbox Setup</b>Tap a setting to change it. Changes apply when you <b style='display:inline;font-size:inherit'>Save &amp; Exit</b>.";
       }
     }
 
@@ -803,7 +724,7 @@
         const cls = f.t === "action" ? "act" + (f.danger ? " danger" : "") : f.t;
         html += `<div class="u2-row ${cls}${i === focIdx ? " foc" : ""}" data-i="${i}">
           ${f.icon ? `<span class="bm2-ic" style="width:34px;height:34px;border-radius:9px">${icon(f.icon)}</span>` : ""}
-          <span class="u2-lab"><b>${esc(f.label)}${f.cos ? '<span class="u2-cos">cosmetic</span>' : ""}</b>${f.sub ? `<small>${esc(f.sub)}</small>` : ""}</span>
+          <span class="u2-lab"><b>${esc(f.label)}</b>${f.sub ? `<small>${esc(f.sub)}</small>` : ""}</span>
           ${control(f)}</div>`;
       });
       close();
@@ -850,10 +771,8 @@
     }
 
     function persist() {
-      writeCfg({ ram: s.ram, bootOrder: s.bootOrder, vtx: s.vtx, htt: s.htt, secureBoot: s.secureBoot,
-        bootMode: s.bootMode, fastBoot: s.fastBoot, sataMode: s.sataMode, usbLegacy: s.usbLegacy,
-        numlock: s.numlock, memRemap: s.memRemap, netInternet: s.netInternet,
-        resumeState: s.resumeState, nx: s.nx, tpm: s.tpm, txt: s.txt, bgRun: s.bgRun, isa: s.isa, autoBoot: +s.autoBoot || 0 });
+      writeCfg({ ram: s.ram, bootOrder: s.bootOrder, netInternet: s.netInternet, resumeState: s.resumeState,
+        bgRun: s.bgRun, isa: s.isa, autoBoot: +s.autoBoot || 0 });
       // Apply the background-execution choice to the native keep-alive (UserDefaults + re-arm).
       try { if (onDevice() && BG_SEC[s.bgRun] != null) Bridge.call("system", "setBackgroundGrace", { seconds: BG_SEC[s.bgRun] }); } catch (e) {}
       // Mirror the internet + resume toggles into the emulator's own config (it reads

@@ -83,11 +83,10 @@ built for learning Linux, scripting, retro computing and experiments.
 
 1.1 is in TestFlight; the App Store still has 1.0.
 
-- **A redesigned boot manager and UEFI Setup.** The boot manager shows each system with what it is,
-  whether it is downloaded, its size, and how much space Bootbox uses. UEFI Setup has touch-sized
-  controls, real version and device information, cosmetic options marked as such, a **Storage** tab
-  that lists and deletes downloaded images, your files and saved states, and a **Tools** tab with
-  the Files-app diagnostics. The emulator toolbar matches the same dark theme.
+- **A redesigned UEFI Setup:** touch-sized controls, real version and device information, only
+  settings that do something, a **Storage** tab that lists and deletes downloaded images, your files
+  and saved states, an **Auto-boot** option, and a **Tools** tab with the Files-app diagnostics. The
+  emulator toolbar has a matching dark theme.
 - **More in the Files app:** besides your own files and folders (sub-folders now work), the Bootbox
   location has **System Images** (the downloaded guest images; delete one to free space),
   **Saved States** and **Logs**.
@@ -331,13 +330,13 @@ Linux desktop's and Android's screens to noVNC and, since 1.1, the adb connectio
 ▤ Shell. Its Go source is in [`Frameworks/Iosnet-src/`](Frameworks/Iosnet-src/).
 
 ### A boot experience, not a settings screen
-A **boot manager** that shows each system's status and size → a tabbed **UEFI Setup**
-(functional RAM / CPU-cores / instruction set / auto-boot / boot-order / network / background
-settings, a Storage manager, Tools, plus some loving theater marked "cosmetic") →
+GRUB-style **boot menu** with per-system notes → a tabbed **UEFI Setup**
+(RAM / CPU cores / instruction set / auto-boot / boot order / network / background settings, a
+Storage manager and Tools) →
 serial console on the left, GUI on the right. The terminal fills its pane, taps focus it,
 keyboard routing follows your last tap, and full-screen TUIs (`ncdu`, `mc`, `vi`) get the
 right arrow-key sequences (application-cursor mode). The **Keys** button (1.1) adds an on-screen PC
-keyboard for the keys an iPad lacks. File-sync diagnostics are in UEFI Setup › Tools.
+keyboard for the keys an iPad lacks. A 🔧 File-Sync diagnostics panel is in the boot menu and UEFI Setup › Tools.
 
 ---
 
