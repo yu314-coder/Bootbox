@@ -84,9 +84,12 @@ built for learning Linux, scripting, retro computing and experiments.
 1.1 is in TestFlight; the App Store still has 1.0.
 
 - **A redesigned UEFI Setup:** touch-sized controls, real version and device information, only
-  settings that do something, a **Storage** tab that lists and deletes downloaded images, your files
-  and saved states, an **Auto-boot** option, and a **Tools** tab with the Files-app diagnostics. The
-  emulator toolbar has a matching dark theme.
+  settings that do something: CPU cores, instruction set, guest RAM, the engine's interpreter and
+  compile threshold, the engine's crash-fallback level (with a reset), the Linux kernel's
+  vulnerability mitigations and extra kernel parameters, default system, auto-boot, boot order,
+  network and background running; a **Storage** tab that lists and deletes downloaded images, your
+  files and saved states; and a **Tools** tab with the Files-app diagnostics. The emulator toolbar
+  has a matching dark theme.
 - **More in the Files app:** besides your own files and folders (sub-folders now work), the Bootbox
   location has **System Images** (the downloaded guest images; delete one to free space),
   **Saved States** and **Logs**.
@@ -94,8 +97,10 @@ built for learning Linux, scripting, retro computing and experiments.
   repository's `windows-v1` release and boot in the 32-bit engine (v86). Windows 2000 has internet.
 - **An on-screen PC keyboard** (the **Keys** button) with F1–F12, Esc, Tab, arrows and
   Ctrl/Alt/Shift/Win, for every system.
-- **An optional AVX2 CPU** for the 64-bit Linux systems (UEFI Setup → Advanced → Instruction Set),
-  for programs that require AVX2, FMA or BMI2. It is off by default because it costs multi-core speed.
+- **Every x86 instruction set at once** for the 64-bit Linux systems, by default: SSE4.1/4.2, POPCNT,
+  AVX, AVX2, FMA, F16C, BMI1/2, LZCNT, MOVBE, AES-NI, PCLMULQDQ, SHA-NI, ADX and RDSEED, so one session
+  runs programs built for any of them. UEFI Setup → Advanced → Instruction Set → Standard (SSE3) is
+  faster for programs that would otherwise pick AVX code (CPU-Z multi-thread ~26 vs ~18 under WebKit).
 - **A faster engine:** `rep movs`/`rep stos` copies run in bulk, and SSE integer shuffles, packs and
   multiplies run as WebAssembly SIMD. See [Performance](#performance).
 - **Android:** the fast interpreter (app launches 1.5–3× faster), a **▤ Shell** button that opens a
@@ -331,8 +336,8 @@ Linux desktop's and Android's screens to noVNC and, since 1.1, the adb connectio
 
 ### A boot experience, not a settings screen
 GRUB-style **boot menu** with per-system notes → a tabbed **UEFI Setup**
-(RAM / CPU cores / instruction set / auto-boot / boot order / network / background settings, a
-Storage manager and Tools) →
+(CPU cores / instruction set / RAM / engine / kernel options / default system / auto-boot / boot
+order / network / background settings, a Storage manager and Tools) →
 serial console on the left, GUI on the right. The terminal fills its pane, taps focus it,
 keyboard routing follows your last tap, and full-screen TUIs (`ncdu`, `mc`, `vi`) get the
 right arrow-key sequences (application-cursor mode). The **Keys** button (1.1) adds an on-screen PC
@@ -512,7 +517,7 @@ NumPy 2.x musllinux wheels are compiled for the x86-64-v2 baseline (SSSE3/SSE4/P
 the default emulated CPU (`qemu64`) doesn't advertise those. Advertising them used to break
 guests outright: the wasm TCG backend's POPCNT wrote its result into its *source* register
 (Go runtime panics, every new Android process crashing at the same address). That bug is
-fixed, and 1.1 offers an opt-in AVX2 CPU in UEFI Setup, but the default stays `qemu64`.
+fixed, and since 1.1 the Linux guests get every instruction set the emulator supports (AVX2, FMA, AES-NI, SHA-NI, …) on top of `qemu64` by default; UEFI Setup can switch back to the plain `qemu64` set.
 NumPy 1.x wheels detect CPU features at **runtime** and run correctly on it; a baked
 `pip`/`uv` constraints file pins that line so a plain `pip install numpy` does the right thing.
 

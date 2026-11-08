@@ -557,11 +557,9 @@
     container.addEventListener("contextmenu", (e) => e.preventDefault());
     try { window.__bbPointer = { ops, curve: () => curve, cur: () => cur, reset: () => { calibrated = false; calibTries = 0; calibLast = -1e9; }, calibrate: () => { calibrated = false; calibTries = 0; calibLast = -1e9; saveCurve(null); curve = [[1, 1], [2, 2]]; ensureCalibrated(); return calibrating; } }; } catch (e) {}
   }
-  // UEFI Setup -> Advanced -> Instruction Set (1.1): "AVX2 (x86-64-v3)" boots the 64-bit Linux guests with the
-  // x86-64-v3 feature set. XSAVEOPT is required with XSAVE: with XSAVE alone this guest kernel hangs before its
-  // first log line (reproduced in native QEMU 8.2 too). Verified with a self-checking AVX/AVX2/FMA/F16C/BMI test
-  // (1.88 M results, 0 mismatches) in the wasm engine.
-  const AVX2_FLAGS = "+ssse3,+sse4.1,+sse4.2,+popcnt,+abm,+bmi1,+bmi2,+movbe,+xsave,+xsaveopt,+avx,+avx2,+fma,+f16c";
+  // CPU features (UEFI Setup › CPU, see biosCpuFlags): XSAVEOPT is required with XSAVE - with XSAVE alone this
+  // guest kernel hangs before its first log line (reproduced in native QEMU 8.2 too). The AVX/AVX2/FMA/F16C/BMI
+  // emulation was verified with a self-checking test (1.88 M results, 0 mismatches) in the wasm engine (1.1).
   // Android Shell (1.1): a terminal on the Android guest that stays usable while Android's own UI is slow.
   // Android draws every frame on the emulated CPU (seconds per screen on an iPad); a shell only moves text,
   // which the iPad draws. vendor/qemu/adbshell.js speaks adb to the guest's adbd through the in-app
@@ -638,7 +636,30 @@
     pane.addEventListener("pointerdown", (ev) => ev.stopPropagation());   // taps in the shell never reach Android
   }
 
-  function biosIsa() { try { return JSON.parse(VFS.read("/Apps/.bios.json") || "{}").isa || ""; } catch (e) { return ""; } }
+  // every x86 feature UEFI Setup offers (biosmenu.js CPU_FEATURES); the default, so one session runs
+  // programs built for any of them
+  const ALL_CPU_FEATURES = ["ssse3", "sse4.1", "sse4.2", "popcnt", "aes", "pclmulqdq", "sha-ni", "movbe", "abm",
+    "bmi1", "bmi2", "adx", "rdseed", "avx", "avx2", "fma", "f16c"];
+  function biosCfg() { try { return JSON.parse(VFS.read("/Apps/.bios.json") || "{}"); } catch (e) { return {}; } }
+  // UEFI Setup › CPU: the x86 features the Linux guests get, as QEMU -cpu flags. Older builds stored only
+  // an SSE3/AVX2 choice (isa), which is not carried over. AVX needs XSAVE + XSAVEOPT, or the guest kernel hangs.
+  function biosCpuFlags() {
+    const c = biosCfg();
+    let f = Array.isArray(c.cpuFeatures) ? c.cpuFeatures : ALL_CPU_FEATURES;   // default: everything
+    f = f.filter(x => /^[a-z0-9.\-]+$/.test(x) && x !== "xsave" && x !== "xsaveopt");
+    if (!f.length) return undefined;
+    if (f.includes("avx")) f = ["xsave", "xsaveopt"].concat(f);
+    return f.map(x => "+" + x).join(",");
+  }
+  // UEFI Setup › Advanced › Linux Kernel: words added to the Linux guests' kernel command line.
+  function biosKernelArgs() {
+    const c = biosCfg(), w = [];
+    if (c.mitigationsOff) w.push("mitigations=off");
+    if (c.kernelExtra) w.push(String(c.kernelExtra).replace(/[^a-zA-Z0-9_.,=\- ]/g, "").trim());
+    return w.filter(Boolean).join(" ") || undefined;
+  }
+  // UEFI Setup › Advanced › Compile Threshold (engine tune key jit).
+  function biosJit() { return ({ eager: 3000, lazy: 30000 })[biosCfg().jitPreset] || 0; }
 
   // The Linux desktop's Web (bbweb) asks for a page in the device's own browser. In the MiniOS shell that is
   // the Browser app's window; in the boot-menu flow (full-screen #bb-root, z-index 9000) that window opened
@@ -1176,7 +1197,7 @@
             if (!window.QEMU_WASM) {
               await new Promise((res, rej) => {
                 const s = document.createElement("script");
-                s.src = "vendor/qemu/run.js";
+                s.src = "vendor/qemu/run.js?v=2";
                 s.onload = res; s.onerror = () => rej(new Error("missing QEMU-Wasm pack"));
                 document.head.appendChild(s);
               });
@@ -1301,7 +1322,8 @@
             // WKWebView on the Mac (same engine): first terminal 17-23 s -> 5.5 s, panel at boot 78-89 s
             // -> 64-71 s, python3 start 7.1 -> 3.1 s; hot loops unchanged. (jit=300 was catastrophic.)
             const iosBase = (window.Bridge && Bridge.onDevice) ? { chain: 2, jit: 10000 } : {};
-            const tune = Object.assign({}, g.tune || {}, iosBase, level.tune || {});
+            const userJit = biosJit();   // UEFI Setup's compile threshold (the safety ladder's own settings still win)
+            const tune = Object.assign({}, g.tune || {}, iosBase, userJit ? { jit: userJit } : {}, level.tune || {});
             if (g.tune && g.tune.max && level.tune && level.tune.max) tune.max = Math.min(g.tune.max, level.tune.max);
             await window.QEMU_WASM.run({
               screen_container: panel64.termHost,
@@ -1318,7 +1340,9 @@
               compressedVnc: !!g.android,
               touchGuest: !!g.android,   // touches go straight to Android's touchscreen (run.js installDirectTouch)
               cpuModelId: g.cpuModelId,
-              cpuFlags: !g.android && /^AVX2/.test(biosIsa()) ? AVX2_FLAGS : undefined,
+              cpuFlags: !g.android ? biosCpuFlags() : undefined,
+              kernelArgs: !g.android ? biosKernelArgs() : undefined,
+              safeNote: safe.level ? level.name : undefined,   // shown on the "Connecting…" line
               vncLabel: g.android ? "Android" : undefined,
               appsKey: g.id === "x64pwd",   // desktop panel's Apps button -> openbox's menu key (run.js installAppsKey)
               // Desktop v14+: Linux's Web opens pages in the app's native Browser (the iPad's own WebKit,

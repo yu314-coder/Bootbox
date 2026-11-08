@@ -438,6 +438,8 @@
         if (p && p.snapshot && p.snapshot.read < p.snapshot.size) t = " Loading the saved state: " + Math.floor(100 * p.snapshot.read / p.snapshot.size) + "%.";
         else if (p && p.fetched) t = " Guest data loaded so far: " + Math.round(p.fetched / 1048576) + " MB.";
       } catch (e) {}
+      // the crash fallback runs this boot on a slower engine level: say so where it is seen
+      if (opts.safeNote) t += " Slower engine after an earlier crash (" + opts.safeNote + ") — UEFI Setup › Advanced resets it.";
       return t + " (" + Math.round((Date.now() - guiT0) / 1000) + " s)";
     }
     function guiStatus(cb, msg, live) {   // live: refresh msg + progress every second until replaced

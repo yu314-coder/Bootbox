@@ -37,6 +37,14 @@
       note: "Windows 2000 SP4 · one-tap download (~340 MB) + boot. The only Windows here with WORKING INTERNET (NT NDIS NIC via the relay, where Win9x's driver hangs). Heavier/slower than Win98. 512 MB RAM · 640×480 VGA · auto-logon." },
   ];
 
+  // Every x86 feature the 64-bit Linux guests get with "All instructions" (QEMU 8.2's TCG emulates all of them,
+  // each a real `-cpu qemu64,+flag`; the emulator adds XSAVE/XSAVEOPT for AVX). "Standard" = none of them.
+  const ALL_CPU_FEATURES = ["ssse3", "sse4.1", "sse4.2", "popcnt", "aes", "pclmulqdq", "sha-ni", "movbe", "abm",
+    "bmi1", "bmi2", "adx", "rdseed", "avx", "avx2", "fma", "f16c"];
+  // The emulator's crash fallback ("safety ladder", emulator.js SAFE_LEVELS): what each level turns off.
+  const SAFE_NAMES = ["full speed", "classic interpreter", "no block chaining", "no SIMD inlining",
+    "no SIMD / register locals / bulk copies", "minimal engine, fixed memory", "interpreter only (very slow)"];
+
   const CFG = "/Apps/.bios.json";
   const readCfg = () => { try { return JSON.parse(VFS.read(CFG) || "{}"); } catch (e) { return {}; } };
   const writeCfg = (o) => { try { VFS.write(CFG, JSON.stringify(Object.assign(readCfg(), o))); } catch (e) {} };
@@ -210,6 +218,13 @@
       .u2-seg button{min-height:30px;padding:0 11px;border:0;border-radius:7px;background:transparent;color:var(--muted);font:600 12.5px var(--mono);cursor:pointer;white-space:nowrap}
       .u2-seg button.on{background:#1f4f8f;color:#fff}
       .u2-step{display:inline-flex;align-items:center;gap:8px;flex:0 0 auto}
+      .u2-text,.u2-select{flex:0 1 auto;width:min(340px,58%);height:36px;border-radius:9px;border:1px solid var(--line2);background:#0a1220;
+        color:var(--text);font:600 13px var(--mono);padding:0 11px;-webkit-user-select:text;user-select:text;outline:none}
+      .u2-text:focus,.u2-select:focus{border-color:var(--accent)}
+      .u2-select{appearance:none;-webkit-appearance:none;padding-right:30px;cursor:pointer;
+        background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%238b9cb9' stroke-width='1.5' fill='none'/></svg>");
+        background-repeat:no-repeat;background-position:right 10px center}
+      .u2-select option{background:#0b1321;color:var(--text)}
       .u2-step button{width:34px;height:34px;border-radius:9px;border:1px solid var(--line2);background:var(--panel2);color:var(--text);font-weight:700;font-size:18px;line-height:1;font-family:inherit;cursor:pointer}
       .u2-step .u2-val{min-width:76px;text-align:center}
       .u2-row.act .u2-lab b{color:#cfe5ff}
@@ -262,6 +277,8 @@
   function renderMenu(container, hooks) {
     hooks = hooks || {};
     const cfg = readCfg();
+    // UEFI Setup › Boot › Default System (else the one used last)
+    const pref = cfg.defaultBoot && cfg.defaultBoot !== "last" ? cfg.defaultBoot : cfg.lastBoot;
     let entries = [];
     let sel = 0, timer = null, count = 0;
 
@@ -491,7 +508,7 @@
     // that is already on the device, so an unattended iPad never starts a big download. Any key/tap stops it.
     function startAuto(store) {
       const secs = +cfg.autoBoot || 0, e = entries[sel];
-      if (!secs || !e || !cfg.lastBoot || e.id !== cfg.lastBoot) return;
+      if (!secs || !e || !pref || e.id !== pref) return;
       if (!e.id.startsWith("import:")) { const s = systemStatus(e, store); if (!s.known || !s.ready) return; }
       count = secs;
       const tick = () => {
@@ -521,14 +538,14 @@
 
     // Initial paint (no imports yet), then enrich with imported ISOs.
     entries = build([]);
-    const li = cfg.lastBoot ? entries.findIndex(e => e.id === cfg.lastBoot) : -1;
+    const li = pref ? entries.findIndex(e => e.id === pref) : -1;
     sel = li >= 0 ? li : 0;
     paint();
     container.querySelector(".bm").addEventListener("pointerdown", () => cancelAuto(), true);
     Promise.all([listImported(), loadStore()]).then(([names, store]) => {
       if (!alive()) return;
       entries = build(names);
-      const i = cfg.lastBoot ? entries.findIndex(e => e.id === cfg.lastBoot) : -1;
+      const i = pref ? entries.findIndex(e => e.id === pref) : -1;
       if (i >= 0) sel = i;
       paint(); startAuto(store);
     });
@@ -541,8 +558,16 @@
     hooks = hooks || {};
     ensureStyle();
     const DEF = { ram: 256, cores: 2, bootOrder: "cd-hd", netInternet: true, resumeState: true, bgRun: "About 30 s",
-      isa: "SSE3 (standard)", autoBoot: 0 };
+      cpuFeatures: ALL_CPU_FEATURES.slice(), isaChoice: "all", autoBoot: 0, defaultBoot: "last", interp: "fast", jitPreset: "balanced", mitigationsOff: false, kernelExtra: "" };
     let s = Object.assign({}, DEF, readCfg());
+    // default: every feature (one session runs programs built for any of them); the old SSE3/AVX2
+    // choice of earlier builds is not carried over
+    if (!Array.isArray(s.cpuFeatures)) s.cpuFeatures = ALL_CPU_FEATURES.slice();
+    s.isaChoice = s.cpuFeatures.length ? "all" : "std";
+    const ecNow = emuCfg();
+    const safeLevel = () => resetSafe ? 0 : Math.min(SAFE_NAMES.length - 1, Math.max(0, +((emuCfg().q64safe6 || {}).level) || 0));
+    s.interp = ecNow.interp2 === "classic" ? "classic" : "fast";
+    let resetSafe = false;
     // Reflect the emulator's actual internet + resume state (it stores these in its own config).
     try { const ec = emuCfg(); s.netInternet = (ec.netRelay !== "off"); s.resumeState = (ec.resumeState !== false); if (+ec.cores64) s.cores = +ec.cores64; } catch (e) {}
     // Reflect the real background-grace setting (lives in native UserDefaults, not the JS config).
@@ -599,16 +624,16 @@
     function fields() {
       if (tab === 0) {
         const t = now();
-        const avx = /^AVX2/.test(s.isa || "");
         return [
           { t: "sep", label: "Firmware" },
           { t: "info", label: "Bootbox", value: store && store.version ? store.version + " (build " + store.build + ")" : "—" },
           { t: "info", label: "Emulators", value: "QEMU 8.2 (x86-64) · v86 (32-bit PCs)" },
           { t: "info", label: "Translation", value: "x86 → WebAssembly → ARM64" },
           { t: "sep", label: "Virtual Processor" },
-          { t: "info", label: "CPU", value: avx ? "x86-64-v3 · AVX2 · FMA" : "x86-64 · SSE3 · RDRAND" },
+          { t: "info", label: "CPU", value: s.isaChoice === "all" ? "x86-64 · all instructions (AVX2, FMA, AES, SHA…)" : "x86-64 · standard (SSE3)" },
           { t: "info", label: "Cores (Linux)", value: String(s.cores || 2) },
           { t: "info", label: "Guest RAM", value: s.ram > 256 ? s.ram + " MB" : "Auto (per system)" },
+          { t: "info", label: "Engine", value: SAFE_NAMES[safeLevel()] + (safeLevel() ? " (after a crash)" : "") },
           { t: "sep", label: "This Device" },
           { t: "info", label: "Model", value: dev ? (dev.model + " · " + (dev.model === "iPad" ? "iPadOS " : "iOS ") + dev.osVersion) : (navigator.platform || "—") },
           { t: "info", label: "CPU cores", value: dev ? String(dev.cores) : String(navigator.hardwareConcurrency || "—") },
@@ -618,25 +643,44 @@
           { t: "info", label: "System Time", value: t.time },
         ];
       }
-      if (tab === 1) return [
-        { t: "sep", label: "CPU" },
-        { t: "stepper", label: "CPU Cores", sub: "Linux (Desktop & Terminal)", key: "cores", min: 1, max: 8, step: 1,
-          help: "Each core is a full emulated CPU running on its own iPad core. 4 cores give the best single-thread speed; 8 cores give the most total throughput on iPads with many cores, but run hotter and use more battery. 1 = battery saver. Applies on the next boot. Android always uses 4 (its snapshot) and the Windows images use 1." },
-        { t: "select", label: "Instruction Set", sub: "Linux (Desktop & Terminal)", key: "isa", opts: ["SSE3 (standard)", "AVX2 (x86-64-v3)"], render: v => /^AVX2/.test(v) ? "AVX2" : "SSE3",
-          help: "'AVX2' adds SSSE3, SSE4.1/4.2, POPCNT, AVX, AVX2, FMA, F16C, BMI1/2, LZCNT and MOVBE, so programs built for x86-64-v3 (newer NumPy, AVX-only tools) run. It is for compatibility, not speed: every AVX instruction is emulated, and programs that switch to AVX code can get much slower (CPU-Z multi-thread drops to about a third). Applies on the next boot." },
-        { t: "sep", label: "Memory" },
-        { t: "stepper", label: "Guest RAM", sub: "minimum for every system", key: "ram", min: 256, max: 3584, step: 256, render: v => v <= 256 ? "Auto" : v + " MB",
-          help: "Memory for the next boot. Auto = each system's own size (Linux 1.5 GB; Android and the Windows images use fixed sizes). Raise it for big pip installs or many open apps — it doesn't make the CPU faster. If a guest fails to start, lower it." },
-        { t: "sep", label: "Network" },
-        { t: "toggle", label: "Guest Internet", key: "netInternet", help: "Connects the guests' network card to the internet through Bootbox's built-in relay. Turn off for a fully offline VM." },
-        { t: "sep", label: "Power" },
-        { t: "select", label: "Run in Background", key: "bgRun", opts: ["About 30 s", "Off"], render: v => v === "Off" ? "Off" : "30 s",
-          help: "When you switch to another app, iOS pauses Bootbox. '30 s' lets the guest keep running for the short time iOS allows (to finish a save or a download step); 'Off' pauses at once. Either way the guest stays in memory and continues when you come back." },
-      ];
+      if (tab === 1) {
+        const lvl = safeLevel();
+        return [
+          { t: "sep", label: "Processor" },
+          { t: "stepper", label: "CPU Cores", sub: "Linux (Desktop & Terminal)", key: "cores", min: 1, max: 8, step: 1,
+            help: "Each core is a full emulated CPU running on its own iPad core. 4 cores give the best single-thread speed; 8 cores give the most total throughput on iPads with many cores, but run hotter and use more battery. 1 = battery saver. Applies on the next boot. Android always uses 4 (its snapshot) and the Windows images use 1." },
+          { t: "select", label: "Instruction Set", sub: "Linux (Desktop & Terminal)", key: "isaChoice", opts: ["all", "std"], render: v => v === "all" ? "All" : "Standard",
+            help: "All (default): every instruction this emulator supports, at once — SSE4.1/4.2, POPCNT, AVX, AVX2, FMA, F16C, BMI1/2, LZCNT, MOVBE, AES-NI, PCLMULQDQ, SHA-NI, ADX, RDSEED — so one session runs programs built for any of them. Standard: only base x86-64 (SSE3). It matters for speed: every instruction is emulated, and programs that find AVX use it, which runs slower here than the SSE code they use otherwise. Measured in CPU-Z (WebKit, 4 cores): single-thread the same, multi-thread about 18 with All against about 26 with Standard. Applies on the next boot; Android keeps its own CPU (snapshot)." },
+          { t: "sep", label: "Memory" },
+          { t: "stepper", label: "Guest RAM", sub: "minimum for every system", key: "ram", min: 256, max: 3584, step: 256, render: v => v <= 256 ? "Auto" : v + " MB",
+            help: "Memory for the next boot. Auto = each system's own size (Linux 1.5 GB; Android and the Windows images use fixed sizes). Raise it for big pip installs or many open apps — it doesn't make the CPU faster. If a guest fails to start, lower it." },
+          { t: "sep", label: "Emulation Engine" },
+          { t: "select", label: "Interpreter", sub: "for code not compiled yet", key: "interp", opts: ["fast", "classic"], render: v => v === "fast" ? "Fast" : "Classic",
+            help: "How the 64-bit systems run code before it is compiled. Fast (default): a compact interpreter WebKit fully optimizes — steady speed. Classic: the older one (in WebKit some runs slow to a crawl). Same setting as the emulator toolbar. Applies on the next boot." },
+          { t: "select", label: "Compile Threshold", sub: "runs before a block is compiled", key: "jitPreset", opts: ["eager", "balanced", "lazy"], render: v => ({ eager: "3000", balanced: "10000", lazy: "30000" })[v],
+            help: "How often a block of guest code runs (interpreted) before it is translated to WebAssembly. 10000 (default) measured fastest on WebKit; 3000 compiles more (more WebKit compile work, more memory); 30000 interprets longer. Applies on the next boot." },
+          { t: "info", label: "Engine Level", value: SAFE_NAMES[lvl] + (lvl ? " — set after a crash" : "") },
+          ...(lvl ? [{ t: "action", label: "Reset Engine to Full Speed", act: "resetsafe",
+            help: "When a 64-bit system crashes the page early in its boot, Bootbox turns off engine features one step at a time on the next boots and keeps the first level that runs — it never steps back up by itself. If a crash came from something else (too many cores or too much RAM for this device), the guest stays slow for nothing. Reset to try full speed again." }] : []),
+          { t: "sep", label: "Linux Kernel" },
+          { t: "toggle", label: "CPU Vulnerability Mitigations", sub: "Spectre / Meltdown protections inside the guest", key: "__mit", value: !s.mitigationsOff,
+            help: "On: the guest kernel's default Spectre/Meltdown/Retbleed protections. Off adds mitigations=off: no protections against those attacks inside the VM (which only runs your own programs in an emulated CPU), and less work per system call and context switch. Applies on the next boot of the Linux systems." },
+          { t: "text", label: "Extra Kernel Parameters", key: "kernelExtra", placeholder: "e.g. loglevel=7",
+            help: "Words added to the Linux guests' kernel command line on the next boot (letters, digits and . , = - _ only). For example loglevel=7 to see every kernel message, or nosmp. Leave empty normally." },
+          { t: "sep", label: "Network" },
+          { t: "toggle", label: "Guest Internet", key: "netInternet", help: "Connects the guests' network card to the internet through Bootbox's built-in relay. Turn off for a fully offline VM." },
+          { t: "sep", label: "Power" },
+          { t: "select", label: "Run in Background", key: "bgRun", opts: ["About 30 s", "Off"], render: v => v === "Off" ? "Off" : "30 s",
+            help: "When you switch to another app, iOS pauses Bootbox. '30 s' lets the guest keep running for the short time iOS allows (to finish a save or a download step); 'Off' pauses at once. Either way the guest stays in memory and continues when you come back." },
+        ];
+      }
       if (tab === 2) return [
         { t: "sep", label: "Startup" },
-        { t: "select", label: "Auto-boot", sub: "boot the last system after a countdown", key: "autoBoot", opts: [0, 5, 10], render: v => +v ? v + " s" : "Off",
-          help: "Boot the system you used last after a short countdown when Bootbox opens (tap or press a key to stop it). Only a system that is already downloaded is auto-booted." },
+        { t: "select", native: true, label: "Default System", sub: "selected when Bootbox opens", key: "defaultBoot", opts: ["last", ...SYSTEMS.map(x => x.id)],
+          render: v => v === "last" ? "The one used last" : (SYSTEMS.find(x => x.id === v) || {}).name,
+          help: "Which system the boot menu selects (and auto-boots, if Auto-boot is on) when Bootbox opens." },
+        { t: "select", label: "Auto-boot", sub: "boot the default system after a countdown", key: "autoBoot", opts: [0, 5, 10], render: v => +v ? v + " s" : "Off",
+          help: "Boot the default system after a short countdown when Bootbox opens (tap or press a key to stop it). Only a system that is already downloaded is auto-booted." },
         { t: "select", label: "Boot Order", sub: "your own images (v86)", key: "bootOrder", opts: ["cd-hd", "hd-cd", "cd"], render: v => bootLabel[v],
           help: "The order in which the 32-bit PC tries its boot devices for your imported images." },
         { t: "toggle", label: "Resume Saved State", key: "resumeState", help: "On: a VM with a saved state (💾 Save) resumes where you left off. Off: always start fresh, ignoring saved states." },
@@ -689,9 +733,18 @@
       }
     }
 
+    // a few rows show/edit something that isn't a plain setting
+    const getV = (f) => f.key === "__mit" ? !s.mitigationsOff : s[f.key];
+    function setV(f, v) {
+      if (f.key === "__mit") s.mitigationsOff = !v;
+      else s[f.key] = v;
+      if (f.key === "isaChoice") s.cpuFeatures = v === "all" ? ALL_CPU_FEATURES.slice() : [];
+    }
     function control(f) {
-      const v = s[f.key];
+      const v = getV(f);
       if (f.t === "toggle") return `<span class="u2-sw${v ? " on" : ""}"></span>`;
+      if (f.t === "text") return `<input class="u2-text" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="200" placeholder="${esc(f.placeholder || "")}" value="${esc(v || "")}">`;
+      if (f.t === "select" && f.native) return `<select class="u2-select">${f.opts.map(o => `<option value="${esc(o)}"${String(o) === String(v) ? " selected" : ""}>${esc(f.render ? f.render(o) : o)}</option>`).join("")}</select>`;
       if (f.t === "select") return `<span class="u2-seg">${f.opts.map(o => `<button data-o="${esc(o)}" class="${String(o) === String(v) ? "on" : ""}">${esc(f.render ? f.render(o) : o)}</button>`).join("")}</span>`;
       if (f.t === "stepper") return `<span class="u2-step"><button data-d="-1" aria-label="less">−</button><span class="u2-val">${esc(f.render ? f.render(v) : v)}</span><button data-d="1" aria-label="more">+</button></span>`;
       if (f.t === "info") return `<span class="u2-val">${esc(f.value)}</span>`;
@@ -732,10 +785,15 @@
       panelEl.querySelectorAll(".u2-row").forEach(row => {
         const i = +row.dataset.i, f = fs[i];
         row.onmouseenter = () => setHelp(f);
+        const inp = row.querySelector(".u2-text");
+        if (inp) inp.oninput = inp.onchange = () => { s[f.key] = inp.value.replace(/[^a-zA-Z0-9_.,=\- ]/g, ""); };
+        const sel = row.querySelector(".u2-select");
+        if (sel) sel.onchange = () => { setV(f, f.opts.find(x => String(x) === sel.value)); setHelp(f); paint(); };
         row.onclick = (ev) => {
           foc = Math.max(0, fo.indexOf(i));
           const o = ev.target.closest("[data-o]"), d = ev.target.closest("[data-d]"), del = ev.target.closest(".u2-del");
-          if (o && f.t === "select") { const opt = f.opts.find(x => String(x) === o.dataset.o); s[f.key] = opt; setHelp(f); paint(); return; }
+          if (ev.target.closest("input, select")) { setHelp(f); return; }
+          if (o && f.t === "select") { const opt = f.opts.find(x => String(x) === o.dataset.o); setV(f, opt); setHelp(f); paint(); return; }
           if (d && f.t === "stepper") { s[f.key] = clamp(s[f.key] + (+d.dataset.d) * f.step, f.min, f.max); setHelp(f); paint(); return; }
           if (del && f.t === "file") { if (!del.disabled) askDelete(f); setHelp(f); return; }
           if (f.t === "file") { setHelp(f); paint(); return; }
@@ -763,8 +821,9 @@
     function activate(f) {
       if (!f) return;
       setHelp(f);
-      if (f.t === "toggle") { s[f.key] = !s[f.key]; paint(); }
-      else if (f.t === "select") { const i = f.opts.findIndex(o => String(o) === String(s[f.key])); s[f.key] = f.opts[(i + 1) % f.opts.length]; paint(); }
+      if (f.t === "toggle") { setV(f, !getV(f)); paint(); }
+      else if (f.t === "select") { const i = f.opts.findIndex(o => String(o) === String(getV(f))); setV(f, f.opts[(i + 1) % f.opts.length]); paint(); }
+      else if (f.t === "text") { const inp = panelEl.querySelector(".u2-row.foc .u2-text"); if (inp) inp.focus(); }
       else if (f.t === "stepper") { s[f.key] = s[f.key] >= f.max ? f.min : clamp(s[f.key] + f.step, f.min, f.max); paint(); }
       else if (f.t === "file") { if (!f.lock && !busyDel) askDelete(f); }
       else if (f.t === "action") doAction(f.act);
@@ -772,7 +831,9 @@
 
     function persist() {
       writeCfg({ ram: s.ram, bootOrder: s.bootOrder, netInternet: s.netInternet, resumeState: s.resumeState,
-        bgRun: s.bgRun, isa: s.isa, autoBoot: +s.autoBoot || 0 });
+        bgRun: s.bgRun, autoBoot: +s.autoBoot || 0, defaultBoot: s.defaultBoot || "last",
+        cpuFeatures: s.cpuFeatures.slice(), isa: s.cpuFeatures.includes("avx2") ? "AVX2 (x86-64-v3)" : "SSE3 (standard)",
+        jitPreset: s.jitPreset, mitigationsOff: !!s.mitigationsOff, kernelExtra: String(s.kernelExtra || "").trim() });
       // Apply the background-execution choice to the native keep-alive (UserDefaults + re-arm).
       try { if (onDevice() && BG_SEC[s.bgRun] != null) Bridge.call("system", "setBackgroundGrace", { seconds: BG_SEC[s.bgRun] }); } catch (e) {}
       // Mirror the internet + resume toggles into the emulator's own config (it reads
@@ -783,6 +844,9 @@
         else ec.netRelay = "off";
         ec.resumeState = s.resumeState;
         ec.cores64 = clamp(+s.cores || 2, 1, 8);   // the same setting as the emulator toolbar's cores menu
+        // the interpreter is the toolbar's setting too; a new pick restarts the crash fallback, as there
+        if ((ec.interp2 === "classic" ? "classic" : "fast") !== s.interp) { ec.interp2 = s.interp; ec.q64safe6 = { level: 0 }; }
+        if (resetSafe) ec.q64safe6 = { level: 0 };
         VFS.write("/Apps/.emulator.json", JSON.stringify(ec));
       } catch (e) {}
     }
@@ -819,6 +883,12 @@
       else if (act === "discard") { hooks.onBack && hooks.onBack(); }
       else if (act === "defaults") { s = Object.assign({}, DEF); foc = 0; paint(); setHelp({ label: "Defaults loaded", help: "Every setting is back to its default. Save & Exit to keep them." }); }
       else if (act === "refresh") { refreshStore(); }
+      else if (act === "resetsafe") {
+        resetSafe = true;
+        try { const ec = emuCfg(); ec.q64safe6 = { level: 0 }; VFS.write("/Apps/.emulator.json", JSON.stringify(ec)); } catch (e) {}
+        foc = 0; paint();
+        setHelp({ label: "Engine reset", help: "The next 64-bit boot runs at full speed again. If that boot crashes the page, Bootbox steps down once more by itself." });
+      }
       else if (act === "diag") { if (onDevice()) showDiag(); else setHelp({ label: "File-sync diagnostics", help: "Available in the app on your iPad." }); }
       else if (act === "fpreset") {
         if (!onDevice()) return setHelp({ label: "Reset the Files location", help: "Available in the app on your iPad." });
@@ -834,6 +904,7 @@
 
     function onKey(e) {
       if (!alive()) { window.removeEventListener("keydown", onKey); return; }
+      if (e.target && e.target.closest && e.target.closest("input, select, textarea")) return;   // typing in a field
       const fs = fields(), fo = focusable(fs);
       const k = e.key;
       if (k === "ArrowRight") { tab = (tab + 1) % TABS.length; foc = 0; disarm(); paint(); e.preventDefault(); }
