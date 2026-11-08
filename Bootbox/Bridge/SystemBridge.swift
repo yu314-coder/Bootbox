@@ -65,9 +65,68 @@ final class SystemBridge: NSObject {
             UserDefaults.standard.set(sec, forKey: "BootboxBackgroundGraceSeconds")
             BackgroundKeepAlive.shared.reschedule()   // apply immediately if already backgrounded
             respond(true, sec)
+        case "storage":
+            // What Bootbox keeps on this device (boot menu + UEFI Setup › Storage): every file in the
+            // shared imports folder (your images AND the downloaded system images) and the saved
+            // states, with sizes, plus free space and the app version.
+            DispatchQueue.global(qos: .userInitiated).async {
+                let r = Self.storageReport()
+                DispatchQueue.main.async { respond(true, r) }
+            }
+        case "deleteStored":
+            // Delete one top-level file from the imports folder ("imports") or the saved states
+            // ("states"). Names only: no paths, no hidden files.
+            let area = payload["area"] as? String ?? "imports"
+            guard let name = payload["name"] as? String, !name.isEmpty, !name.contains("/"),
+                  !name.hasPrefix("."), name != "..", ["imports", "states"].contains(area) else {
+                return respond(false, "bad name")
+            }
+            let dir = area == "states" ? VMStorage.snapshotsDir() : VMStorage.importsDir()
+            do {
+                try FileManager.default.removeItem(at: dir.appendingPathComponent(name))
+                BootLog.native("deleted \(area)/\(name) from UEFI Setup")
+                DomainRegistrar.signalChange()
+                respond(true, true)
+            } catch {
+                respond(false, error.localizedDescription)
+            }
         default:
             respond(false, "unknown system action: \(action)")
         }
+    }
+
+    static func storageReport() -> [String: Any] {
+        let fm = FileManager.default
+        let keys: [URLResourceKey] = [.fileSizeKey, .totalFileAllocatedSizeKey, .contentModificationDateKey, .isDirectoryKey]
+        func folderSize(_ u: URL) -> (Int, Int) {
+            var size = 0, alloc = 0
+            if let e = fm.enumerator(at: u, includingPropertiesForKeys: keys) {
+                for case let f as URL in e {
+                    let rv = try? f.resourceValues(forKeys: Set(keys))
+                    size += rv?.fileSize ?? 0; alloc += rv?.totalFileAllocatedSize ?? rv?.fileSize ?? 0
+                }
+            }
+            return (size, alloc)
+        }
+        func list(_ dir: URL, _ area: String) -> [[String: Any]] {
+            let urls = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: keys, options: [.skipsHiddenFiles])) ?? []
+            return urls.map { u in
+                let rv = try? u.resourceValues(forKeys: Set(keys))
+                let isDir = rv?.isDirectory ?? false
+                let (size, alloc) = isDir ? folderSize(u) : (rv?.fileSize ?? 0, rv?.totalFileAllocatedSize ?? rv?.fileSize ?? 0)
+                return ["name": u.lastPathComponent, "area": area, "dir": isDir, "size": size, "alloc": alloc,
+                        "mtime": (rv?.contentModificationDate?.timeIntervalSince1970 ?? 0) * 1000]
+            }
+        }
+        let vol = try? VMStorage.container().resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey, .volumeTotalCapacityKey])
+        let info = Bundle.main.infoDictionary
+        return [
+            "version": info?["CFBundleShortVersionString"] as? String ?? "?",
+            "build": info?["CFBundleVersion"] as? String ?? "?",
+            "free": vol?.volumeAvailableCapacityForImportantUsage ?? 0,
+            "total": vol?.volumeTotalCapacity ?? 0,
+            "files": list(VMStorage.importsDir(), "imports") + list(VMStorage.snapshotsDir(), "states"),
+        ]
     }
 
     /// File-Provider diagnostics: build number, what's actually in the shared imports dir, which File
@@ -110,15 +169,29 @@ final class SystemBridge: NSObject {
     }
 }
 
-/// Persistent app log: Documents/Logs/bootbox.log, rotated to bootbox.1.log past 1 MB. The page's
+/// Persistent app log: <app group>/Logs/bootbox.log, rotated to bootbox.1.log past 1 MB. The page's
 /// console arrives here (bridge.js -> system "appendLog") along with native events (the WebContent
 /// process being killed, memory warnings, backgrounding), so a guest that dies on a real iPad leaves
-/// a readable trail (Files app, or `xcrun devicectl device copy from … --domain-type appDataContainer`).
+/// a readable trail. It lives in the app group (it used to be the app's private Documents) so the
+/// Files app shows it: Bootbox › Logs.
 enum BootLog {
     private static let queue = DispatchQueue(label: "bootbox.bootlog")
-    static var url: URL {
-        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Logs", isDirectory: true).appendingPathComponent("bootbox.log")
+    static var dir: URL { VMStorage.container().appendingPathComponent("Logs", isDirectory: true) }
+    static var url: URL { dir.appendingPathComponent("bootbox.log") }
+
+    /// Move logs written by older builds (Documents/Logs) into the shared folder once.
+    static func migrate() {
+        queue.async {
+            let fm = FileManager.default
+            let old = fm.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("Logs", isDirectory: true)
+            guard old.standardizedFileURL != dir.standardizedFileURL,
+                  let names = try? fm.contentsOfDirectory(atPath: old.path), !names.isEmpty else { return }
+            try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            for n in names where !fm.fileExists(atPath: dir.appendingPathComponent(n).path) {
+                try? fm.moveItem(at: old.appendingPathComponent(n), to: dir.appendingPathComponent(n))
+            }
+            try? fm.removeItem(at: old)
+        }
     }
 
     static func append(_ text: String) {

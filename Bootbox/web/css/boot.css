@@ -61,7 +61,7 @@ html, body {
 #bios .bios-btn:active { background: #2a2a5a; }
 
 /* ---------- Boot (modern, Windows-11 style) ---------- */
-#boot {
+section#boot {   /* the POST screen only: the emulator's Start button is also id="boot" */
   background:
     radial-gradient(1200px 800px at 50% 28%, rgba(58,150,221,0.16), transparent 60%),
     linear-gradient(160deg, #0b1426 0%, #060b16 55%, #04070e 100%);

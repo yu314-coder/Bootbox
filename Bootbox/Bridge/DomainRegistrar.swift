@@ -53,5 +53,9 @@ enum DomainRegistrar {
         guard let mgr = NSFileProviderManager(for: domain) else { return }
         mgr.signalEnumerator(for: .rootContainer) { _ in }
         mgr.signalEnumerator(for: .workingSet) { _ in }
+        // the extension's virtual folders (FileProviderExtension: System Images, Saved States, Logs)
+        for f in ["@system", "@states", "@logs"] {
+            mgr.signalEnumerator(for: NSFileProviderItemIdentifier(f)) { _ in }
+        }
     }
 }

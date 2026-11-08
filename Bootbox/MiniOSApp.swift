@@ -6,6 +6,7 @@ struct MiniOSApp: App {
     init() {
         SelfCheck.run()
         VMStorage.cleanupStale()             // drop stale *.part temp files from the Files view
+        BootLog.migrate()                    // logs moved from Documents to the shared folder (Files › Bootbox › Logs)
         DomainRegistrar.register()
         BackgroundKeepAlive.shared.start()   // a short grace for the guest when backgrounded
         MiniOSApp.startNetStack()            // embedded netstack -> real internet for the 64-bit guest

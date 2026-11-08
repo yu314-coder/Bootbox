@@ -83,6 +83,14 @@ built for learning Linux, scripting, retro computing and experiments.
 
 1.1 is in TestFlight; the App Store still has 1.0.
 
+- **A redesigned boot manager and UEFI Setup.** The boot manager shows each system with what it is,
+  whether it is downloaded, its size, and how much space Bootbox uses. UEFI Setup has touch-sized
+  controls, real version and device information, cosmetic options marked as such, a **Storage** tab
+  that lists and deletes downloaded images, your files and saved states, and a **Tools** tab with
+  the Files-app diagnostics. The emulator toolbar matches the same dark theme.
+- **More in the Files app:** besides your own files and folders (sub-folders now work), the Bootbox
+  location has **System Images** (the downloaded guest images; delete one to free space),
+  **Saved States** and **Logs**.
 - **Windows 98 SE and Windows 2000 in one tap.** Pre-installed disk images download from this
   repository's `windows-v1` release and boot in the 32-bit engine (v86). Windows 2000 has internet.
 - **An on-screen PC keyboard** (the **Keys** button) with F1–F12, Esc, Tab, arrows and
@@ -114,7 +122,8 @@ built for learning Linux, scripting, retro computing and experiments.
 | **Your own images** | i686 (v86) | 1 | Import `.iso`/`.img` (for example your own Windows install media) via the Files app; paired save-states resume in ~1 s | — |
 
 The **app itself is ~68 MB.** Guest images are **not bundled** — each system downloads
-once from GitHub Releases and is cached (delete it in the Files app to reclaim space). The
+once from GitHub Releases and is cached (delete it in the Files app › Bootbox › System Images, or
+UEFI Setup › Storage, to reclaim space). The
 64-bit engines ship inside the app, but the multi-hundred-MB rootfs images (and the ARM64
 engine, which few users boot) are fetched on demand.
 
@@ -307,7 +316,9 @@ For production Windows software today, still prefer **v86 (your own Windows imag
 
 ### Your files, in the Files app
 An **iSH-style File Provider** exposes the Bootbox folder in the iOS Files app — drop
-`.img`/`.iso`/`.exe` files in, pull guest exports out. It deliberately uses the classic
+`.img`/`.iso`/`.exe` files in, pull guest exports out, organize them in folders. Three folders
+show what Bootbox keeps for itself: **System Images** (downloaded guest images; open or delete),
+**Saved States** (saved VM progress) and **Logs** (the app log and the Files-extension log). It deliberately uses the classic
 (non-replicated) `NSFileProviderExtension`: the modern replicated API runs iOS's cloud-sync
 engine, which permanently shows *"Syncing Paused"* for a purely-local provider. Materialized
 files are hard links — zero copies even for multi-GB disk images.
@@ -320,12 +331,13 @@ Linux desktop's and Android's screens to noVNC and, since 1.1, the adb connectio
 ▤ Shell. Its Go source is in [`Frameworks/Iosnet-src/`](Frameworks/Iosnet-src/).
 
 ### A boot experience, not a settings screen
-GRUB-style **boot menu** with per-system notes → classic Aptio-blue **UEFI Setup**
-(functional RAM / CPU-cores / boot-order / network toggles, plus some loving theater) →
+A **boot manager** that shows each system's status and size → a tabbed **UEFI Setup**
+(functional RAM / CPU-cores / instruction set / auto-boot / boot-order / network / background
+settings, a Storage manager, Tools, plus some loving theater marked "cosmetic") →
 serial console on the left, GUI on the right. The terminal fills its pane, taps focus it,
 keyboard routing follows your last tap, and full-screen TUIs (`ncdu`, `mc`, `vi`) get the
 right arrow-key sequences (application-cursor mode). The **Keys** button (1.1) adds an on-screen PC
-keyboard for the keys an iPad lacks. A 🔧 File-Sync diagnostics panel is built into the boot menu.
+keyboard for the keys an iPad lacks. File-sync diagnostics are in UEFI Setup › Tools.
 
 ---
 

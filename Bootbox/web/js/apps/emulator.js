@@ -121,6 +121,8 @@
         name: "qemu-android64-warm6-2141954248.data.gz", mb: 911, size: 954588021 },
     ] },
   };
+  // The boot menu (biosmenu.js) shows whether each system is downloaded and how big it is.
+  window.BootboxPacks = Object.fromEntries(GUESTS.filter(g => ROOTFS_REMOTE[g.base]).map(g => [g.id, ROOTFS_REMOTE[g.base].files]));
   // Ensure the guest's rootfs is present before booting: trigger the native download (BinaryBridge
   // "download" → Downloader, progress via "downloadProgress" events) and wait for it. No-op for
   // bundled guests or when the native bridge isn't present (e.g. the Mac test harness).
@@ -719,28 +721,34 @@
           <style>
             .emu-root{display:flex;flex-direction:column;height:100%;background:#0b0b0d;
               font-family:"Segoe UI Variable","Segoe UI",system-ui,sans-serif}
-            .emu-bar{display:flex;align-items:center;gap:8px;padding:8px 10px;flex-wrap:wrap;
-              background:linear-gradient(180deg,#fbfcfe,#eef2f8);border-bottom:1px solid #e5e7eb}
-            .emu-bar .e-btn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 12px;
-              border-radius:6px;border:1px solid #e5e7eb;background:#fff;color:#1b1b1f;font-size:13px;
-              font-weight:600;cursor:pointer;transition:background .12s}
-            .emu-bar .e-btn:hover{background:#f4f7fb}
-            .emu-bar .e-btn.accent{background:#0067c0;border-color:#005fb8;color:#fff;box-shadow:0 1px 2px rgba(0,103,192,.4)}
-            .emu-bar .e-btn.accent:hover{background:#005fb8}
-            .emu-bar .e-sel,.emu-bar .e-in{height:30px;border-radius:6px;border:1px solid #e5e7eb;background:#fff;
-              color:#1b1b1f;font-size:13px;font-weight:600;padding:0 10px}
-            .emu-bar .e-sel{appearance:none;padding-right:26px;cursor:pointer;
-              background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%235b5f66' stroke-width='1.4' fill='none'/></svg>");
-              background-repeat:no-repeat;background-position:right 8px center}
+            .emu-bar{display:flex;align-items:center;gap:8px;padding:8px max(10px,env(safe-area-inset-right)) 8px max(10px,env(safe-area-inset-left));flex-wrap:wrap;
+              background:linear-gradient(180deg,#0f1828,#0a111d);border-bottom:1px solid #1a2840;
+              font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI",system-ui,sans-serif}
+            .emu-bar .e-btn{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 13px;white-space:nowrap;
+              border-radius:9px;border:1px solid #253858;background:#101a2c;color:#e8eefa;font-size:13.5px;
+              font-weight:600;font-family:inherit;cursor:pointer;transition:background .12s,transform .06s}
+            .emu-bar .e-btn:hover{background:#15233a}
+            .emu-bar .e-btn:active{transform:scale(.97)}
+            .emu-bar .e-btn:disabled{opacity:.5}
+            .emu-bar .e-btn.accent{background:linear-gradient(#2b86f0,#1b6fdb);border-color:#3d93f5;color:#fff;box-shadow:0 4px 12px rgba(29,116,224,.35)}
+            .emu-bar .e-btn.accent:hover{background:linear-gradient(#3590f7,#1f78e8)}
+            .emu-bar .e-sel,.emu-bar .e-in{height:34px;border-radius:9px;border:1px solid #253858;background:#0b1321;
+              color:#e8eefa;font-size:13.5px;font-weight:600;font-family:inherit;padding:0 10px}
+            .emu-bar .e-in::placeholder{color:#5f7193}
+            .emu-bar .e-sel{appearance:none;-webkit-appearance:none;padding-right:28px;cursor:pointer;
+              background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'><path d='M2 4l4 4 4-4' stroke='%238b9cb9' stroke-width='1.5' fill='none'/></svg>");
+              background-repeat:no-repeat;background-position:right 9px center}
+            .emu-bar .e-sel option{background:#0b1321;color:#e8eefa}
+            .emu-bar .sep{width:1px;height:22px;background:#1f2f4a;margin:0 2px}
             .emu-bar .grow{flex:1}
-            .emu-pill{display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 11px;border-radius:999px;
-              background:#eaf6ee;color:#0f7b3f;font-size:12px;font-weight:600;border:1px solid #c9ead4}
-            .emu-pill .led{width:8px;height:8px;border-radius:50%;background:#16a34a;box-shadow:0 0 0 3px rgba(22,163,74,.18)}
-            .emu-perf{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 11px;border-radius:999px;
-              font-size:12px;font-weight:600;border:1px solid #e5e7eb;background:#f4f7fb;color:#5b5f66;cursor:default}
-            .emu-perf.fast{background:#eaf6ee;color:#0f7b3f;border-color:#c9ead4}
-            .emu-perf.medium{background:#fff7e6;color:#9a6b00;border-color:#f3e0b8}
-            .emu-perf.slow{background:#fdeaea;color:#b42318;border-color:#f3c9c9}
+            .emu-pill{display:inline-flex;align-items:center;gap:7px;height:28px;padding:0 11px;border-radius:999px;
+              background:rgba(63,209,139,.1);color:#3fd18b;font-size:12.5px;font-weight:600;border:1px solid rgba(63,209,139,.35)}
+            .emu-pill .led{width:8px;height:8px;border-radius:50%;background:#3fd18b;box-shadow:0 0 0 3px rgba(63,209,139,.18)}
+            .emu-perf{display:inline-flex;align-items:center;gap:6px;height:28px;padding:0 11px;border-radius:999px;
+              font-size:12.5px;font-weight:600;border:1px solid #253858;background:#0b1321;color:#8b9cb9;cursor:default}
+            .emu-perf.fast{background:rgba(63,209,139,.1);color:#3fd18b;border-color:rgba(63,209,139,.35)}
+            .emu-perf.medium{background:rgba(255,195,90,.1);color:#ffc35a;border-color:rgba(255,195,90,.35)}
+            .emu-perf.slow{background:rgba(255,123,114,.1);color:#ff9b93;border-color:rgba(255,123,114,.4)}
             .emu-keys{display:flex;gap:6px;align-items:center;padding:6px 8px;background:#0c0c10;border-top:1px solid #23232a;overflow-x:auto;-webkit-overflow-scrolling:touch}
             .emu-keys .kbtn{flex:0 0 auto;min-width:42px;height:34px;padding:0 12px;border-radius:7px;border:1px solid #2a2a33;background:#17171d;color:#d6d6de;font:600 14px/1 "Cascadia Mono",Consolas,monospace;cursor:pointer}
             .emu-keys .kbtn:active{background:#26262f}
@@ -756,8 +764,8 @@
             .emu-osk button.m{background:#15151b;color:#aab}
             .emu-osk button.m.on{background:#b45309;border-color:#d97706;color:#fff}
             @media (max-width:560px){.emu-osk{gap:4px;padding:4px 3px 1px}.emu-osk .r{gap:3px}.emu-osk button{height:34px;font-size:11px;border-radius:5px}}
-            .emu-status{height:28px;display:flex;align-items:center;padding:0 12px;font-size:12px;color:#5b5f66;
-              background:#f7f9fc;border-top:1px solid #e5e7eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+            .emu-status{height:28px;display:flex;align-items:center;padding:0 max(12px,env(safe-area-inset-left));font-size:12px;color:#8b9cb9;
+              background:#070c16;border-top:1px solid #1a2840;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
               font-family:"Cascadia Mono",Consolas,monospace}
             #screen_container>div{white-space:pre;font:14px/1.05 "Cascadia Mono",Consolas,monospace;color:#19c37d;transform-origin:center center}
             /* Scale the v86 graphical display to FILL the iPad screen (keep aspect, no
@@ -779,17 +787,17 @@
             #screen_container>canvas, #screen_container>div:not(.q64-wrap){cursor:none !important}
           </style>
           <div class="emu-bar">
-            <button class="e-btn" id="exit" title="Power off & return to Bootbox BIOS">‹ BIOS</button>
+            <button class="e-btn" id="exit" title="Power off and return to the boot menu">‹ Boot menu</button><span class="sep"></span>
             <button class="e-btn accent" id="boot"><svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M4 2l10 6-10 6z"/></svg>Start</button>
             <button class="e-btn" id="stop"><svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor"><rect x="3" y="3" width="10" height="10" rx="1.5"/></svg>Stop</button>
             <button class="e-btn" id="save" title="Save progress — snapshot this guest so it resumes here on the next boot">💾 Save</button>
-            <button class="e-btn" id="share" title="Move files between the Bootbox folder and the VM's /mnt/share — live, no reboot">📂 Share</button>
+            <button class="e-btn" id="share" title="Move files between the Bootbox folder and the VM's /mnt/share — live, no reboot">📂 Share</button><span class="sep"></span>
             <select class="e-sel" id="guest" style="min-width:200px">${opts}</select>
             <input class="e-in" id="img" style="min-width:160px;display:none" placeholder="Image URL (.iso/.img)">
             <select class="e-sel" id="kind" style="width:96px">
               <option value="cdrom">CD/ISO</option><option value="hda">HDD</option><option value="fda">Floppy</option>
             </select>
-            <input class="e-in" id="ram" style="width:64px" type="number" value="1536" title="RAM (MB) for the 64-bit guests — up to 1536 (the engine's 3 GB WebAssembly heap must also hold the OS image; QEMU itself caps at 2047). More RAM helps big pip installs and file work; it does NOT speed up the CPU.">
+            <input class="e-in" id="ram" style="width:80px" type="number" value="1536" title="RAM (MB) for the 64-bit guests — up to 1536 (the engine's 3 GB WebAssembly heap must also hold the OS image; QEMU itself caps at 2047). More RAM helps big pip installs and file work; it does NOT speed up the CPU.">
             <select class="e-sel" id="cores" style="width:104px;display:none" title="CPU cores for 64-bit QEMU guests. Changing this reboots the guest to apply it. Each core is a full software-emulated CPU, so more cores run genuinely in parallel but also run hotter and draw more power. Android is capped at 4 cores for memory and stability.">
               <option value="1">1 core</option>
               <option value="2" selected>2 cores</option>
@@ -797,7 +805,7 @@
               <option value="6">6 cores</option>
               <option value="8">8 cores</option>
             </select>
-            <select class="e-sel" id="interp" style="width:112px;display:none" title="How the Linux guests run code that is not compiled yet. Fast (default): a compact interpreter WebKit can fully optimize - steady speed. Classic: the older, larger one (in WebKit some runs slow down to a crawl). Applies on the next boot; if Fast ever crashes, Bootbox switches back by itself.">
+            <select class="e-sel" id="interp" style="width:128px;display:none" title="How the Linux guests run code that is not compiled yet. Fast (default): a compact interpreter WebKit can fully optimize - steady speed. Classic: the older, larger one (in WebKit some runs slow down to a crawl). Applies on the next boot; if Fast ever crashes, Bootbox switches back by itself.">
               <option value="fast">Fast interp.</option>
               <option value="classic">Classic interp.</option>
             </select>
@@ -1477,7 +1485,7 @@
         const exitBtn = body.querySelector("#exit");
         if (exitBtn) {
           if (args.onExit) exitBtn.onclick = () => { try { emu && emu.stop && emu.stop(); } catch (e) {} args.onExit(); };
-          else exitBtn.remove();   // windowed mode has the title-bar close button
+          else { const sp = exitBtn.nextElementSibling; if (sp && sp.classList.contains("sep")) sp.remove(); exitBtn.remove(); }   // windowed mode has the title-bar close button
         }
 
         // ---- Touch keyboard for v86 (iPad has no physical keys) ----
