@@ -652,10 +652,28 @@
     return f.map(x => "+" + x).join(",");
   }
   // UEFI Setup › Advanced › Linux Kernel: words added to the Linux guests' kernel command line.
+  // Extra kernel parameters (UEFI Setup › Advanced › Linux Kernel). The guest boots
+  // "... init=/sbin/tini -- /sbin/init": a bare word the kernel doesn't know is handed to init, and tini
+  // would try to RUN it - so bare words must be known kernel flags. init/root/console/-- would take the
+  // boot away from Bootbox's own setup. Returns { keep, dropped } (word lists).
+  const KERNEL_FLAGS = ["nokaslr", "nosmp", "nosmt", "noapic", "nolapic", "nox2apic", "nopti", "nospectre_v1", "nospectre_v2",
+    "nospec_store_bypass_disable", "noibrs", "noibpb", "debug", "ignore_loglevel", "initcall_debug", "quiet", "nohlt",
+    "nomodeset", "norandmaps", "nopat", "noautogroup", "nosoftlockup", "nowatchdog", "noefi", "earlyprintk"];
+  const KERNEL_BLOCKED = ["init", "rdinit", "root", "rootfstype", "console", "qemu_mode"];
+  function kernelWords(str) {
+    const keep = [], dropped = [];
+    String(str || "").replace(/[^a-zA-Z0-9_.,=\- ]/g, "").split(/\s+/).filter(Boolean).forEach(w => {
+      const m = /^([a-zA-Z0-9_.\-]+)(=[a-zA-Z0-9_.,\-]*)?$/.exec(w), key = m ? m[1].toLowerCase() : "";
+      const ok = m && !key.startsWith("-") && !KERNEL_BLOCKED.includes(key) && (m[2] ? m[2].length > 1 : KERNEL_FLAGS.includes(key));
+      (ok ? keep : dropped).push(w);
+    });
+    return { keep, dropped };
+  }
   function biosKernelArgs() {
     const c = biosCfg(), w = [];
     if (c.mitigationsOff) w.push("mitigations=off");
-    if (c.kernelExtra) w.push(String(c.kernelExtra).replace(/[^a-zA-Z0-9_.,=\- ]/g, "").trim());
+    if (c.verboseBoot) w.push("loglevel=7");
+    if (c.kernelExtra) w.push(...kernelWords(c.kernelExtra).keep);
     return w.filter(Boolean).join(" ") || undefined;
   }
   // UEFI Setup › Advanced › Compile Threshold (engine tune key jit).
@@ -1197,7 +1215,7 @@
             if (!window.QEMU_WASM) {
               await new Promise((res, rej) => {
                 const s = document.createElement("script");
-                s.src = "vendor/qemu/run.js?v=2";
+                s.src = "vendor/qemu/run.js?v=3";
                 s.onload = res; s.onerror = () => rej(new Error("missing QEMU-Wasm pack"));
                 document.head.appendChild(s);
               });
@@ -1205,7 +1223,7 @@
             if (!window.QEMU_PANEL) {
               await new Promise((res, rej) => {
                 const s = document.createElement("script");
-                s.src = "vendor/qemu/panel.js?v=113";
+                s.src = "vendor/qemu/panel.js?v=114";
                 s.onload = res; s.onerror = () => rej(new Error("missing QEMU panel"));
                 document.head.appendChild(s);
               });
@@ -1325,6 +1343,7 @@
             const userJit = biosJit();   // UEFI Setup's compile threshold (the safety ladder's own settings still win)
             const tune = Object.assign({}, g.tune || {}, iosBase, userJit ? { jit: userJit } : {}, level.tune || {});
             if (g.tune && g.tune.max && level.tune && level.tune.max) tune.max = Math.min(g.tune.max, level.tune.max);
+            if (g.gui) { try { panel64.showGui(); } catch (e) {} }   // the start-up card shows on the (still empty) screen
             await window.QEMU_WASM.run({
               screen_container: panel64.termHost,
               base: g.base || "vendor/qemu/",   // per-guest engine/rootfs dir (qemu-aload = the Python/Wine Alpine)
@@ -1344,6 +1363,8 @@
               kernelArgs: !g.android ? biosKernelArgs() : undefined,
               safeNote: safe.level ? level.name : undefined,   // shown on the "Connecting…" line
               vncLabel: g.android ? "Android" : undefined,
+              bootTitle: g.name,   // the start-up card on the screen of a full-screen guest (run.js bootInfo)
+              bootCard: g.gui ? (t, info) => { try { panel64.setGuiStatus(t, info); } catch (e) {} } : undefined,
               appsKey: g.id === "x64pwd",   // desktop panel's Apps button -> openbox's menu key (run.js installAppsKey)
               // Desktop v14+: Linux's Web opens pages in the app's native Browser (the iPad's own WebKit,
               // ~300x the emulated one). run.js writes /share/.bootbox/native-web for the guest's launcher

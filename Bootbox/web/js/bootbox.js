@@ -32,18 +32,19 @@
       try {
         BiosMenu.renderMenu(r, {
           onBoot: (a) => Bootbox.runVM(a),
-          onSetup: () => Bootbox.showSetup(),
+          onSetup: (o) => Bootbox.showSetup(o),
         });
       } catch (e) { fail(r, "Boot menu", e); }
     },
     // The firmware setup (normally hidden). Save/Exit returns to the boot menu;
     // a Boot Override can launch a system straight from here.
-    showSetup() {
+    showSetup(opts) {
       const r = root(); r.innerHTML = "";
       try {
         BiosMenu.renderSetup(r, {
           onBack: () => Bootbox.showBootMenu(),
           onBoot: (a) => Bootbox.runVM(a),
+          tab: opts && opts.tab,   // open on a tab (the boot menu's "Change" opens Advanced)
         });
       } catch (e) { fail(r, "UEFI Setup", e); }
     },

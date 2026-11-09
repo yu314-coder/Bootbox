@@ -21,13 +21,14 @@
           <div class="dots"><i></i><i></i><i></i><i></i><i></i><i></i></div>
           <div class="boot-msg">Power-on self test…</div>
         </div>
-        <div class="boot-hint">Bootbox firmware · x86 (i686) · press power / F2 to enter Setup</div>`;
+        <div class="boot-hint">Bootbox firmware · tap power (or F2) now for UEFI Setup</div>`;
       const msg = el().querySelector(".boot-msg");
-      const stages = ["Power-on self test…", "Detecting x86 (i686) core", "Probing virtual devices", "Loading boot manager"];
+      // short: it is a splash, not real work (was ~1.6 s before every boot menu)
+      const stages = ["Power-on self test…", "Loading boot manager"];
       for (let i = 0; i < stages.length; i++) {
         if (interrupted) return;
         msg.textContent = stages[i];
-        await sleep(300 + (Kernel.nvram.bootDelay || 1) * 90);
+        await sleep(220);
       }
       if (!interrupted) Boot.start();
     },

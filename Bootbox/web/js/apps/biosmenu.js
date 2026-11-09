@@ -16,13 +16,13 @@
   // Windows images. (The ARM64 guest is no longer listed.) The Windows 98 / 2000 one-tap images were out
   // of 1.0 for App Review (guideline 5.2) and are back in 1.1 at the user's direction (Nov 2026).
   const SYSTEMS = [
-    { id: "x64pwd", name: "Linux (Desktop)", sub: "64-bit Linux desktop · windows, taskbar, terminal, file manager, web browser", icon: "🖥️", svg: "desktop", tag: "DESKTOP",
+    { id: "x64pwd", name: "Linux (Desktop)", sub: "64-bit Linux desktop · windows, taskbar, terminal, file manager, web browser", icon: "🖥️", svg: "desktop", tag: "DESKTOP", dlMB: 240,
       guest: "x64pwd", ram: 1536,
       note: "A full-screen 64-bit (x86_64) Linux desktop: windows (Openbox) + taskbar/clock (tint2), a terminal, a file manager, a web browser (WebKit) and Python 3.12 with pip. Tap Apps (bottom-left) or right-click the desktop for programs; the Benchmarks icon runs CPU-Z, 7-Zip and more. Downloaded once (~240 MB), then the guest disk is read straight from this device's storage as needed." },
-    { id: "x64pw", name: "Linux (Terminal)", sub: "64-bit Linux console · Python 3.12 + pip · Wine for .exe · internet", icon: "🐍", svg: "terminal", tag: "TERMINAL",
+    { id: "x64pw", name: "Linux (Terminal)", sub: "64-bit Linux console · Python 3.12 + pip · Wine for .exe · internet", icon: "🐍", svg: "terminal", tag: "TERMINAL", dlMB: 310,
       guest: "x64pw", ram: 1536,
       note: "64-bit (x86_64) Alpine Linux in a terminal — cores 1–8 in UEFI Setup. Python 3.12 + pip, Wine (32 & 64-bit .exe) and real internet. Terminal on the LEFT; the panel on the RIGHT has quick buttons and shows graphical output when you start an X app or a Wine .exe. Downloaded once (~310 MB), then the guest disk is read straight from this device's storage as needed." },
-    { id: "android64", name: "Android", sub: "Android 12 AOSP · 64-bit x86_64 · quad-core · touch + keyboard", icon: "🤖", svg: "android", tag: "ANDROID",
+    { id: "android64", name: "Android", sub: "Android 12 AOSP · 64-bit x86_64 · quad-core · touch + keyboard", icon: "🤖", svg: "android", tag: "ANDROID", dlMB: 901,
       guest: "android64", ram: 1280,
       note: "Android 12 AOSP (System UI + Launcher3) on 4 emulated cores. It resumes from a snapshot taken at the home screen, so it opens in seconds instead of a multi-minute cold boot. Touch the screen directly; ⌨ Type for text. Downloaded once (~901 MB). No Google Play, no GPU acceleration." },
     { id: "win98", name: "Windows 98 SE", sub: "One-tap download + boot · ~89 MB", icon: "🪟", svg: "window", tag: "WIN", dlMB: 89,
@@ -39,8 +39,44 @@
 
   // Every x86 feature the 64-bit Linux guests get with "All instructions" (QEMU 8.2's TCG emulates all of them,
   // each a real `-cpu qemu64,+flag`; the emulator adds XSAVE/XSAVEOPT for AVX). "Standard" = none of them.
-  const ALL_CPU_FEATURES = ["ssse3", "sse4.1", "sse4.2", "popcnt", "aes", "pclmulqdq", "sha-ni", "movbe", "abm",
-    "bmi1", "bmi2", "adx", "rdseed", "avx", "avx2", "fma", "f16c"];
+  // Custom = any combination; `needs` are switched on with a feature (and it goes off when they do).
+  const CPU_FEATURES = [
+    { f: "ssse3", label: "SSSE3", needs: [], use: "byte shuffles; most media and compression code" },
+    { f: "sse4.1", label: "SSE4.1", needs: ["ssse3"], use: "blends, rounding, dot products" },
+    { f: "sse4.2", label: "SSE4.2", needs: ["sse4.1"], use: "string compare, CRC32; part of x86-64-v2" },
+    { f: "popcnt", label: "POPCNT", needs: [], use: "bit counting; part of x86-64-v2" },
+    { f: "aes", label: "AES-NI", needs: [], use: "AES encryption (OpenSSL, ssh, TLS)" },
+    { f: "pclmulqdq", label: "PCLMULQDQ", needs: [], use: "carry-less multiply: AES-GCM, CRC" },
+    { f: "sha-ni", label: "SHA-NI", needs: ["ssse3"], use: "SHA-1 / SHA-256 hashing" },
+    { f: "movbe", label: "MOVBE", needs: [], use: "byte-swapping loads/stores" },
+    { f: "abm", label: "LZCNT", needs: [], use: "leading-zero count (ABM)" },
+    { f: "bmi1", label: "BMI1", needs: [], use: "bit-manipulation; part of x86-64-v3" },
+    { f: "bmi2", label: "BMI2", needs: [], use: "bit-manipulation; part of x86-64-v3" },
+    { f: "adx", label: "ADX", needs: [], use: "multi-precision add (big-number math)" },
+    { f: "rdseed", label: "RDSEED", needs: [], use: "hardware random seeds" },
+    { f: "avx", label: "AVX", needs: ["sse4.2", "popcnt"], use: "256-bit floating point" },
+    { f: "avx2", label: "AVX2", needs: ["avx"], use: "256-bit integer; part of x86-64-v3 (newer NumPy, AVX-only tools)" },
+    { f: "fma", label: "FMA", needs: ["avx"], use: "fused multiply-add; part of x86-64-v3" },
+    { f: "f16c", label: "F16C", needs: ["avx"], use: "half-precision float conversion" },
+  ];
+  const ALL_CPU_FEATURES = CPU_FEATURES.map(x => x.f);
+  // Extra kernel parameters (UEFI Setup › Advanced › Linux Kernel). The guest boots
+  // "... init=/sbin/tini -- /sbin/init": a bare word the kernel doesn't know is handed to init, and tini
+  // would try to RUN it - so bare words must be known kernel flags. init/root/console/-- would take the
+  // boot away from Bootbox's own setup. Returns { keep, dropped } (word lists).
+  const KERNEL_FLAGS = ["nokaslr", "nosmp", "nosmt", "noapic", "nolapic", "nox2apic", "nopti", "nospectre_v1", "nospectre_v2",
+    "nospec_store_bypass_disable", "noibrs", "noibpb", "debug", "ignore_loglevel", "initcall_debug", "quiet", "nohlt",
+    "nomodeset", "norandmaps", "nopat", "noautogroup", "nosoftlockup", "nowatchdog", "noefi", "earlyprintk"];
+  const KERNEL_BLOCKED = ["init", "rdinit", "root", "rootfstype", "console", "qemu_mode"];
+  function kernelWords(str) {
+    const keep = [], dropped = [];
+    String(str || "").replace(/[^a-zA-Z0-9_.,=\- ]/g, "").split(/\s+/).filter(Boolean).forEach(w => {
+      const m = /^([a-zA-Z0-9_.\-]+)(=[a-zA-Z0-9_.,\-]*)?$/.exec(w), key = m ? m[1].toLowerCase() : "";
+      const ok = m && !key.startsWith("-") && !KERNEL_BLOCKED.includes(key) && (m[2] ? m[2].length > 1 : KERNEL_FLAGS.includes(key));
+      (ok ? keep : dropped).push(w);
+    });
+    return { keep, dropped };
+  }
   // The emulator's crash fallback ("safety ladder", emulator.js SAFE_LEVELS): what each level turns off.
   const SAFE_NAMES = ["full speed", "classic interpreter", "no block chaining", "no SIMD inlining",
     "no SIMD / register locals / bulk copies", "minimal engine, fixed memory", "interpreter only (very slow)"];
@@ -169,6 +205,7 @@
       .fw-foot{display:flex;align-items:center;gap:12px;padding:12px max(20px,env(safe-area-inset-right)) max(12px,env(safe-area-inset-bottom)) max(20px,env(safe-area-inset-left));
         border-top:1px solid var(--line);background:rgba(6,10,18,.7)}
       .fw-keys{color:var(--dim);font:500 12px var(--mono)}
+      .fw-dirty{color:var(--warn);font:600 12.5px var(--mono);white-space:nowrap}
       .fw-grow{flex:1}
       .fw-btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:0 16px;border-radius:10px;
         border:1px solid var(--line2);background:var(--panel2);color:var(--text);font-weight:600;font-size:14px;font-family:inherit;cursor:pointer;
@@ -240,6 +277,7 @@
       .u2-del.arm{background:rgba(255,123,114,.15);border-color:rgba(255,123,114,.6);color:#ffb3ad}
       .u2-del:disabled{opacity:.4;cursor:default}
       .u2-body>*{min-width:0}
+      @media (max-width:980px){ .fw-foot .fw-keys{display:none} }
       @media (max-width:860px){
         .u2-body{grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) auto}
         .u2-help{border-left:none;border-top:1px solid var(--line);max-height:132px;padding:12px 16px;font-size:13px;line-height:1.5}
@@ -342,6 +380,12 @@
         .bm-btn:hover{background:#163150}
         .bm-btn.primary{background:#0067c0;border-color:#1f86e0;color:#fff;font-weight:800}
         .bm-btn.primary:hover{background:#0a76d8}
+        .bm-btn:disabled{opacity:.6;cursor:default}
+        .bm-row .tag.ok{background:#123d2c;color:#7ee2ad}
+        .bm-row .tag.dl{background:#2a2f45;color:#c9d4ec}
+        .bm-cfg{width:min(720px,94%);display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;color:#9cc4ee;font-size:12.5px}
+        .bm-cfg button{background:none;border:1px solid #1d4060;color:#9fd0ff;border-radius:7px;padding:5px 11px;font:inherit;font-weight:700;cursor:pointer}
+        .bm-cfg button:hover{background:#10243d}
       </style>
       <div class="bm">
         <div class="bm-top">
@@ -354,63 +398,76 @@
             <div class="bm-boxhead">▸ Select operating system</div>
             <div class="bm-list" id="bm-list"></div>
           </div>
+          <div class="bm-cfg" id="bm-cfg"></div>
           <div class="bm-note" id="bm-note"></div>
-          <div class="bm-keys">↑ ↓ highlight &nbsp;·&nbsp; ⏎ boot &nbsp;·&nbsp; S setup</div>
+          <div class="bm-keys">Tap a system to select it · tap it again (or Boot) to start &nbsp;·&nbsp; keyboard: ↑ ↓ ⏎, S = setup</div>
         </div>
         <div class="bm-foot">
           <span class="bm-count" id="bm-count"></span>
           <span class="bm-grow"></span>
-          <button class="bm-btn" id="bm-diag" title="File-sync diagnostics">🔧 File Sync</button>
           <button class="bm-btn" id="bm-setup">⚙ UEFI Setup</button>
           <button class="bm-btn primary" id="bm-boot">Boot ▶</button>
         </div>
       </div>`;
 
-    // --- File-sync diagnostics overlay (helps debug the Files-app "Syncing Paused") ---
-    async function showDiag() {
-      let text = "Loading…";
-      try { const r = await Bridge.call("system", "fpdiag"); text = (r && (r.data || r)) || "(no data)"; }
-      catch (e) { text = "diagnostics unavailable: " + ((e && e.message) || e); }
-      const ov = document.createElement("div");
-      ov.style.cssText = "position:fixed;inset:0;z-index:99999;background:rgba(2,6,14,.92);display:flex;flex-direction:column;padding:18px;font-family:Consolas,monospace";
-      ov.innerHTML =
-        '<div style="display:flex;gap:10px;align-items:center;margin-bottom:10px">' +
-          '<b style="color:#8fc2ff;font-size:15px;flex:1">🔧 File-Sync Diagnostics</b>' +
-          '<button id="dg-reset" class="bm-btn">Reset sync location</button>' +
-          '<button id="dg-close" class="bm-btn primary">Close</button></div>' +
-        '<pre id="dg-pre" style="flex:1;overflow:auto;white-space:pre-wrap;color:#bfe0ff;background:#060d18;border:1px solid #1d3a59;border-radius:8px;padding:12px;font-size:12px;margin:0"></pre>';
-      document.body.appendChild(ov);
-      ov.querySelector("#dg-pre").textContent = typeof text === "string" ? text : JSON.stringify(text, null, 2);
-      ov.querySelector("#dg-close").onclick = () => ov.remove();
-      ov.querySelector("#dg-reset").onclick = async () => {
-        try { await Bridge.call("system", "fpreset"); ov.querySelector("#dg-pre").textContent = "Reset requested — reopen the Files app in ~10s, then reopen this to re-check."; }
-        catch (e) { ov.querySelector("#dg-pre").textContent = "reset failed: " + ((e && e.message) || e); }
-      };
-    }
-
     const listEl = container.querySelector("#bm-list");
     const noteEl = container.querySelector("#bm-note");
+    const cfgEl = container.querySelector("#bm-cfg");
+    const bootBtn = container.querySelector("#bm-boot");
     const countEl = container.querySelector("#bm-count");
     const alive = () => !!container.querySelector("#bm-list");
+    let storeNow = null, busy = false;
+
+    // On the device: is this system already downloaded? (null = unknown: not on the device, imports)
+    function status(e) {
+      if (!storeNow || !e || String(e.id).startsWith("import:")) return null;
+      const st = systemStatus(e, storeNow);
+      return st.known ? st : null;
+    }
+    // The settings the selected system will boot with, with a way into Setup to change them.
+    function cfgLine(e) {
+      if (!e) return "";
+      const c = readCfg(), ec = emuCfg();
+      const gb = (mb) => mb >= 1024 ? (mb / 1024).toFixed(mb % 1024 ? 2 : 0).replace(/\.?0+$/, "") + " GB" : mb + " MB";
+      if (e.id === "x64pwd" || e.id === "x64pw") {
+        const isa = c.isaMode === "std" ? "standard instructions" : c.isaMode === "custom" ? "custom instructions" : "all instructions";
+        const cores = Math.max(1, Math.min(8, +ec.cores64 || 2));
+        return cores + (cores === 1 ? " core" : " cores") + " · " + gb(Math.max(c.ram || 0, e.ram || 0)) + " · " + isa;
+      }
+      if (e.id === "android64") return "4 cores · " + gb(e.ram) + " · resumes at the home screen";
+      return "1 core · " + gb(e.fixedRam ? (e.ram || 256) : Math.max(c.ram || 0, e.ram || 256)) + " · 32-bit PC";
+    }
 
     function paint() {
       listEl.innerHTML = "";
       entries.forEach((e, i) => {
         const row = document.createElement("div");
+        const st = status(e);
+        const tag = !st ? `<span class="tag">${e.tag || "32-BIT"}</span>`
+          : st.ready ? `<span class="tag ok">READY</span>`
+          : `<span class="tag dl">${st.partial ? "RESUME ↓" : "↓ " + (e.dlMB ? e.dlMB + " MB" : "DOWNLOAD")}</span>`;
         row.className = "bm-row" + (i === sel ? " sel" : "") + (e.kind === "setup" ? " setup" : "");
         row.innerHTML = `<span class="ic">${e.icon || "💿"}</span>
-          <span class="nm">${e.name}<span class="sub">${e.sub || ""}</span></span>
-          <span class="tag">${e.tag || "32-BIT"}</span>`;
-        row.onclick = () => { cancelAuto(); sel = i; paint(); };
-        row.ondblclick = () => { cancelAuto(); sel = i; go(); };
+          <span class="nm">${e.name}<span class="sub">${e.sub || ""}</span></span>${tag}`;
+        // tap = select; tapping the selected system again boots it (one tap on the pre-selected one)
+        row.onclick = () => { cancelAuto(); if (i === sel) go(); else { sel = i; paint(); } };
         listEl.appendChild(row);
       });
-      noteEl.textContent = (entries[sel] || {}).note || "";
+      const e = entries[sel] || {};
+      if (!busy) noteEl.textContent = e.note || "";
+      cfgEl.innerHTML = e.name ? `<span>⚙ ${esc(cfgLine(e))}</span><button id="bm-cfgbtn">Change</button>` : "";
+      const cb = cfgEl.querySelector("#bm-cfgbtn");
+      if (cb) cb.onclick = () => { cancelAuto(); hooks.onSetup && hooks.onSetup({ tab: 1 }); };
+      if (!busy) {
+        const st = status(e);
+        bootBtn.disabled = false;
+        bootBtn.textContent = st && !st.ready ? "Download & Boot ▶" : "Boot " + (e.name || "") + " ▶";
+      }
     }
 
     function go() {
       const e = entries[sel];
-      if (!e) return;
+      if (!e || busy) return;
       if (e.kind === "setup") return hooks.onSetup && hooks.onSetup();
       bootEntry(e);
     }
@@ -418,6 +475,7 @@
     const fmtMB = b => (b / 1048576).toFixed(0);
     function showProgress(received, total, verb) {
       const pct = total > 0 ? Math.min(100, Math.floor(received / total * 100)) : 0;
+      bootBtn.textContent = (verb || "Downloading") + " " + pct + "%…";
       noteEl.innerHTML =
         `${verb || "Downloading"}… <b style="color:#9fd0ff">${pct}%</b> &nbsp; ${fmtMB(received)} / ${total > 0 ? fmtMB(total) : "?"} MB` +
         `<div style="height:6px;background:#0c1a2e;border:1px solid #1d3a59;border-radius:4px;margin-top:6px;overflow:hidden">` +
@@ -473,6 +531,11 @@
     async function bootEntry(e) {
       cancelAuto();
       writeCfg({ lastBoot: e.id });
+      busy = true; bootBtn.disabled = true;
+      try { await bootEntry2(e); }
+      finally { busy = false; if (alive()) { const msg = noteEl.innerHTML; paint(); noteEl.innerHTML = msg; } }   // keep an error on screen
+    }
+    async function bootEntry2(e) {
       // Windows (and other bring-your-own-image) entries: can't be bundled/hosted, so
       // require the user to import their own disk image first.
       if (e.requiresImport) {
@@ -532,9 +595,8 @@
     }
     window.addEventListener("keydown", onKey);
 
-    container.querySelector("#bm-boot").onclick = () => { cancelAuto(); go(); };
+    bootBtn.onclick = () => { cancelAuto(); go(); };
     container.querySelector("#bm-setup").onclick = () => { cancelAuto(); hooks.onSetup && hooks.onSetup(); };
-    container.querySelector("#bm-diag").onclick = () => { cancelAuto(); showDiag(); };
 
     // Initial paint (no imports yet), then enrich with imported ISOs.
     entries = build([]);
@@ -544,6 +606,7 @@
     container.querySelector(".bm").addEventListener("pointerdown", () => cancelAuto(), true);
     Promise.all([listImported(), loadStore()]).then(([names, store]) => {
       if (!alive()) return;
+      storeNow = store;
       entries = build(names);
       const i = pref ? entries.findIndex(e => e.id === pref) : -1;
       if (i >= 0) sel = i;
@@ -558,12 +621,13 @@
     hooks = hooks || {};
     ensureStyle();
     const DEF = { ram: 256, cores: 2, bootOrder: "cd-hd", netInternet: true, resumeState: true, bgRun: "About 30 s",
-      cpuFeatures: ALL_CPU_FEATURES.slice(), isaChoice: "all", autoBoot: 0, defaultBoot: "last", interp: "fast", jitPreset: "balanced", mitigationsOff: false, kernelExtra: "" };
+      cpuFeatures: ALL_CPU_FEATURES.slice(), isaChoice: "all", verboseBoot: false, autoBoot: 0, defaultBoot: "last", interp: "fast", jitPreset: "balanced", mitigationsOff: false, kernelExtra: "" };
     let s = Object.assign({}, DEF, readCfg());
     // default: every feature (one session runs programs built for any of them); the old SSE3/AVX2
     // choice of earlier builds is not carried over
     if (!Array.isArray(s.cpuFeatures)) s.cpuFeatures = ALL_CPU_FEATURES.slice();
-    s.isaChoice = s.cpuFeatures.length ? "all" : "std";
+    s.isaChoice = ["all", "std", "custom"].includes(s.isaMode) ? s.isaMode
+      : !s.cpuFeatures.length ? "std" : ALL_CPU_FEATURES.every(f => s.cpuFeatures.includes(f)) ? "all" : "custom";
     const ecNow = emuCfg();
     const safeLevel = () => resetSafe ? 0 : Math.min(SAFE_NAMES.length - 1, Math.max(0, +((emuCfg().q64safe6 || {}).level) || 0));
     s.interp = ecNow.interp2 === "classic" ? "classic" : "fast";
@@ -581,8 +645,8 @@
       if (alive()) paint();
     }
 
-    let tab = 0, foc = 0;
     const TABS = ["Main", "Advanced", "Boot", "Storage", "Tools", "Save & Exit"];
+    let tab = Math.max(0, Math.min(TABS.length - 1, +hooks.tab || 0)), foc = 0;
     const bootLabel = { "cd-hd": "CD → Disk", "hd-cd": "Disk → CD", "cd": "CD only" };
 
     function now() { const d = new Date(); return { date: d.toLocaleDateString(), time: pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds()) }; }
@@ -621,22 +685,54 @@
       return out;
     }
 
+    // Fields shown on both Main (Quick Setup) and Advanced: one setting, two places.
+    function coresField() {
+      return { t: "stepper", label: "CPU Cores", key: "cores", min: 1, max: 8, step: 1,
+            sub: dev && dev.perfCores ? "this iPad has " + dev.perfCores + " fast cores — " + Math.min(8, dev.perfCores) + " recommended" : "Linux (Desktop & Terminal)",
+            help: "Each emulated core runs on its own iPad core. " + (dev && dev.perfCores ? "This iPad has " + dev.perfCores + " performance cores and " + dev.effCores + " efficiency cores: up to " + dev.perfCores + " vCPUs all run on fast cores; more land on efficiency cores, which are several times slower, so single-thread speed drops and multi-thread gains little. " : "Cores beyond the iPad's performance cores land on its slower efficiency cores. ") + "More cores also run hotter and use more battery; 1 = battery saver. Linux (Desktop & Terminal) only, on the next boot. Android always uses 4 (its snapshot) and the Windows images use 1." };
+    }
+    function isaField() {
+      return { t: "select", label: "Instruction Set", sub: "Linux (Desktop & Terminal)", key: "isaChoice", opts: ["all", "std", "custom"], render: v => ({ all: "All", std: "Standard", custom: "Custom" })[v],
+            help: "All (default): every instruction this emulator supports, at once — SSE4.1/4.2, POPCNT, AVX, AVX2, FMA, F16C, BMI1/2, LZCNT, MOVBE, AES-NI, PCLMULQDQ, SHA-NI, ADX, RDSEED — so one session runs programs built for any of them. Standard: only base x86-64 (SSE3). Custom: pick each one below. Speed: All runs as fast as Standard (CPU-Z, single and multi-core). AVX is emulated as two 128-bit halves, so a program's AVX code runs about as fast as its SSE code here, not faster. Custom is for testing how a program behaves without some of them. Applies on the next boot; Android keeps its own CPU (snapshot)." };
+    }
+    function ramField() {
+      return { t: "stepper", label: "Guest RAM", sub: "minimum for every system", key: "ram", min: 256, max: 3584, step: 256, render: v => v <= 256 ? "Auto" : v + " MB",
+            help: "Memory for the next boot. Auto = each system's own size (Linux 1.5 GB; Android and the Windows images use fixed sizes). Raise it for big pip installs or many open apps — it doesn't make the CPU faster. If a guest fails to start, lower it." };
+    }
+    // "Recommended": the iPad's performance cores (4 if unknown), every instruction, Fast interpreter,
+    // compile threshold 10000, Auto RAM - what measured fastest (single- and multi-core) on M-series iPads.
+    function recommended() {
+      return { cores: Math.max(2, Math.min(8, (dev && dev.perfCores) || 4)), ram: 256, isaChoice: "all", interp: "fast", jitPreset: "balanced" };
+    }
+    function isRecommended() {
+      const r = recommended();
+      return s.cores === r.cores && s.ram <= r.ram && s.isaChoice === "all" && s.interp === r.interp && s.jitPreset === r.jitPreset && !safeLevel();
+    }
+
     function fields() {
       if (tab === 0) {
-        const t = now();
+        const t = now(), rec = recommended(), inUse = isRecommended();
         return [
+          { t: "sep", label: "Quick Setup" },
+          { t: "action", label: inUse ? "Recommended Settings ✓" : "Use Recommended Settings", act: "recommend", icon: "gear",
+            sub: (inUse ? "in use: " : "") + rec.cores + " cores · all instructions · fast engine" + (safeLevel() ? " · engine reset" : ""),
+            help: "One tap to the settings measured fastest here: " + rec.cores + " CPU cores (" + (dev && dev.perfCores ? "this iPad's " + dev.perfCores + " performance cores" : "a safe number for any iPad") + "), every x86 instruction set, the Fast interpreter, compile threshold 10000 and automatic RAM" + (safeLevel() ? ", and the engine back at full speed after an earlier crash" : "") + ". Your network, power and boot choices are kept. Save & Exit to apply." },
+          coresField(),
+          isaField(),
+          ...(s.isaChoice === "custom" ? [{ t: "action", label: "Choose Instructions…", act: "tab:1",
+            sub: s.cpuFeatures.length + " of " + CPU_FEATURES.length + " on — in Advanced", help: "The list of instruction sets is on the Advanced tab." }] : []),
+          ramField(),
           { t: "sep", label: "Firmware" },
           { t: "info", label: "Bootbox", value: store && store.version ? store.version + " (build " + store.build + ")" : "—" },
           { t: "info", label: "Emulators", value: "QEMU 8.2 (x86-64) · v86 (32-bit PCs)" },
           { t: "info", label: "Translation", value: "x86 → WebAssembly → ARM64" },
           { t: "sep", label: "Virtual Processor" },
-          { t: "info", label: "CPU", value: s.isaChoice === "all" ? "x86-64 · all instructions (AVX2, FMA, AES, SHA…)" : "x86-64 · standard (SSE3)" },
-          { t: "info", label: "Cores (Linux)", value: String(s.cores || 2) },
-          { t: "info", label: "Guest RAM", value: s.ram > 256 ? s.ram + " MB" : "Auto (per system)" },
+          { t: "info", label: "CPU", value: s.isaChoice === "all" ? "x86-64 · all instructions (AVX2, FMA, AES, SHA…)" : s.isaChoice === "std" ? "x86-64 · standard (SSE3)"
+            : "x86-64 · " + (s.cpuFeatures.length ? CPU_FEATURES.filter(x => s.cpuFeatures.includes(x.f)).map(x => x.label).join(" · ") : "SSE3") },
           { t: "info", label: "Engine", value: SAFE_NAMES[safeLevel()] + (safeLevel() ? " (after a crash)" : "") },
           { t: "sep", label: "This Device" },
           { t: "info", label: "Model", value: dev ? (dev.model + " · " + (dev.model === "iPad" ? "iPadOS " : "iOS ") + dev.osVersion) : (navigator.platform || "—") },
-          { t: "info", label: "CPU cores", value: dev ? String(dev.cores) : String(navigator.hardwareConcurrency || "—") },
+          { t: "info", label: "CPU cores", value: dev ? (dev.perfCores ? dev.cores + " (" + dev.perfCores + " performance + " + dev.effCores + " efficiency)" : String(dev.cores)) : String(navigator.hardwareConcurrency || "—") },
           { t: "info", label: "Memory", value: dev && dev.ram ? fmtBytes(dev.ram) + (dev.memLimitMB ? " · page limit " + fmtBytes(dev.memLimitMB * 1048576) : "") : "—" },
           { t: "sep", label: "Clock" },
           { t: "info", label: "System Date", value: t.date },
@@ -647,13 +743,17 @@
         const lvl = safeLevel();
         return [
           { t: "sep", label: "Processor" },
-          { t: "stepper", label: "CPU Cores", sub: "Linux (Desktop & Terminal)", key: "cores", min: 1, max: 8, step: 1,
-            help: "Each core is a full emulated CPU running on its own iPad core. 4 cores give the best single-thread speed; 8 cores give the most total throughput on iPads with many cores, but run hotter and use more battery. 1 = battery saver. Applies on the next boot. Android always uses 4 (its snapshot) and the Windows images use 1." },
-          { t: "select", label: "Instruction Set", sub: "Linux (Desktop & Terminal)", key: "isaChoice", opts: ["all", "std"], render: v => v === "all" ? "All" : "Standard",
-            help: "All (default): every instruction this emulator supports, at once — SSE4.1/4.2, POPCNT, AVX, AVX2, FMA, F16C, BMI1/2, LZCNT, MOVBE, AES-NI, PCLMULQDQ, SHA-NI, ADX, RDSEED — so one session runs programs built for any of them. Standard: only base x86-64 (SSE3). It matters for speed: every instruction is emulated, and programs that find AVX use it, which runs slower here than the SSE code they use otherwise. Measured in CPU-Z (WebKit, 4 cores): single-thread the same, multi-thread about 18 with All against about 26 with Standard. Applies on the next boot; Android keeps its own CPU (snapshot)." },
+          coresField(),
+          isaField(),
+          ...(s.isaChoice === "custom" ? [
+            { t: "sep", label: "Instructions (Custom)" },
+            ...CPU_FEATURES.map(x => ({ t: "feat", label: x.label, f: x.f, sub: x.use,
+              help: x.label + ": " + x.use + ". The 64-bit Linux guests get it as QEMU -cpu +" + x.f + "." +
+                (x.needs.length ? " Needs " + x.needs.map(n => CPU_FEATURES.find(y => y.f === n).label).join(" and ") + ", which switch on with it." : "") +
+                " Programs only use what the CPU reports, so leaving one off is safe; a program built to require it will refuse to start. Applies on the next boot." })),
+          ] : []),
           { t: "sep", label: "Memory" },
-          { t: "stepper", label: "Guest RAM", sub: "minimum for every system", key: "ram", min: 256, max: 3584, step: 256, render: v => v <= 256 ? "Auto" : v + " MB",
-            help: "Memory for the next boot. Auto = each system's own size (Linux 1.5 GB; Android and the Windows images use fixed sizes). Raise it for big pip installs or many open apps — it doesn't make the CPU faster. If a guest fails to start, lower it." },
+          ramField(),
           { t: "sep", label: "Emulation Engine" },
           { t: "select", label: "Interpreter", sub: "for code not compiled yet", key: "interp", opts: ["fast", "classic"], render: v => v === "fast" ? "Fast" : "Classic",
             help: "How the 64-bit systems run code before it is compiled. Fast (default): a compact interpreter WebKit fully optimizes — steady speed. Classic: the older one (in WebKit some runs slow to a crawl). Same setting as the emulator toolbar. Applies on the next boot." },
@@ -663,10 +763,14 @@
           ...(lvl ? [{ t: "action", label: "Reset Engine to Full Speed", act: "resetsafe",
             help: "When a 64-bit system crashes the page early in its boot, Bootbox turns off engine features one step at a time on the next boots and keeps the first level that runs — it never steps back up by itself. If a crash came from something else (too many cores or too much RAM for this device), the guest stays slow for nothing. Reset to try full speed again." }] : []),
           { t: "sep", label: "Linux Kernel" },
-          { t: "toggle", label: "CPU Vulnerability Mitigations", sub: "Spectre / Meltdown protections inside the guest", key: "__mit", value: !s.mitigationsOff,
-            help: "On: the guest kernel's default Spectre/Meltdown/Retbleed protections. Off adds mitigations=off: no protections against those attacks inside the VM (which only runs your own programs in an emulated CPU), and less work per system call and context switch. Applies on the next boot of the Linux systems." },
-          { t: "text", label: "Extra Kernel Parameters", key: "kernelExtra", placeholder: "e.g. loglevel=7",
-            help: "Words added to the Linux guests' kernel command line on the next boot (letters, digits and . , = - _ only). For example loglevel=7 to see every kernel message, or nosmp. Leave empty normally." },
+          { t: "note", text: "Linux (Desktop) and Linux (Terminal) boot a real Linux 6.1 kernel. These options change its command line for the next boot — like editing a GRUB entry. Android and the Windows images don't use them. If a boot goes wrong, switch them back here (or clear the extra parameters) and boot again." },
+          { t: "toggle", label: "CPU Vulnerability Mitigations", sub: "Spectre / Meltdown workarounds inside the guest", key: "__mit", value: !s.mitigationsOff,
+            help: "On: the guest kernel's default workarounds for Spectre-type CPU bugs — retpolines (every indirect call in the kernel goes through a return-trick sequence) and return-buffer filling on each task switch. Off adds mitigations=off. They target speculation inside a real x86 CPU; Bootbox's emulated CPU doesn't speculate, so here they protect nothing and only cost emulation time, mostly in system calls and task switches. Applies on the next boot." },
+          { t: "toggle", label: "Show All Kernel Messages", sub: "verbose boot (loglevel=7)", key: "verboseBoot",
+            help: "Prints every kernel message while Linux boots (adds loglevel=7; normally only warnings show). You see them in Linux (Terminal)'s console — useful when a boot stops somewhere and you want to see where. Printing costs a little boot time. Applies on the next boot." },
+          { t: "text", label: "Extra Kernel Parameters", key: "kernelExtra", placeholder: "e.g. maxcpus=2",
+            sub: (() => { const k = kernelWords(s.kernelExtra); return k.dropped.length ? "ignored: " + k.dropped.join(" ") : k.keep.length ? "adds: " + k.keep.join(" ") : "none"; })(),
+            help: "Words added to the Linux command line on the next boot. Useful here: maxcpus=2 — Linux uses only 2 of the VM's cores; mem=1G — Linux uses less of the VM's RAM; nokaslr — fixed kernel addresses (for debugging); ignore_loglevel — print every kernel message. Take name=value options or known flags like nokaslr. A bare word the kernel doesn't know would be handed to the guest's init and stop the boot, so such words — and init=, root=, console= (Bootbox's own) — are ignored and listed under the name. Leave empty normally." },
           { t: "sep", label: "Network" },
           { t: "toggle", label: "Guest Internet", key: "netInternet", help: "Connects the guests' network card to the internet through Bootbox's built-in relay. Turn off for a fully offline VM." },
           { t: "sep", label: "Power" },
@@ -711,8 +815,10 @@
       <footer class="fw-foot">
         <span class="fw-keys">←→ tab · ↑↓ item · ⏎ change · F9 defaults · F10 save · Esc back</span>
         <span class="fw-grow"></span>
+        <span class="fw-dirty" id="u-dirty"></span>
         <button class="fw-btn" id="u-discard">Discard</button>
-        <button class="fw-btn primary" id="u-save">Save &amp; Exit</button>
+        <button class="fw-btn" id="u-save">Save &amp; Exit</button>
+        <button class="fw-btn primary" id="u-boot" style="display:none"></button>
       </footer>
     </div>`;
     startClock(container);
@@ -722,6 +828,20 @@
     const alive = () => !!container.querySelector("#u-panel");
     container.querySelector("#u-save").onclick = () => doAction("save");
     container.querySelector("#u-discard").onclick = () => doAction("discard");
+    // Save & Boot: straight into the system the boot menu would pick (Default System, else the last one)
+    const dirtyEl = container.querySelector("#u-dirty"), bootBtnS = container.querySelector("#u-boot");
+    const prefId = (() => { const c = readCfg(); return c.defaultBoot && c.defaultBoot !== "last" ? c.defaultBoot : c.lastBoot; })();
+    const prefSys = SYSTEMS.find(x => x.id === prefId) || SYSTEMS[0];
+    bootBtnS.style.display = "";
+    const shortName = { x64pwd: "Desktop", x64pw: "Terminal", android64: "Android", win98: "Win 98", win2000: "Win 2000" }[prefSys.id] || prefSys.name;
+    bootBtnS.textContent = "Save & Boot " + shortName + " ▶";
+    bootBtnS.title = "Save the settings and start " + prefSys.name;
+    bootBtnS.onclick = () => doAction("boot:" + prefSys.id);
+    // unsaved-changes marker: the settings as they were when Setup opened (or after the async reads)
+    const snap = () => JSON.stringify([s.ram, s.cores, s.bootOrder, s.netInternet, s.resumeState, s.bgRun, s.cpuFeatures, s.isaChoice,
+      s.verboseBoot, s.autoBoot, s.defaultBoot, s.interp, s.jitPreset, s.mitigationsOff, String(s.kernelExtra || "").trim(), resetSafe]);
+    let base = null;
+    const dirty = () => base !== null && snap() !== base;
 
     const focusable = (fs) => fs.map((f, i) => (["sep", "info", "note", "meter"].includes(f.t) ? -1 : i)).filter(i => i >= 0);
 
@@ -738,10 +858,19 @@
     function setV(f, v) {
       if (f.key === "__mit") s.mitigationsOff = !v;
       else s[f.key] = v;
-      if (f.key === "isaChoice") s.cpuFeatures = v === "all" ? ALL_CPU_FEATURES.slice() : [];
+      if (f.key === "isaChoice") s.cpuFeatures = v === "all" ? ALL_CPU_FEATURES.slice() : v === "std" ? [] : s.cpuFeatures.slice();
+    }
+    // CPU features: on = also what it needs; off = also what needs it
+    function setFeature(flag, on) {
+      const set = new Set(s.cpuFeatures);
+      const add = (x) => { if (set.has(x)) return; set.add(x); (CPU_FEATURES.find(y => y.f === x) || { needs: [] }).needs.forEach(add); };
+      const del = (x) => { if (!set.has(x)) return; set.delete(x); CPU_FEATURES.filter(y => y.needs.includes(x)).forEach(y => del(y.f)); };
+      on ? add(flag) : del(flag);
+      s.cpuFeatures = ALL_CPU_FEATURES.filter(x => set.has(x));
     }
     function control(f) {
       const v = getV(f);
+      if (f.t === "feat") return `<span class="u2-sw${s.cpuFeatures.includes(f.f) ? " on" : ""}"></span>`;
       if (f.t === "toggle") return `<span class="u2-sw${v ? " on" : ""}"></span>`;
       if (f.t === "text") return `<input class="u2-text" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="200" placeholder="${esc(f.placeholder || "")}" value="${esc(v || "")}">`;
       if (f.t === "select" && f.native) return `<select class="u2-select">${f.opts.map(o => `<option value="${esc(o)}"${String(o) === String(v) ? " selected" : ""}>${esc(f.render ? f.render(o) : o)}</option>`).join("")}</select>`;
@@ -786,7 +915,10 @@
         const i = +row.dataset.i, f = fs[i];
         row.onmouseenter = () => setHelp(f);
         const inp = row.querySelector(".u2-text");
-        if (inp) inp.oninput = inp.onchange = () => { s[f.key] = inp.value.replace(/[^a-zA-Z0-9_.,=\- ]/g, ""); };
+        if (inp) {
+          inp.oninput = () => { s[f.key] = inp.value.replace(/[^a-zA-Z0-9_.,=\- ]/g, ""); };
+          inp.onchange = () => { inp.oninput(); paint(); };   // repaint: the row's "adds / ignored" line
+        }
         const sel = row.querySelector(".u2-select");
         if (sel) sel.onchange = () => { setV(f, f.opts.find(x => String(x) === sel.value)); setHelp(f); paint(); };
         row.onclick = (ev) => {
@@ -801,6 +933,9 @@
         };
       });
       setHelp(fs[focIdx]);
+      const d = dirty();
+      dirtyEl.textContent = d ? "● Unsaved changes" : "";
+      container.querySelector("#u-save").classList.toggle("primary", d);
       const focRow = panelEl.querySelector(".u2-row.foc");
       if (focRow && focRow.scrollIntoView) focRow.scrollIntoView({ block: "nearest" });
     }
@@ -822,6 +957,7 @@
       if (!f) return;
       setHelp(f);
       if (f.t === "toggle") { setV(f, !getV(f)); paint(); }
+      else if (f.t === "feat") { setFeature(f.f, !s.cpuFeatures.includes(f.f)); paint(); }
       else if (f.t === "select") { const i = f.opts.findIndex(o => String(o) === String(getV(f))); setV(f, f.opts[(i + 1) % f.opts.length]); paint(); }
       else if (f.t === "text") { const inp = panelEl.querySelector(".u2-row.foc .u2-text"); if (inp) inp.focus(); }
       else if (f.t === "stepper") { s[f.key] = s[f.key] >= f.max ? f.min : clamp(s[f.key] + f.step, f.min, f.max); paint(); }
@@ -832,8 +968,8 @@
     function persist() {
       writeCfg({ ram: s.ram, bootOrder: s.bootOrder, netInternet: s.netInternet, resumeState: s.resumeState,
         bgRun: s.bgRun, autoBoot: +s.autoBoot || 0, defaultBoot: s.defaultBoot || "last",
-        cpuFeatures: s.cpuFeatures.slice(), isa: s.cpuFeatures.includes("avx2") ? "AVX2 (x86-64-v3)" : "SSE3 (standard)",
-        jitPreset: s.jitPreset, mitigationsOff: !!s.mitigationsOff, kernelExtra: String(s.kernelExtra || "").trim() });
+        cpuFeatures: s.cpuFeatures.slice(), isaMode: s.isaChoice, isa: s.cpuFeatures.includes("avx2") ? "AVX2 (x86-64-v3)" : "SSE3 (standard)",
+        jitPreset: s.jitPreset, mitigationsOff: !!s.mitigationsOff, verboseBoot: !!s.verboseBoot, kernelExtra: String(s.kernelExtra || "").trim() });
       // Apply the background-execution choice to the native keep-alive (UserDefaults + re-arm).
       try { if (onDevice() && BG_SEC[s.bgRun] != null) Bridge.call("system", "setBackgroundGrace", { seconds: BG_SEC[s.bgRun] }); } catch (e) {}
       // Mirror the internet + resume toggles into the emulator's own config (it reads
@@ -883,6 +1019,13 @@
       else if (act === "discard") { hooks.onBack && hooks.onBack(); }
       else if (act === "defaults") { s = Object.assign({}, DEF); foc = 0; paint(); setHelp({ label: "Defaults loaded", help: "Every setting is back to its default. Save & Exit to keep them." }); }
       else if (act === "refresh") { refreshStore(); }
+      else if (act && act.indexOf("tab:") === 0) { tab = +act.slice(4) || 0; foc = 0; disarm(); paint(); panelEl.scrollTop = 0; }
+      else if (act === "recommend") {
+        Object.assign(s, recommended(), { cpuFeatures: ALL_CPU_FEATURES.slice() });
+        if (safeLevel()) resetSafe = true;
+        paint();
+        setHelp({ label: "Recommended settings set", help: "Save & Exit (or Save & Boot) to use them." });
+      }
       else if (act === "resetsafe") {
         resetSafe = true;
         try { const ec = emuCfg(); ec.q64safe6 = { level: 0 }; VFS.write("/Apps/.emulator.json", JSON.stringify(ec)); } catch (e) {}
@@ -921,11 +1064,12 @@
     // the Main tab's clock
     const clockT = setInterval(() => { if (!alive()) return clearInterval(clockT); if (tab === 0) { const v = panelEl.querySelectorAll(".u2-row.info .u2-val"); if (v.length) { const t = now(); v[v.length - 1].textContent = t.time; v[v.length - 2].textContent = t.date; } } }, 1000);
 
+    base = snap();
     paint();
     if (onDevice()) {
       Bridge.call("system", "getBackgroundGrace").then(g => {
         const sec = (typeof g === "number") ? g : (g && g.result);
-        if (sec != null) { s.bgRun = sec === 0 ? "Off" : "About 30 s"; if (alive()) paint(); }
+        if (sec != null) { const clean = !dirty(); s.bgRun = sec === 0 ? "Off" : "About 30 s"; if (clean) base = snap(); if (alive()) paint(); }
       }).catch(() => {});
       Bridge.call("system", "info", {}).then(r => { dev = (r && r.model) ? r : (r && r.result) || null; if (alive()) paint(); }).catch(() => {});
       refreshStore();

@@ -60,6 +60,21 @@
          "cursor not aligned" bug: taps landed off from where they pointed. */
       ".q64-gui canvas{cursor:default !important}" +
       ".q64-guimsg{position:absolute;top:0;left:0;right:0;bottom:0;display:flex;align-items:center;justify-content:center;text-align:center;padding:14px;color:#9fb3d1;font:600 12px/1.5 'Cascadia Mono',monospace;pointer-events:none}" +
+      ".q64-guimsg.q64-loadwrap{background:radial-gradient(120% 90% at 50% 0,#0f1d34,#05080f)}" +
+      ".q64-load{width:min(420px,88%);text-align:left;padding:22px 24px;border:1px solid #1d3a59;border-radius:14px;background:rgba(8,18,32,.86);box-shadow:0 14px 50px #000a;font:600 13px/1.5 -apple-system,system-ui,sans-serif;color:#cfe3ff}" +
+      ".q64-load-t{font-size:17px;font-weight:700;color:#eaf4ff;margin-bottom:12px}" +
+      ".q64-load-bar{height:6px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;margin-bottom:14px}" +
+      ".q64-load-bar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#1d74e0,#5ab0ff);transition:width .4s}" +
+      ".q64-load-s{list-style:none;margin:0 0 12px;padding:0}" +
+      ".q64-load-s li{display:flex;align-items:center;gap:10px;padding:5px 0;color:#5f7193;font-weight:500}" +
+      ".q64-load-s li.done{color:#8fb3d9}.q64-load-s li.on{color:#eaf4ff;font-weight:650}" +
+      ".q64-load-ic{width:20px;height:20px;flex:0 0 20px;display:grid;place-items:center;border-radius:50%;font-size:12px;border:1.5px solid #2a3d5c}" +
+      ".q64-load-s li.done .q64-load-ic{background:#1d74e0;border-color:#1d74e0;color:#fff}" +
+      ".q64-load-s li.on .q64-load-ic{border-color:#4aa3ff;border-top-color:transparent;animation:q64spin .9s linear infinite}" +
+      "@keyframes q64spin{to{transform:rotate(360deg)}}" +
+      ".q64-load-d{color:#8b9cb9;font:500 12px ui-monospace,Menlo,monospace}" +
+      ".q64-load-n{margin-top:8px;color:#ffc35a;font-size:12px}" +
+      ".q64-load-h{margin-top:10px;color:#5f7193;font-size:11.5px;font-weight:500}" +
       /* Files tab — light, iOS-Files style */
       ".q64-files{flex:1;min-height:0;display:none;flex-direction:column;background:#f2f3f7;color:#1c1c1e;font-family:-apple-system,'Segoe UI',Roboto,sans-serif}" +
       ".q64-fbar{display:flex;align-items:center;gap:8px;padding:8px 10px;background:#fff;border-bottom:1px solid #d8dade}" +
@@ -209,6 +224,9 @@
       if (guiEl.style.display === "none") return;   // pane hidden — skip the work
       var st = (window.__guiState ? window.__guiState() : "no-rfb");
       if (st === "no-rfb") {
+        if (guimsg && guimsg.classList.contains("q64-loadwrap") && guimsg.style.display !== "none") {   // start-up card up
+          hud.style.color = "#9fb3d1"; hud.textContent = "🖥️ display: starting…"; return;
+        }
         hud.style.color = "#e0a06a";
         hud.textContent = "🖥️ display: OFF — run a GUI app (or tap here) to connect";
         return;
@@ -254,7 +272,24 @@
       panel.classList.toggle("collapsed");
       tg.textContent = panel.classList.contains("collapsed") ? "‹" : "›";
     };
-    function setGuiStatus(text) { if (guimsg) { if (text == null) { guimsg.style.display = "none"; } else { guimsg.style.display = "flex"; guimsg.textContent = text; } } }
+    // text = one plain line; info (run.js bootInfo) = the start-up card: title, steps, time, detail.
+    function setGuiStatus(text, info) {
+      if (!guimsg) return;
+      if (text == null) { guimsg.style.display = "none"; return; }
+      guimsg.style.display = "flex";
+      if (!info || !info.steps) { guimsg.classList.remove("q64-loadwrap"); guimsg.textContent = text; return; }
+      guimsg.classList.add("q64-loadwrap");
+      var done = info.steps.filter(function (s) { return s.done; }).length;
+      var pct = Math.round(100 * (done + 0.5) / info.steps.length);
+      guimsg.innerHTML = '<div class="q64-load"><div class="q64-load-t">' + esc(info.title) + '</div>' +
+        '<div class="q64-load-bar"><i style="width:' + pct + '%"></i></div>' +
+        '<ol class="q64-load-s">' + info.steps.map(function (s) {
+          return '<li class="' + (s.done ? "done" : s.on ? "on" : "") + '"><span class="q64-load-ic">' + (s.done ? "✓" : s.on ? "" : "·") + '</span>' + esc(s.label) + '</li>';
+        }).join("") + '</ol>' +
+        '<div class="q64-load-d">' + esc((info.detail ? info.detail + " · " : "") + info.sec + " s") + '</div>' +
+        (info.note ? '<div class="q64-load-n">' + esc(info.note) + '</div>' : "") +
+        '<div class="q64-load-h">Keep Bootbox open while it starts.</div></div>';
+    }
 
     var xt = null, markN = 0, busy = false;
     // Unique per-panel marker prefix so begin/end markers never collide with anything already in the

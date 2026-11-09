@@ -41,7 +41,60 @@
     // 3 GiB-heap build until build 83; it now runs on the shared qemu-aload engine.)
     const engineModuleBase = opts.engineModuleBase || engineBase;
     const host = opts.screen_container;
-    const say = (typeof opts.onStatus === "function") ? opts.onStatus : function () {};
+    const sayOut = (typeof opts.onStatus === "function") ? opts.onStatus : function () {};
+    let lastSay = "";
+    const say = (m) => { lastSay = String(m || ""); sayOut(m); };
+    // Start-up card (Linux desktop / Android, opts.bootCard): the screen shows the real start-up steps
+    // instead of a black pane. Each step ends on something the guest really does: the engine's
+    // instantiate callback, the container init's first "mounting" line on the console (the kernel is
+    // up), the shell prompt (the system is up) and the display's VNC connect.
+    const bootP = { t0: Date.now(), engine: 0, kernel: 0, system: 0, xt: null, handed: false, connected: false, timer: 0 };
+    function bootScan() {
+      if (!bootP.xt || (bootP.kernel && bootP.system)) return;
+      try {
+        const b = bootP.xt.buffer.active;
+        for (let i = Math.max(0, b.length - 80); i < b.length; i++) {
+          const ln = b.getLine(i); if (!ln) continue;
+          const s = ln.translateToString(true);
+          if (!bootP.kernel && /^\d{4}\/\d\d\/\d\d \d\d:\d\d:\d\d /.test(s)) bootP.kernel = Date.now();
+          if (!bootP.system && /(localhost|bootbox):.*#\s*$/.test(s)) bootP.system = Date.now();
+        }
+        if (bootP.system && !bootP.kernel) bootP.kernel = bootP.system;
+      } catch (e) {}
+    }
+    function bootInfo() {
+      if (bootP.connected) return null;   // a later reconnect: plain text only
+      bootScan();
+      let p = null; try { p = self.BootboxLazyPack && self.BootboxLazyPack.progress(); } catch (e) {}
+      const snap = p && p.snapshot && p.snapshot.size ? p.snapshot : null;
+      const marks = opts.touchGuest
+        ? [["Start the x86-64 engine", !!bootP.engine], ["Load the saved Android state", !!(snap && snap.read >= snap.size)], ["Connect the screen", false]]
+        : [["Start the x86-64 engine", !!bootP.engine], ["Boot the Linux kernel", !!bootP.kernel], ["Start the system", !!bootP.system], ["Open the desktop", false]];
+      if (opts.touchGuest && !snap && bootP.engine) marks[1][1] = !!bootP.handed;
+      let on = marks.findIndex((m) => !m[1]); if (on < 0) on = marks.length - 1;
+      let detail = "";
+      if (!bootP.engine) {
+        detail = lastSay.replace(/^64-bit:\s*/, "").replace(/^Android:\s*/, "");
+        if (/^working…/.test(detail)) detail = "Setting up the virtual machine…";
+      }
+      else if (/Downloading data\.\.\. \((\d+)\/(\d+)\)/.test(lastSay) && +RegExp.$1 < +RegExp.$2) detail = "Loading the system image: " + Math.floor(100 * RegExp.$1 / RegExp.$2) + "%";
+      else if (snap && snap.read < snap.size) detail = "Saved state: " + Math.floor(100 * snap.read / snap.size) + "%";
+      else if (p && p.fetched) detail = "Guest data read: " + Math.round(p.fetched / 1048576) + " MB";
+      return {
+        title: "Starting " + (opts.bootTitle || (opts.touchGuest ? "Android" : "Linux")),
+        steps: marks.map((m, i) => ({ label: m[0], done: m[1], on: i === on })),
+        step: on + 1, total: marks.length, sec: Math.round((Date.now() - bootP.t0) / 1000), detail,
+        note: opts.safeNote ? "Running a slower engine after an earlier crash (" + opts.safeNote + ") — UEFI Setup › Advanced › Reset Engine." : "",
+      };
+    }
+    function bootLine(info) { return info.title + " — step " + info.step + " of " + info.total + ": " + info.steps[info.step - 1].label + " (" + info.sec + " s)"; }
+    if (typeof opts.bootCard === "function") {
+      const tick = () => {
+        if (bootP.handed) { clearInterval(bootP.timer); return; }
+        const info = bootInfo(); if (info) { try { opts.bootCard(bootLine(info), info); } catch (e) {} }
+      };
+      bootP.timer = setInterval(tick, 1000); tick();
+    }
     if (!self.crossOriginIsolated) {
       opts.onError && opts.onError(new Error("64-bit mode needs cross-origin isolation (SharedArrayBuffer). " +
         "The host page must send COOP/COEP headers."));
@@ -186,6 +239,7 @@
     // (indirect scroll only) that calls this with a pixel delta; we scroll the scrollback here. Skip
     // full-screen (alt-buffer) TUIs — they own the screen and use arrow keys, not scrollback.
     try { self.__q64xterm = xterm; } catch (e) {}   // debugging handle (serial console)
+    bootP.xt = xterm;
     self.__trackpadScroll = function (dyPx) {
       try {
         if (xterm.buffer && xterm.buffer.active && xterm.buffer.active.type === "alternate") return;
@@ -246,7 +300,7 @@
       fetch(wurl)
         .then((r) => { if (!r.ok) throw new Error("wasm HTTP " + r.status); say("64-bit: compiling engine (first load is slow)…"); return r.arrayBuffer(); })
         .then((buf) => WebAssembly.instantiate(buf, imports))
-        .then((res) => { say("64-bit: engine ready — starting CPU…"); receive(res.instance, res.module); })
+        .then((res) => { bootP.engine = Date.now(); say("64-bit: engine ready — starting CPU…"); receive(res.instance, res.module); })
         .catch((e) => { say("64-bit WASM FAILED: " + ((e && e.message) || e)); opts.onError && opts.onError(e instanceof Error ? e : new Error(String(e))); });
       return {};   // signals async instantiation to Emscripten
     };
@@ -360,6 +414,7 @@
     const hb = setInterval(() => { hbN++; say("64-bit: working… " + hbN + "s — booting kernel (watch the terminal below)"); }, 1000);
     try { await init(Module); } finally { clearInterval(hb); }
     toTerm("[boot] QEMU main started.");
+    if (!bootP.engine) bootP.engine = Date.now();
     // File-share API over Module.FS "/share" (bind-mounted into the guest as /share). Lets the app
     // move files host<->guest for the 64-bit Save/Share buttons. read() may return null until the
     // guest writes; write() drops a file the guest sees immediately at /share/<name>.
@@ -444,14 +499,15 @@
     }
     function guiStatus(cb, msg, live) {   // live: refresh msg + progress every second until replaced
       guiMsgCb = cb; guiMsg = live ? msg : null;
+      bootP.handed = true;   // the start-up card is drawn from here on (bootInfo), not by its own timer
       if (!live && guiMsgTimer) { clearInterval(guiMsgTimer); guiMsgTimer = 0; }
-      cb(msg === null ? null : live ? msg + guiNote() : msg);
+      cb(msg === null ? null : live ? msg + guiNote() : msg, live ? bootInfo() : null);
       if (live && !guiMsgTimer) {
         let n = 0;
         guiMsgTimer = setInterval(function () {
           if (guiMsg === null || !guiMsgCb) return;
           const line = guiMsg + guiNote();
-          guiMsgCb(line);
+          guiMsgCb(line, bootInfo());
           // Leave a trail in the app log (every 2 s for the first minute, then every 10 s): if iPadOS
           // ends the page during boot, the log shows how far it got and how big the engine was.
           n++;
@@ -777,7 +833,7 @@
         // frames on the EMULATED CPU, so high zlib effort is pure lag. Level 1 measured-cheap.
         try { rfb.compressionLevel = 1; } catch (e) {}
         rfb.addEventListener("connect", function () {
-          guiRetries = 0; guiStatus(statusCb, null);
+          guiRetries = 0; bootP.connected = true; guiStatus(statusCb, null);
           console.log("[gui] display connected " + Math.round((Date.now() - guiT0) / 1000) + " s after start");
         });
         rfb.addEventListener("disconnect", function () {

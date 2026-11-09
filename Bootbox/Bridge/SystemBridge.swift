@@ -18,7 +18,11 @@ final class SystemBridge: NSObject {
                 "ram": ProcessInfo.processInfo.physicalMemory,
                 "cores": ProcessInfo.processInfo.processorCount,
                 "memLimitMB": MemoryProbe.limitMB ?? 0,
-                "memProbeRunning": MemoryProbe.shared.isRunning
+                "memProbeRunning": MemoryProbe.shared.isRunning,
+                // Apple silicon: performance + efficiency cores (0 where the system doesn't say). vCPUs
+                // beyond the performance cores run on efficiency cores, which are much slower.
+                "perfCores": Self.sysctlInt("hw.perflevel0.logicalcpu"),
+                "effCores": Self.sysctlInt("hw.perflevel1.logicalcpu")
             ])
         case "takeLastCrash":
             // When the previous page's process died (0 = it didn't); cleared once read.
@@ -93,6 +97,12 @@ final class SystemBridge: NSObject {
         default:
             respond(false, "unknown system action: \(action)")
         }
+    }
+
+    static func sysctlInt(_ name: String) -> Int {
+        var v: Int32 = 0
+        var size = MemoryLayout<Int32>.size
+        return sysctlbyname(name, &v, &size, nil, 0) == 0 ? Int(v) : 0
     }
 
     static func storageReport() -> [String: Any] {

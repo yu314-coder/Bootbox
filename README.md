@@ -88,8 +88,15 @@ built for learning Linux, scripting, retro computing and experiments.
   compile threshold, the engine's crash-fallback level (with a reset), the Linux kernel's
   vulnerability mitigations and extra kernel parameters, default system, auto-boot, boot order,
   network and background running; a **Storage** tab that lists and deletes downloaded images, your
-  files and saved states; and a **Tools** tab with the Files-app diagnostics. The emulator toolbar
-  has a matching dark theme.
+  files and saved states; and a **Tools** tab with the Files-app diagnostics. **Quick Setup** on its
+  first tab: one tap to the recommended settings (this iPad's performance cores, every instruction,
+  the fast engine), the main controls, an unsaved-changes marker and **Save & Boot**. The emulator
+  toolbar has a matching dark theme.
+- **Easier to start:** the boot menu shows which systems are downloaded (**READY**) or how big the
+  download is, the selected system's settings with a **Change** shortcut, and boots with a second tap
+  on the selected system. The Linux desktop and Android show a **start-up card** with the real steps
+  (engine → kernel → system → desktop, or the saved-state load) instead of a black screen. The
+  power-on splash is shorter.
 - **More in the Files app:** besides your own files and folders (sub-folders now work), the Bootbox
   location has **System Images** (the downloaded guest images; delete one to free space),
   **Saved States** and **Logs**.
@@ -99,8 +106,10 @@ built for learning Linux, scripting, retro computing and experiments.
   Ctrl/Alt/Shift/Win, for every system.
 - **Every x86 instruction set at once** for the 64-bit Linux systems, by default: SSE4.1/4.2, POPCNT,
   AVX, AVX2, FMA, F16C, BMI1/2, LZCNT, MOVBE, AES-NI, PCLMULQDQ, SHA-NI, ADX and RDSEED, so one session
-  runs programs built for any of them. UEFI Setup → Advanced → Instruction Set → Standard (SSE3) is
-  faster for programs that would otherwise pick AVX code (CPU-Z multi-thread ~26 vs ~18 under WebKit).
+  runs programs built for any of them, at the same speed as plain SSE3: AVX's 16-byte atomic accesses
+  no longer queue every core behind one lock (CPU-Z multi-core with AVX on: 11.8 → 40 on the Mac), and
+  AVX float math runs as WebAssembly SIMD. UEFI Setup → Advanced → Instruction Set → Custom picks
+  each extension on its own.
 - **A faster engine:** `rep movs`/`rep stos` copies run in bulk, and SSE integer shuffles, packs and
   multiplies run as WebAssembly SIMD. See [Performance](#performance).
 - **Android:** the fast interpreter (app launches 1.5–3× faster), a **▤ Shell** button that opens a
@@ -341,7 +350,7 @@ order / network / background settings, a Storage manager and Tools) →
 serial console on the left, GUI on the right. The terminal fills its pane, taps focus it,
 keyboard routing follows your last tap, and full-screen TUIs (`ncdu`, `mc`, `vi`) get the
 right arrow-key sequences (application-cursor mode). The **Keys** button (1.1) adds an on-screen PC
-keyboard for the keys an iPad lacks. A 🔧 File-Sync diagnostics panel is in the boot menu and UEFI Setup › Tools.
+keyboard for the keys an iPad lacks. A 🔧 File-Sync diagnostics panel is in UEFI Setup › Tools.
 
 ---
 
