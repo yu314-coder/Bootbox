@@ -5,6 +5,7 @@
 # Do you want to display the error log file?" and only continues once someone answers. Answer No
 # for the user: CPU-Z then runs normally on what it can read without the driver (CPUID, caches,
 # clocks, benchmark). xdotool --sync waits inside one process (no polling spawns on the slow CPU).
+. /usr/local/lib/bb-hold.sh 2>/dev/null   # v17: background work waits while this runs
 mkdir -p /root/cpuz && cp -n /opt/cpuz/* /root/cpuz/ 2>/dev/null; cd /root/cpuz || exit 1
 export LIBGL_ALWAYS_SOFTWARE=1 WINEESYNC=1 WINEDEBUG=-all WINEDLLOVERRIDES="winemenubuilder.exe=d"
 (
@@ -19,4 +20,4 @@ export LIBGL_ALWAYS_SOFTWARE=1 WINEESYNC=1 WINEDEBUG=-all WINEDLLOVERRIDES="wine
     xdotool mousemove --window "$w" $((WIDTH * 63 / 100)) $((HEIGHT - 20)) click 1 2>/dev/null
   fi
 ) &
-exec wine cpuz_x64.exe "$@"
+wine cpuz_x64.exe "$@"   # not exec: bb-hold releases when the window closes

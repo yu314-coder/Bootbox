@@ -10,6 +10,11 @@
 # v16: closing the Linux browser quits it (it only hid, leaving ~220 MB of processes behind); the first page
 # of the pre-started browser draws (it stayed blank grey until a reload) and no strip stays unpainted; the
 # hub stops re-rendering every 4 s (~1/4 core while open); gpu-bench warms the shader cache untimed first.
+# v17: benchmarks hold the browser's background pre-start (bb-hold.sh: it waits while one runs, and one
+# under way is paused) - on the iPad it landed in CPU-Z's multi-thread phase; terminals start bash only
+# once their window is mapped (xterm waitForMap) - the first prompt still came out one letter per line;
+# font caches stay valid in the guest (they were rebuilt by every GUI program on every boot: ~15 s of
+# emulated CPU each for openbox and the panel while the desktop started).
 # v2 (build 73): graphical browser (Dillo) + file manager (PCManFM) + a real wallpaper. HISTORY: dillo/BadWolf "flooded the single-threaded Xvnc until the GUI froze" — but that
 # was tested BEFORE the cx16 engine fix, when every guest allocation took a stop-the-world exclusive
 # section (kernel SLUB uses lock cmpxchg16b). With the spinlock engine those light GUI apps get
@@ -139,6 +144,19 @@ COPY desktop/start.html desktop/hub.html desktop/webbench.html /usr/share/bootbo
 COPY desktop/bootbox-conky desktop/bench/bbresult desktop/bench/7z-bench desktop/bench/sysbench-bench /usr/local/bin/
 COPY desktop/bashrc /root/.bashrc
 COPY desktop/bash_profile /root/.bash_profile
+COPY desktop/bench/bb-hold.sh /usr/local/lib/bb-hold.sh
+# v17 bb-hold.sh: a benchmark pauses a browser pre-start under way (matched by process NAME), a nested
+# benchmark shares the outer pause, and everything continues when the outer one exits. The stand-in
+# "browser" is a script named WebKitWebProcess (its comm), the same 15-char name WebKit's process gets.
+RUN set -eux; \
+    printf '#!/bin/sh\nwhile :; do sleep 1; done\n' > /tmp/WebKitWebProcess; chmod +x /tmp/WebKitWebProcess; \
+    /tmp/WebKitWebProcess & p=$!; sleep 1; grep -q '^Name:.*WebKitWebProces' /proc/$p/status; \
+    : > /tmp/.bbweb-prewarming; \
+    sh -c ". /usr/local/lib/bb-hold.sh; grep -q '^State:.*T' /proc/$p/status; \
+           sh -c '. /usr/local/lib/bb-hold.sh; true'; grep -q '^State:.*T' /proc/$p/status; echo HOLD-NESTED-OK"; \
+    ! grep -q '^State:.*T' /proc/$p/status; \
+    rm -f /tmp/.bbweb-prewarming; sh -c ". /usr/local/lib/bb-hold.sh; ! grep -q '^State:.*T' /proc/$p/status"; \
+    kill $p; rm -f /tmp/WebKitWebProcess; test -z "$(ls -A /tmp/.bb-bench)"; rmdir /tmp/.bb-bench; echo "BB-HOLD-OK"
 RUN set -eux; \
     chmod +x /usr/local/bin/bxterm /usr/local/bin/bootbox-menu /usr/share/bootbox-apps/*.desktop \
       /usr/local/bin/bootbox-conky /usr/local/bin/bbresult /usr/local/bin/7z-bench /usr/local/bin/sysbench-bench; \
@@ -267,7 +285,16 @@ RUN set -eux; \
 RUN set -eux; \
     rm -rf /usr/share/man /usr/share/doc /usr/share/gtk-doc /usr/share/locale /usr/share/i18n /usr/share/info /var/cache/apk/*; \
     (cd /usr/share/fonts/dejavu 2>/dev/null && ls | grep -vE '^(DejaVuSans\.ttf|DejaVuSans-Bold\.ttf|DejaVuSansMono\.ttf|DejaVuSansMono-Bold\.ttf|fonts\.)' | xargs rm -f) || true; \
+    # v17: font caches that stay VALID in the guest. The image conversion keeps whole-second mtimes but
+    # drops the nanoseconds, and fontconfig 2.15 compares both, so the caches built here were stale on
+    # every boot and each GUI program rebuilt them while the desktop started (openbox ~19.5 s of emulated
+    # CPU instead of ~4.5 s, the panel too). Zero the font folders' nanoseconds, then build the caches;
+    # a second `fc-cache` must find every one of them still valid.
+    find /usr/share/fonts /usr/local/share/fonts -type d 2>/dev/null | while read -r d; do touch -d "@$(stat -c %Y "$d")" "$d"; done; \
+    ! find /usr/share/fonts -type d -exec stat -c '%y %n' {} + | grep -v '\.000000000 '; \
     fc-cache -f 2>/dev/null || true; \
+    fc-cache -v > /tmp/fcv.log 2>&1 || true; grep -c 'existing cache is valid' /tmp/fcv.log; \
+    ! grep -E 'caching, (new|updated)' /tmp/fcv.log; rm -f /tmp/fcv.log; echo "FONT-CACHE-NS-OK"; \
     echo "SLIM usr=$(du -sm /usr | cut -f1)MB total=$(du -sm / 2>/dev/null | cut -f1)MB"
 
 # Boots straight into the full desktop (launcher menu + browser + file manager).

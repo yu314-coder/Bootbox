@@ -23,7 +23,8 @@ if [ ! -e /tmp/.xstarted ]; then
     export DISPLAY=:0
     export HOME=/root
     xsetroot -solid '#0b111c' -cursor_name left_ptr 2>/dev/null
-    xwallpaper --zoom /usr/share/bootbox-wallpaper.png 2>/dev/null
+    # v17: the wallpaper (a PNG decode, ~2 s of emulated CPU) draws while openbox starts, not before it
+    xwallpaper --zoom /usr/share/bootbox-wallpaper.png 2>/dev/null &
     openbox >/tmp/openbox.log 2>&1 &
     ob=$!
     # Start the panel and terminal only once openbox is really managing (its "Openbox" check window
@@ -43,7 +44,23 @@ if [ ! -e /tmp/.xstarted ]; then
     # (WebKit takes ~20-50 s to start on the emulated CPU). Normal priority: the guest container
     # can't raise a nice'd process back, which left the pre-started browser slow for good.
     ( sleep 6; bootbox-conky >/tmp/conky.log 2>&1 ) &
-    ( sleep 120; bbweb --prewarm >/tmp/bbweb-prewarm.log 2>&1 ) &
+    # v17: the pre-start keeps out of a benchmark's way (bb-hold.sh): it waits while one runs (up to
+    # 30 min), and /tmp/.bbweb-prewarming - removed by the engine when its start page has loaded - lets
+    # a benchmark started during the pre-start pause it. On the iPad it used to land in CPU-Z's
+    # multi-thread phase. No marker when a browser already runs (the user's window is never paused).
+    (
+      sleep 120
+      bench_running() {
+        for f in /tmp/.bb-bench/*; do [ -e "$f" ] && kill -0 "${f##*/}" 2>/dev/null && return 0; done
+        return 1
+      }
+      n=0; while [ "$n" -lt 360 ] && bench_running; do sleep 5; n=$((n+1)); done
+      if ! pgrep -f /usr/libexec/bbweb-engine >/dev/null; then
+        : > /tmp/.bbweb-prewarming
+        bbweb --prewarm >/tmp/bbweb-prewarm.log 2>&1
+        sleep 600; rm -f /tmp/.bbweb-prewarming   # safety net if the engine never loads its page
+      fi
+    ) &
     # Self-heal: if the panel still isn't on screen after 2 minutes, start it again.
     (
       sleep 120

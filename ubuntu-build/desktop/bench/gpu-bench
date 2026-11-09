@@ -4,6 +4,7 @@
 # this measures engine speed x cores, which is what any graphical app here gets.
 #   gpu-bench        -> quick: 2 scenes (clear 8 s + build 30 s, after an untimed shader warm-up), 320x240
 #   gpu-bench full   -> the whole glmark2 suite (long)
+. /usr/local/lib/bb-hold.sh 2>/dev/null   # v17: background work waits while this runs
 export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER="${GPU:-llvmpipe}"
 LP_NUM_THREADS=$(nproc); export LP_NUM_THREADS
 # glmark2 gets its own X server: presenting to the desktop's Xvnc while it is busy can stall frames.

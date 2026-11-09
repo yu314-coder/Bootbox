@@ -1,6 +1,7 @@
 #!/bin/sh
 # bench-all - every CPU/GPU benchmark of the hub, one after another (the hub's "Run all"); each saves
 # its result to the Benchmarks hub as usual. One run = one screenshot of the hub's history.
+. /usr/local/lib/bb-hold.sh 2>/dev/null   # v17: background work waits while this runs
 echo "Running all benchmarks, one at a time (~15 min). Leave Bootbox in the foreground."
 echo
 for b in sysbench-bench 7z-bench cpuz-bench gpu-bench; do

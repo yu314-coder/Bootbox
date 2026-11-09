@@ -2,6 +2,7 @@
 # 7z-bench - 7-Zip's built-in compression/decompression benchmark (native x86-64 Linux 7-Zip), one
 # core then all cores. Rating = 7-Zip "MIPS" (the number 7-Zip prints as Tot). One pass with a 64 KB
 # dictionary keeps it to a few minutes on the emulated CPU (the default run takes ~20x longer).
+. /usr/local/lib/bb-hold.sh 2>/dev/null   # v17: background work waits while this runs
 N=$(nproc)
 echo "7-Zip benchmark: 1 core, then all $N cores (about 2-4 minutes each on the emulated CPU)."
 # 7-Zip's own table streams to the terminal (stderr) while it runs; the Tot rating is captured.

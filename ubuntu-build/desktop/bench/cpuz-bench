@@ -4,6 +4,7 @@
 #   cpuz-bench info -> CPU-Z's CPU report
 # CPU-Z is baked into the image (/opt/cpuz) with a driver-off cpuz.ini; LIBGL_ALWAYS_SOFTWARE keeps it
 # from probing a GPU that does not exist (it hangs otherwise).
+. /usr/local/lib/bb-hold.sh 2>/dev/null   # v17: background work waits while this runs
 export WINEPREFIX=/root/.wine WINEARCH=win64 WINEESYNC=1 WINEDEBUG=-all LIBGL_ALWAYS_SOFTWARE=1
 export WINEDLLOVERRIDES="winemenubuilder.exe=d"
 export DISPLAY="${DISPLAY:-:0}"

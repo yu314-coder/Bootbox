@@ -100,8 +100,6 @@ built for learning Linux, scripting, retro computing and experiments.
 - **More in the Files app:** besides your own files and folders (sub-folders now work), the Bootbox
   location has **System Images** (the downloaded guest images; delete one to free space),
   **Saved States** and **Logs**.
-- **Windows 98 SE and Windows 2000 in one tap.** Pre-installed disk images download from this
-  repository's `windows-v1` release and boot in the 32-bit engine (v86). Windows 2000 has internet.
 - **An on-screen PC keyboard** (the **Keys** button) with F1–F12, Esc, Tab, arrows and
   Ctrl/Alt/Shift/Win, for every system.
 - **Every x86 instruction set at once** for the 64-bit Linux systems, by default: SSE4.1/4.2, POPCNT,
@@ -127,11 +125,9 @@ built for learning Linux, scripting, retro computing and experiments.
 
 | System | Arch | Cores | Highlights | Download |
 |---|---|---|---|---|
-| **Linux (Desktop)** | x86-64 | **1–8 (default 2)** | Openbox + tint2 desktop · **WebKit web browser** (links can also open in the device's own browser) · PCManFM · terminal · Python 3.12 · **Benchmarks hub** (CPU-Z, 7-Zip, sysbench, glmark2, web) | ~240 MB, once |
+| **Linux (Desktop)** | x86-64 | **1–8 (default 2)** | Openbox + tint2 desktop · **WebKit web browser** (links can also open in the device's own browser) · PCManFM · terminal · Python 3.12 · **Benchmarks hub** (CPU-Z, 7-Zip, sysbench, glmark2, web) | ~420 MB, once |
 | **Linux (Terminal)** | x86-64 | **1–8 (default 2)** | Alpine · Python 3.12 + pip · real internet · file browser · `mc` · **wine-staging 11.5, esync on by default, warm prefix** | ~310 MB, once |
 | **Android 12 AOSP** | x86-64 | 4 | Full Android framework + ART · System UI · Launcher3 · touch/keyboard · **▤ Shell** (root terminal) · resumes from a home-screen snapshot in seconds · writable `/data` | ~900 MB, once |
-| **Windows 98 SE** (1.1) | i686 (v86) | 1 | Pre-installed, boots to the desktop · 256 MB RAM · 640×480 | ~89 MB, once |
-| **Windows 2000 Pro** (1.1) | i686 (v86) | 1 | Pre-installed SP4 with auto-logon · **internet** · 512 MB RAM · 640×480 | ~340 MB, once |
 | **Your own images** | i686 (v86) | 1 | Import `.iso`/`.img` (for example your own Windows install media) via the Files app; paired save-states resume in ~1 s | — |
 
 The **app itself is ~68 MB.** Guest images are **not bundled** — each system downloads
@@ -303,8 +299,8 @@ are shown. The first listing right after boot is slow only because the emulated 
 finishing boot; once settled a listing is **<0.5 s**.
 
 ### Windows programs
-Classic Windows boots in **v86**: Windows 98 SE and Windows 2000 as one-tap downloads (1.1), or install
-media and disk images you supply. 32-bit `.exe` run in **BoxedWine**
+Classic Windows boots in **v86** from install media and disk images you supply (an imported
+Windows 9x disk gets 256 MB of RAM automatically). 32-bit `.exe` run in **BoxedWine**
 (import an `.exe` → Compatibility Center → 🍷 Run with Wine → the window renders via noVNC).
 
 **Wine in the 64-bit guest (experimental, v2):** the first attempt (Wine 9.0) deadlocked on-device
@@ -624,9 +620,8 @@ Bootbox stands on excellent open source:
 
 Modified engine sources are published per the GPL: the app's engine in
 [`engine/qemu-wasm/`](engine/qemu-wasm/), the guest-image build changes in the two forks above.
-Guest Linux images are built from Alpine Linux packages. Windows 98 SE and Windows 2000 are Microsoft
-software; the one-tap entries download pre-installed images from the `windows-v1` release, and any
-other Windows image is user-supplied.
+Guest Linux images are built from Alpine Linux packages. Bootbox does not download or include
+Windows; any Windows image is user-supplied.
 
 ---
 

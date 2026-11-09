@@ -3,7 +3,7 @@
  *
  *   • Boot Menu  (renderMenu)  — the "select operating system" page you normally
  *     see: a boot manager that lists the systems (Linux Desktop / Terminal,
- *     Android, the one-tap Windows images) and your imported images. Pick one and
+ *     Android) and your imported images. Pick one and
  *     boot. ↑↓/Enter or tap. GRUB / UEFI-boot-manager style.
  *
  *   • UEFI Setup (renderSetup) — the firmware setup you DON'T normally see: tabbed
@@ -12,29 +12,19 @@
  *     Tools has the Files-app diagnostics.
  * ========================================================================== */
 (function () {
-  // The boot menu: two Linux front-ends of the 64-bit x86_64 engine, Android and the two v86
-  // Windows images. (The ARM64 guest is no longer listed.) The Windows 98 / 2000 one-tap images were out
-  // of 1.0 for App Review (guideline 5.2) and are back in 1.1 at the user's direction (Nov 2026).
+  // The boot menu: two Linux front-ends of the 64-bit x86_64 engine and Android. (The ARM64 guest is no
+  // longer listed.) No one-tap Windows: Windows 98 SE / 2000 are Microsoft software (App Review 5.2.1),
+  // removed again in build 13 at the user's direction (Nov 9 2026). Your own images still boot (imports).
   const SYSTEMS = [
-    { id: "x64pwd", name: "Linux (Desktop)", sub: "64-bit Linux desktop · windows, taskbar, terminal, file manager, web browser", icon: "🖥️", svg: "desktop", tag: "DESKTOP", dlMB: 240,
+    { id: "x64pwd", name: "Linux (Desktop)", sub: "64-bit Linux desktop · windows, taskbar, terminal, file manager, web browser", icon: "🖥️", svg: "desktop", tag: "DESKTOP", dlMB: 419,
       guest: "x64pwd", ram: 1536,
-      note: "A full-screen 64-bit (x86_64) Linux desktop: windows (Openbox) + taskbar/clock (tint2), a terminal, a file manager, a web browser (WebKit) and Python 3.12 with pip. Tap Apps (bottom-left) or right-click the desktop for programs; the Benchmarks icon runs CPU-Z, 7-Zip and more. Downloaded once (~240 MB), then the guest disk is read straight from this device's storage as needed." },
+      note: "A full-screen 64-bit (x86_64) Linux desktop: windows (Openbox) + taskbar/clock (tint2), a terminal, a file manager, a web browser (WebKit) and Python 3.12 with pip. Tap Apps (bottom-left) or right-click the desktop for programs; the Benchmarks icon runs CPU-Z, 7-Zip and more. Downloaded once (~420 MB), then the guest disk is read straight from this device's storage as needed." },
     { id: "x64pw", name: "Linux (Terminal)", sub: "64-bit Linux console · Python 3.12 + pip · Wine for .exe · internet", icon: "🐍", svg: "terminal", tag: "TERMINAL", dlMB: 310,
       guest: "x64pw", ram: 1536,
       note: "64-bit (x86_64) Alpine Linux in a terminal — cores 1–8 in UEFI Setup. Python 3.12 + pip, Wine (32 & 64-bit .exe) and real internet. Terminal on the LEFT; the panel on the RIGHT has quick buttons and shows graphical output when you start an X app or a Wine .exe. Downloaded once (~310 MB), then the guest disk is read straight from this device's storage as needed." },
-    { id: "android64", name: "Android", sub: "Android 12 AOSP · 64-bit x86_64 · quad-core · touch + keyboard", icon: "🤖", svg: "android", tag: "ANDROID", dlMB: 901,
+    { id: "android64", name: "Android", sub: "Android 12 AOSP · 64-bit x86_64 · quad-core · touch + keyboard", icon: "🤖", svg: "android", tag: "ANDROID", dlMB: 911,
       guest: "android64", ram: 1280,
       note: "Android 12 AOSP (System UI + Launcher3) on 4 emulated cores. It resumes from a snapshot taken at the home screen, so it opens in seconds instead of a multi-minute cold boot. Touch the screen directly; ⌨ Type for text. Downloaded once (~901 MB). No Google Play, no GPU acceleration." },
-    { id: "win98", name: "Windows 98 SE", sub: "One-tap download + boot · ~89 MB", icon: "🪟", svg: "window", tag: "WIN", dlMB: 89,
-      img: "vmres://iso/win98.img", kind: "hda", ram: 256, fixedRam: true,
-      downloadName: "win98.img.gz", imgName: "win98.img", gz: true,
-      downloadUrl: "https://github.com/yu314-coder/Bootbox/releases/download/windows-v1/win98.img.gz",
-      note: "Windows 98 SE · one-tap download (~89 MB) + boot. Verified booting to the desktop in v86. Boots as a hard disk at 256 MB RAM (Win9x can't use much more). 640×480 standard VGA." },
-    { id: "win2000", name: "Windows 2000 Pro", sub: "One-tap download + boot · has internet · ~340 MB", icon: "🪟", svg: "window", tag: "WIN", dlMB: 340,
-      img: "vmres://iso/win2000.img", kind: "hda", ram: 512, fixedRam: true,
-      downloadName: "win2000.img.gz", imgName: "win2000.img", gz: true,
-      downloadUrl: "https://github.com/yu314-coder/Bootbox/releases/download/windows-v1/win2000.img.gz",
-      note: "Windows 2000 SP4 · one-tap download (~340 MB) + boot. The only Windows here with WORKING INTERNET (NT NDIS NIC via the relay, where Win9x's driver hangs). Heavier/slower than Win98. 512 MB RAM · 640×480 VGA · auto-logon." },
   ];
 
   // Every x86 feature the 64-bit Linux guests get with "All instructions" (QEMU 8.2's TCG emulates all of them,
@@ -102,7 +92,7 @@
    *  What is stored on the device (System "storage", native)           *
    * ------------------------------------------------------------------ */
   // Files a system downloads: its guest pack(s) (stored .data.gz, expanded to .data) or the
-  // Windows image (downloaded .img.gz, decompressed to .img).
+  // one-tap disk image (downloaded .img.gz, decompressed to .img - none listed since build 13).
   function packFiles(sys) {
     if (sys.downloadName) return [sys.downloadName, sys.imgName].filter(Boolean);
     const files = (window.BootboxPacks || {})[sys.guest] || [];
@@ -150,7 +140,7 @@
   // Translate a chosen system + firmware config into emulator launch args.
   function systemToArgs(sys, cfg) {
     cfg = cfg || readCfg();
-    // fixedRam (the Windows images, Android's snapshot) uses the entry's exact RAM instead of
+    // fixedRam (Android's snapshot, imported Win9x disks, paired save-states) uses the entry's exact RAM instead of
     // inheriting a high global setting; the others get the setting as a floor.
     const ram = sys.fixedRam ? (sys.ram || 256) : Math.max(cfg.ram || 0, sys.ram || 256);
     const args = { autoboot: true, ram: ram, bootOrder: cfg.bootOrder || "cd-hd" };
@@ -320,6 +310,7 @@
     let entries = [];
     let sel = 0, timer = null, count = 0;
 
+    const WIN9X = /win\s*9[58x]|win98|w98|winme/i;   // (emulator.js boots these with v86's JIT off)
     function importRows(names) {
       return (names || []).map(n => {
         const disk = /\.(img|raw|qcow2|hdd|vdi)$/i.test(n);   // a disk image boots as a hard disk, not a CD
@@ -331,7 +322,8 @@
           img: "vmres://iso/" + n, kind: disk ? "hda" : "cdrom",
           // Snapshots are captured at 1 GB; a paired-snapshot import must boot at that
           // exact RAM (v86 save-state restore requires the memory size to match).
-          ram: snap ? 1024 : undefined, fixedRam: snap || undefined,
+          // An imported Windows 9x disk boots at 256 MB whatever the RAM setting (Win9x fails with lots of RAM).
+          ram: snap ? 1024 : (disk && WIN9X.test(n) ? 256 : undefined), fixedRam: snap || (disk && WIN9X.test(n)) || undefined,
           note: snap ? "Imported disk + a paired save-state (" + n + ".state.gz): resumes the pre-booted desktop in ~1s — drivers, apps and network already up — at 1 GB RAM. Manage these in the Files app (Bootbox)."
                      : "Your imported image. Manage these in the Files app (Bootbox)." };
       });
@@ -689,7 +681,7 @@
     function coresField() {
       return { t: "stepper", label: "CPU Cores", key: "cores", min: 1, max: 8, step: 1,
             sub: dev && dev.perfCores ? "this iPad has " + dev.perfCores + " fast cores — " + Math.min(8, dev.perfCores) + " recommended" : "Linux (Desktop & Terminal)",
-            help: "Each emulated core runs on its own iPad core. " + (dev && dev.perfCores ? "This iPad has " + dev.perfCores + " performance cores and " + dev.effCores + " efficiency cores: up to " + dev.perfCores + " vCPUs all run on fast cores; more land on efficiency cores, which are several times slower, so single-thread speed drops and multi-thread gains little. " : "Cores beyond the iPad's performance cores land on its slower efficiency cores. ") + "More cores also run hotter and use more battery; 1 = battery saver. Linux (Desktop & Terminal) only, on the next boot. Android always uses 4 (its snapshot) and the Windows images use 1." };
+            help: "Each emulated core runs on its own iPad core. " + (dev && dev.perfCores ? "This iPad has " + dev.perfCores + " performance cores and " + dev.effCores + " efficiency cores: up to " + dev.perfCores + " vCPUs all run on fast cores; more land on efficiency cores, which are several times slower, so single-thread speed drops and multi-thread gains little. " : "Cores beyond the iPad's performance cores land on its slower efficiency cores. ") + "More cores also run hotter and use more battery; 1 = battery saver. Linux (Desktop & Terminal) only, on the next boot. Android always uses 4 (its snapshot) and your own 32-bit images (v86) use 1." };
     }
     function isaField() {
       return { t: "select", label: "Instruction Set", sub: "Linux (Desktop & Terminal)", key: "isaChoice", opts: ["all", "std", "custom"], render: v => ({ all: "All", std: "Standard", custom: "Custom" })[v],
@@ -697,7 +689,7 @@
     }
     function ramField() {
       return { t: "stepper", label: "Guest RAM", sub: "minimum for every system", key: "ram", min: 256, max: 3584, step: 256, render: v => v <= 256 ? "Auto" : v + " MB",
-            help: "Memory for the next boot. Auto = each system's own size (Linux 1.5 GB; Android and the Windows images use fixed sizes). Raise it for big pip installs or many open apps — it doesn't make the CPU faster. If a guest fails to start, lower it." };
+            help: "Memory for the next boot. Auto = each system's own size (Linux 1.5 GB; Android uses a fixed size, and an imported Windows 9x disk always gets 256 MB). Raise it for big pip installs or many open apps — it doesn't make the CPU faster. If a guest fails to start, lower it." };
     }
     // "Recommended": the iPad's performance cores (4 if unknown), every instruction, Fast interpreter,
     // compile threshold 10000, Auto RAM - what measured fastest (single- and multi-core) on M-series iPads.
@@ -765,7 +757,7 @@
           { t: "sep", label: "Linux Kernel" },
           { t: "note", text: "Linux (Desktop) and Linux (Terminal) boot a real Linux 6.1 kernel. These options change its command line for the next boot — like editing a GRUB entry. Android and the Windows images don't use them. If a boot goes wrong, switch them back here (or clear the extra parameters) and boot again." },
           { t: "toggle", label: "CPU Vulnerability Mitigations", sub: "Spectre / Meltdown workarounds inside the guest", key: "__mit", value: !s.mitigationsOff,
-            help: "On: the guest kernel's default workarounds for Spectre-type CPU bugs — retpolines (every indirect call in the kernel goes through a return-trick sequence) and return-buffer filling on each task switch. Off adds mitigations=off. They target speculation inside a real x86 CPU; Bootbox's emulated CPU doesn't speculate, so here they protect nothing and only cost emulation time, mostly in system calls and task switches. Applies on the next boot." },
+            help: "On: the guest kernel's default workarounds for Spectre-type CPU bugs — retpolines (every indirect call in the kernel goes through a return-trick sequence) and return-buffer filling on each task switch. Off adds mitigations=off. They target speculation inside a real x86 CPU; Bootbox's emulated CPU doesn't speculate, so here they protect nothing. Measured here, turning them off saves very little: about 2-3% of the work in system calls and none in starting programs (the emulated CPU is an AMD model, which needs only the light retpoline workaround). Applies on the next boot." },
           { t: "toggle", label: "Show All Kernel Messages", sub: "verbose boot (loglevel=7)", key: "verboseBoot",
             help: "Prints every kernel message while Linux boots (adds loglevel=7; normally only warnings show). You see them in Linux (Terminal)'s console — useful when a boot stops somewhere and you want to see where. Printing costs a little boot time. Applies on the next boot." },
           { t: "text", label: "Extra Kernel Parameters", key: "kernelExtra", placeholder: "e.g. maxcpus=2",
@@ -833,7 +825,7 @@
     const prefId = (() => { const c = readCfg(); return c.defaultBoot && c.defaultBoot !== "last" ? c.defaultBoot : c.lastBoot; })();
     const prefSys = SYSTEMS.find(x => x.id === prefId) || SYSTEMS[0];
     bootBtnS.style.display = "";
-    const shortName = { x64pwd: "Desktop", x64pw: "Terminal", android64: "Android", win98: "Win 98", win2000: "Win 2000" }[prefSys.id] || prefSys.name;
+    const shortName = { x64pwd: "Desktop", x64pw: "Terminal", android64: "Android" }[prefSys.id] || prefSys.name;
     bootBtnS.textContent = "Save & Boot " + shortName + " ▶";
     bootBtnS.title = "Save the settings and start " + prefSys.name;
     bootBtnS.onclick = () => doAction("boot:" + prefSys.id);

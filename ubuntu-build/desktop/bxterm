@@ -3,6 +3,8 @@
 # CPU), a padded dark theme and a 16-colour palette. 9x15 is easier to read on the iPad than `fixed`
 # (6x13); xterm exits at once if the X server lacks a font, so fall back to `fixed` in that case.
 # -u8 keeps UTF-8 correct; -ls makes it a login shell so `help`, aliases and PATH are set.
+# v17: waitForMap - the shell starts only once the window is mapped at its real size (bash drew its first
+# prompt one letter per line on the iPad when it started before the window manager had sized it).
 FONT=9x15
 [ -x /bin/bash ] && export SHELL=/bin/bash   # v10: the terminal's shell is bash (completion, history search)
 if [ "$1" = "--font-fixed" ]; then FONT=fixed; shift; fi
@@ -10,6 +12,7 @@ t0=$(date +%s)
 xterm -fn "$FONT" -u8 -ls -sl 4000 -b 10 -cr '#3d8bfd' \
   -bg '#0b0f17' -fg '#d6e2f2' -T Terminal -geometry 90x26 \
   -xrm 'XTerm*scrollBar: false' -xrm 'XTerm*internalBorder: 10' -xrm 'XTerm*cursorBlink: false' \
+  -xrm 'XTerm*waitForMap: true' \
   -xrm 'XTerm*iconHint: /usr/share/bootbox/icons/terminal' \
   -xrm 'XTerm*color0: #1b2433' -xrm 'XTerm*color8: #4b5a72' \
   -xrm 'XTerm*color1: #ff6b6b' -xrm 'XTerm*color9: #ff8f8f' \

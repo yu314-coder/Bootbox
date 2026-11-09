@@ -26,6 +26,7 @@
 #include <unistd.h>
 
 #define SOCK_PATH "/tmp/.bbweb.sock"
+#define PREWARM_MARK "/tmp/.bbweb-prewarming"   // v17: xstart creates it before a pre-start
 
 #define HOME_URI "bootbox://app/start"
 #define SHARE "/usr/share/bootbox/"
@@ -63,6 +64,9 @@ static void on_load_changed(WebKitWebView *v, WebKitLoadEvent e, gpointer d) {
   if (e == WEBKIT_LOAD_FINISHED) {
     g_timeout_add(300, redraw_view, g_object_ref(v));
     g_timeout_add(1500, redraw_view, g_object_ref(v));
+    // v17: the hidden pre-start has loaded its start page = its start-up work is done. Benchmarks
+    // (bb-hold.sh) pause the engine only while this marker exists.
+    if (prewarm) unlink(PREWARM_MARK);
   }
 }
 
@@ -453,6 +457,7 @@ static gboolean on_incoming(GSocketService *svc, GSocketConnection *c, GObject *
   g_free(line);
   g_object_unref(in);
   if (was_hidden) gtk_widget_show_all(win);
+  if (prewarm) unlink(PREWARM_MARK);   // shown: never paused by a benchmark from now on
   prewarm = FALSE;
   gtk_window_present_with_time(GTK_WINDOW(win), GDK_CURRENT_TIME);
   return TRUE;
@@ -579,5 +584,6 @@ int main(int argc, char **argv) {
   listen_for_launches();
   gtk_main();
   unlink(SOCK_PATH);
+  unlink(PREWARM_MARK);
   return 0;
 }

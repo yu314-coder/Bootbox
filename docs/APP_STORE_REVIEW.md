@@ -143,22 +143,24 @@ Filled through the API (`/Volumes/D/xcode/asc.py`, screenshots: `/Volumes/D/xcod
   character): bash draws the prompt before the terminal window has its real width.
 - The first page the prewarmed Linux browser shows stays blank (grey) until Reload.
 
-## Version 1.1 (drafted 2026-11-05, NOT submitted)
+## Version 1.1 (redrafted 2026-11-09 for build 13, NOT submitted)
 
-The user chose to bring the one-tap Windows downloads back in 1.1. Finding **A** above (guideline
-5.2.1/5.2.2) applies again: Windows 98 SE and Windows 2000 are Microsoft software, and the app downloads
-them from the developer's `windows-v1` release. Review may reject 1.1 for this. Ask the user again before
-submitting, and keep the notes honest about it. (A ReactOS one-tap entry was in the first 1.1 TestFlight
-build; the user had it removed on 2026-11-05. Its `reactos-0.4.16` GitHub release is still up.)
+**Windows removed again (build 13, user decision 2026-11-09):** the one-tap Windows 98 SE / Windows 2000
+entries were back in 1.1 TestFlight builds 2-12; checked again before submitting - guideline 5.2.1 (no
+copyrighted works without permission) and 4.7 (the developer is responsible for downloadable software
+following all applicable laws; PC emulators may offer *games*) - and removed, with no link to the images
+either. Your own images (Files app import) still boot; an imported Windows 9x disk gets 256 MB of RAM. The
+`windows-v1` (and `reactos-0.4.16`) GitHub releases are still up - the user decides whether to take them down.
 
 **What's New (draft):**
-• Windows 98 SE and Windows 2000 one-tap entries are back.
+• Faster multi-core with every x86 instruction set on (a single lock made AVX-enabled guests queue up).
+• UEFI Setup: Quick Setup with Recommended Settings, Save & Boot, and per-instruction-set Custom choice.
+• Clearer start-up: the boot menu shows what is downloaded, and a progress card replaces the black screen.
 • An on-screen PC keyboard with F1–F12, Esc, Tab, arrows and Ctrl/Alt/Shift/Win, for every system.
-• UEFI Setup: an optional AVX2 CPU for the 64-bit Linux systems, for programs that need it.
-• Fixes and speed-ups.
+• Linux desktop: programs start faster, and benchmarks no longer compete with the browser starting in the background.
 
 **Review notes (draft, append to the 1.0 notes):**
-> New in 1.1: the boot menu adds one-tap Windows 98 SE / Windows 2000 entries, which download pre-installed
-> disk images from the developer's GitHub release. An on-screen PC keyboard (the "Keys" button) and an
-> optional AVX2 CPU setting (UEFI Setup → Advanced) were also added. Everything still runs in the
-> WebAssembly emulator inside WKWebView, with no native code generation.
+> New in 1.1: UEFI Setup gains Quick Setup (recommended settings), a per-instruction-set choice for the
+> 64-bit Linux systems and kernel options; the boot menu shows download status and a start-up progress card;
+> an on-screen PC keyboard (the "Keys" button). Bootbox does not download or include Windows. Everything
+> still runs in the WebAssembly emulator inside WKWebView, with no native code generation.
