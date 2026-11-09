@@ -3033,10 +3033,25 @@ static inline void gen_stq_env_A0(DisasContext *s, int offset)
     tcg_gen_qemu_st_i64(s->tmp1_i64, s->A0, s->mem_index, MO_LEUQ);
 }
 
+/*
+ * Bootbox: on a CPU with AVX, aligned 16-byte SSE accesses are single-copy atomic (QEMU models
+ * Intel's guarantee with MO_ATOM_IFALIGN). The wasm host has no 16-byte atomics, so each such
+ * access takes a striped spinlock (host/include/generic/host/atomic128-cas.h). /bootbox-tune
+ * sseatom=0 drops back to two atomic 8-byte halves (the non-AVX rule) - faster, but then a
+ * 16-byte load done with vmovdqa (e.g. GCC libatomic's AVX path) can tear against another
+ * core's cmpxchg16b.
+ */
+extern int bb_sse_atom16;   /* tcg/wasm32.c */
+static inline MemOp sse_atom16(DisasContext *s)
+{
+    bootbox_tune_init();
+    return (s->cpuid_ext_features & CPUID_EXT_AVX) && bb_sse_atom16
+           ? MO_ATOM_IFALIGN : MO_ATOM_IFALIGN_PAIR;
+}
+
 static inline void gen_ldo_env_A0(DisasContext *s, int offset, bool align)
 {
-    MemOp atom = (s->cpuid_ext_features & CPUID_EXT_AVX
-                  ? MO_ATOM_IFALIGN : MO_ATOM_IFALIGN_PAIR);
+    MemOp atom = sse_atom16(s);
     MemOp mop = MO_128 | MO_LE | atom | (align ? MO_ALIGN_16 : 0);
     int mem_index = s->mem_index;
     TCGv_i128 t = tcg_temp_new_i128();
@@ -3047,8 +3062,7 @@ static inline void gen_ldo_env_A0(DisasContext *s, int offset, bool align)
 
 static inline void gen_sto_env_A0(DisasContext *s, int offset, bool align)
 {
-    MemOp atom = (s->cpuid_ext_features & CPUID_EXT_AVX
-                  ? MO_ATOM_IFALIGN : MO_ATOM_IFALIGN_PAIR);
+    MemOp atom = sse_atom16(s);
     MemOp mop = MO_128 | MO_LE | atom | (align ? MO_ALIGN_16 : 0);
     int mem_index = s->mem_index;
     TCGv_i128 t = tcg_temp_new_i128();
@@ -7232,6 +7246,8 @@ static const WasmFpInline x86_wasm_fp_inline = {
         [WFP_SD] = WFP_ROW(sd),
         [WFP_PS] = WFP_ROW(ps_xmm),
         [WFP_PD] = WFP_ROW(pd_xmm),
+        [WFP_PS256] = WFP_ROW(ps_ymm),   /* AVX: two 16-byte halves */
+        [WFP_PD256] = WFP_ROW(pd_ymm),
     },
     .xhelper = {
         [WFPX_UCOMISS] = (const void *)helper_ucomiss, [WFPX_COMISS] = (const void *)helper_comiss,

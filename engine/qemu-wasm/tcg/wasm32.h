@@ -74,10 +74,11 @@ void bootbox_tune_init(void);
  * Target float helpers the wasm backend may emit as native wasm float/SIMD ops instead of a
  * helper call (tcg_wasm_out_fp_inline). A target fills a table at init; NULL = never inline.
  * Every helper here has the shape helper(env, d, v, s) on 16-byte vector registers, except the
- * packed sqrt (WFP_PS/WFP_PD x WFP_SQRT), which is helper(env, d, s).
+ * packed sqrt (WFP_PS/WFP_PD/WFP_PS256/WFP_PD256 x WFP_SQRT), which is helper(env, d, s). The 256-bit
+ * kinds (AVX ymm helpers) are done as two 16-byte halves.
  */
 enum { WFP_ADD, WFP_SUB, WFP_MUL, WFP_DIV, WFP_MIN, WFP_MAX, WFP_SQRT, WFP_NOPS };
-enum { WFP_SS, WFP_SD, WFP_PS, WFP_PD, WFP_NKINDS };   /* scalar f32/f64, packed f32x4/f64x2 */
+enum { WFP_SS, WFP_SD, WFP_PS, WFP_PD, WFP_PS256, WFP_PD256, WFP_NKINDS };   /* scalar f32/f64, packed f32x4/f64x2, AVX f32x8/f64x4 */
 /* Scalar compares and conversions (shapes in tcg_wasm_out_fp_inline_x). */
 enum {
     WFPX_UCOMISS, WFPX_COMISS, WFPX_UCOMISD, WFPX_COMISD,          /* (env, a, b) -> CC_SRC */

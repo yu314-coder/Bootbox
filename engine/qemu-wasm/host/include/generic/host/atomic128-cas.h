@@ -50,14 +50,31 @@ atomic16_cmpxchg(Int128 *ptr, Int128 cmp, Int128 new)
  * tolerate that.  Hold time is ~30 host instructions, so contention is
  * cheap; vastly cheaper than parking every vCPU per op.
  */
-extern unsigned qemu_wasm128_lock;
+/*
+ * Bootbox: the lock is STRIPED by address (64 locks, one per 64-byte host line so two vCPUs
+ * taking different locks never bounce one cache line). One global lock was a multi-core
+ * bottleneck once a guest has AVX: QEMU then makes every aligned 16-byte SSE load/store
+ * atomic (MO_ATOM_IFALIGN, target/i386/tcg/translate.c gen_ldo_env_A0), and all of them came
+ * through here - CPU-Z multi-thread fell to a third with AVX on. Every 16-byte atomic op on
+ * one address still takes one lock, so atomicity between them is unchanged.
+ */
+#define QEMU_WASM128_NLOCKS 64
+typedef struct { unsigned v; unsigned pad[15]; } QemuWasm128Lock;
+extern QemuWasm128Lock qemu_wasm128_locks[QEMU_WASM128_NLOCKS];
+
+static inline unsigned *qemu_wasm128_lock_for(const void *p)
+{
+    uintptr_t a = (uintptr_t)p >> 4;
+    return &qemu_wasm128_locks[(a ^ (a >> 6) ^ (a >> 12)) & (QEMU_WASM128_NLOCKS - 1)].v;
+}
 
 static inline Int128 atomic16_cmpxchg(Int128 *ptr, Int128 cmp, Int128 new)
 {
     Int128 *ptr_align = __builtin_assume_aligned(ptr, 16);
     Int128 old;
+    unsigned *lock = qemu_wasm128_lock_for(ptr);
 
-    while (qatomic_xchg(&qemu_wasm128_lock, 1u)) {
+    while (qatomic_xchg(lock, 1u)) {
         /* spin — hold times are tens of instructions */
     }
     old = *ptr_align;
@@ -75,7 +92,7 @@ static inline Int128 atomic16_cmpxchg(Int128 *ptr, Int128 cmp, Int128 new)
     if (int128_eq(old, cmp) && !int128_eq(old, new)) {
         *ptr_align = new;
     }
-    qatomic_store_release(&qemu_wasm128_lock, 0u);
+    qatomic_store_release(lock, 0u);
     return old;
 }
 # define HAVE_CMPXCHG128 1

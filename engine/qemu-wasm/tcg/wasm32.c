@@ -2122,6 +2122,7 @@ static inline uintptr_t tci_exec(CPUArchState *env)
 
 int bb_hammock;   /* /bootbox-tune hammock=1: short forward jcc kept inside the TB (target/i386/tcg/translate.c) */
 int bb_hm_max = 16, bb_hm_mod = 1, bb_hm_sel = 0, bb_hm_cpl = 0;   /* hmmax, hmmod/hmsel (pc filter), hmcpl (3 = user only) */
+int bb_sse_atom16 = 1;   /* /bootbox-tune sseatom=0: AVX guests' 16-byte SSE accesses as two 8-byte halves (target/i386/tcg/translate.c) */
 int bb_repbulk = 1;   /* /bootbox-tune repbulk=0: REP MOVS/STOS one iteration per TB again (helper_rep_bulk) */
 
 void bootbox_tune_init(void)
@@ -2193,15 +2194,17 @@ void bootbox_tune_init(void)
                 wasm_simd_inline_enabled = v != 0;
             } else if (!strcmp(key, "gvecool")) {
                 wasm_gvec_ool_enabled = v != 0;
+            } else if (!strcmp(key, "sseatom")) {
+                bb_sse_atom16 = v != 0;
             }
         }
         fclose(f);
         wasm_hot_num = (wasm_hot_share || wasm_sum_count) ? wasm_instantiate_num / 16 : wasm_instantiate_num;
-        fprintf(stderr, "[bootbox-tune] jit=%d max=%d fpinline=%d chain=%d/%s/%d regloc=%d hotshare=%d sumcnt=%d tsc=%d fasttci=%d lazywasm=%d hammock=%d repbulk=%d simdinline=%d gvecool=%d\n",
+        fprintf(stderr, "[bootbox-tune] jit=%d max=%d fpinline=%d chain=%d/%s/%d regloc=%d hotshare=%d sumcnt=%d tsc=%d fasttci=%d lazywasm=%d hammock=%d repbulk=%d simdinline=%d gvecool=%d sseatom=%d\n",
                 wasm_instantiate_num, wasm_max_instance_alive, wasm_fp_inline_enabled,
                 wasm_tail_chain, wasm_chain_nested ? "nested" : "tail", wasm_chain_budget,
                 wasm_reg_locals, wasm_hot_share, wasm_sum_count, bootbox_tsc_lockfree, wasm_fast_tci, bb_lazy_wasm,
-                bb_hammock, bb_repbulk, wasm_simd_inline_enabled, wasm_gvec_ool_enabled);
+                bb_hammock, bb_repbulk, wasm_simd_inline_enabled, wasm_gvec_ool_enabled, bb_sse_atom16);
     }
     qatomic_set(&state, 2);
 }

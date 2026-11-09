@@ -2294,7 +2294,7 @@ static void wfp_store(TCGContext *s, int kind)
 /* Pushes i32 1 if the value at ptr (any lane, for packed kinds) is a NaN: x != x. */
 static void wfp_isnan(TCGContext *s, int ptr_global, int kind)
 {
-    static const uint8_t ne[WFP_NKINDS] = { 0x5c, 0x62, 0x42, 0x48 };
+    static const uint8_t ne[WFP_NKINDS] = { 0x5c, 0x62, 0x42, 0x48, 0x42, 0x48 };
     wfp_load(s, ptr_global, kind);
     wfp_load(s, ptr_global, kind);
     if (kind >= WFP_PS) {
@@ -2519,7 +2519,7 @@ static bool tcg_wasm_out_fp_inline_x(TCGContext *s, const tcg_insn_unit *func,
  */
 #define FPL_F32 25
 #define FPL_F64 28
-#define FPL_V128 31
+#define FPL_V128 31     /* 4 v128 locals (31-34): A, B, R and the AVX high-half result */
 __thread bool wasm_fp_locals;
 
 static int wfp_local(int kind, int i)
@@ -2580,7 +2580,7 @@ static void wfp_copy_upper(TCGContext *s, int d, int v, int kind)
 /* Pushes i32 1 if local `loc` (any lane, for packed kinds) is a NaN: x != x. */
 static void wfp_local_isnan(TCGContext *s, int loc, int kind)
 {
-    static const uint8_t ne[WFP_NKINDS] = { 0x5c, 0x62, 0x42, 0x48 };
+    static const uint8_t ne[WFP_NKINDS] = { 0x5c, 0x62, 0x42, 0x48, 0x42, 0x48 };
     tcg_wasm_out_op_local_get(s, loc);
     tcg_wasm_out_op_local_get(s, loc);
     if (kind >= WFP_PS) {
@@ -2589,6 +2589,78 @@ static void wfp_local_isnan(TCGContext *s, int loc, int kind)
     } else {
         tcg_wasm_out8(s, ne[kind]);
     }
+}
+
+/*
+ * AVX (ymm) packed ops: helper(env, d, v, s) on 32-byte registers, done as two 16-byte halves with the
+ * same guards as the 128-bit form. Both halves are computed into locals before d is written, so a NaN in
+ * the high half still sends the whole op, with its original inputs, to the softfloat helper.
+ */
+static void wfp_emit_locals_256(TCGContext *s, const tcg_insn_unit *func, const TCGHelperInfo *info,
+                                int func_idx, const WasmFpInline *t, int kind, int op,
+                                const uint16_t arith[WFP_NKINDS][WFP_NOPS])
+{
+    int k = kind - 2;                                          /* WFP_PS or WFP_PD */
+    bool minmax = op == WFP_MIN || op == WFP_MAX;
+    int env = WFP_ARG(0), d = WFP_ARG(1), v = WFP_ARG(2);
+    int src = op == WFP_SQRT ? WFP_ARG(2) : WFP_ARG(3);
+    int A = wfp_local(k, 0), B = wfp_local(k, 1);
+    int R[2] = { wfp_local(k, 2), wfp_local(k, 3) };
+
+    wasm_fp_locals = true;
+    tcg_wasm_out8(s, 0x02); tcg_wasm_out8(s, 0x40);           /* block $done */
+    tcg_wasm_out8(s, 0x02); tcg_wasm_out8(s, 0x40);           /* block $slow */
+    wfp_mxcsr_check(s, t, env);
+    tcg_wasm_out8(s, 0x0d); tcg_wasm_out8(s, 0);               /* br_if $slow */
+    for (int h = 0; h < 2; h++) {
+        if (op != WFP_SQRT) {
+            wfp_ptr(s, v);
+            wfp_simd(s, 0x00);                                 /* v128.load offset 16h */
+            tcg_wasm_out_leb128_uint32_t(s, 0);
+            tcg_wasm_out_leb128_uint32_t(s, 16 * h);
+            tcg_wasm_out_op_local_set(s, A);
+        }
+        wfp_ptr(s, src);
+        wfp_simd(s, 0x00);
+        tcg_wasm_out_leb128_uint32_t(s, 0);
+        tcg_wasm_out_leb128_uint32_t(s, 16 * h);
+        tcg_wasm_out_op_local_set(s, B);
+        if (minmax) {
+            /* FPU_MIN: lt(v, s) ? v : s     FPU_MAX: lt(s, v) ? v : s */
+            tcg_wasm_out_op_local_get(s, A);
+            tcg_wasm_out_op_local_get(s, B);
+            tcg_wasm_out_op_local_get(s, op == WFP_MIN ? A : B);
+            tcg_wasm_out_op_local_get(s, op == WFP_MIN ? B : A);
+            wfp_simd(s, arith[kind][op]);
+            wfp_simd(s, 0x52);                                 /* v128.bitselect */
+            tcg_wasm_out_op_local_set(s, R[h]);
+        } else {
+            if (op != WFP_SQRT) {
+                tcg_wasm_out_op_local_get(s, A);
+            }
+            tcg_wasm_out_op_local_get(s, B);
+            wfp_simd(s, arith[kind][op]);
+            tcg_wasm_out_op_local_set(s, R[h]);
+            /* a NaN result (NaN input, inf-inf, 0/0, sqrt(-1)) goes to softfloat */
+            wfp_local_isnan(s, R[h], k);
+            tcg_wasm_out8(s, 0x0d); tcg_wasm_out8(s, 0);       /* br_if $slow */
+        }
+    }
+    for (int h = 0; h < 2; h++) {                              /* commit: d = r */
+        wfp_ptr(s, d);
+        tcg_wasm_out_op_local_get(s, R[h]);
+        wfp_simd(s, 0x0b);                                     /* v128.store offset 16h */
+        tcg_wasm_out_leb128_uint32_t(s, 0);
+        tcg_wasm_out_leb128_uint32_t(s, 16 * h);
+    }
+    tcg_wasm_out_op_br(s, 1);                                  /* br $done */
+    tcg_wasm_out_op_end(s);                                    /* end $slow */
+
+    tcg_wasm_out_ctx_i32_load(s, HELPER_RET_TB_PTR_OFF);
+    tcg_wasm_out_op_i32_const(s, (int32_t)((intptr_t)s->code_ptr + bb_code_bias));
+    tcg_wasm_out_op_i32_store(s, 0, 0);
+    gen_func_wrapper_code(s, func, info, func_idx);
+    tcg_wasm_out_op_end(s);                                    /* end $done */
 }
 
 /*
@@ -2678,6 +2750,8 @@ static bool tcg_wasm_out_fp_inline(TCGContext *s, const tcg_insn_unit *func,
         { 0xa0, 0xa1, 0xa2, 0xa3, 0x63, 0x63, 0x9f },
         { 0xe4, 0xe5, 0xe6, 0xe7, 0x43, 0x43, 0xe3 },
         { 0xf0, 0xf1, 0xf2, 0xf3, 0x49, 0x49, 0xef },
+        { 0xe4, 0xe5, 0xe6, 0xe7, 0x43, 0x43, 0xe3 },      /* AVX: the same, on each 16-byte half */
+        { 0xf0, 0xf1, 0xf2, 0xf3, 0x49, 0x49, 0xef },
     };
     const WasmFpInline *t;
     int kind, op;
@@ -2702,6 +2776,9 @@ static bool tcg_wasm_out_fp_inline(TCGContext *s, const tcg_insn_unit *func,
     return false;
 
 found:;
+    if (kind >= WFP_PS256 && !wasm_reg_locals) {
+        return false;                                          /* AVX only in the register-locals form */
+    }
     bool vec = kind >= WFP_PS;
     bool minmax = op == WFP_MIN || op == WFP_MAX;
     int env = WFP_ARG(0), d = WFP_ARG(1), v = WFP_ARG(2);
@@ -2716,7 +2793,11 @@ found:;
     }
 
     if (wasm_reg_locals) {
-        wfp_emit_locals(s, func, info, func_idx, t, kind, op, arith);
+        if (kind >= WFP_PS256) {
+            wfp_emit_locals_256(s, func, info, func_idx, t, kind, op, arith);
+        } else {
+            wfp_emit_locals(s, func, info, func_idx, t, kind, op, arith);
+        }
         return true;
     }
 

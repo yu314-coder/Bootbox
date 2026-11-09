@@ -6161,7 +6161,7 @@ static const uint8_t mod_header_d_sizes[] = {
 };
 /* locals: 2 x i32, 22 x i64 (5 temps, 16 registers, block ptr) [+ 3 x f32, f64, v128 for SSE] */
 static const uint8_t mod_header_d_locals[] = { 0x2, 0x2, 0x7f, 22, 0x7e };
-static const uint8_t mod_header_d_locals_fp[] = { 0x5, 0x2, 0x7f, 22, 0x7e, 3, 0x7d, 3, 0x7c, 3, 0x7b };
+static const uint8_t mod_header_d_locals_fp[] = { 0x5, 0x2, 0x7f, 22, 0x7e, 3, 0x7d, 3, 0x7c, 4, 0x7b };
 static const uint8_t mod_header_d_loc_a[] = {
     0x20, 0x0, 0x28, 0, ENV_OFF, 0xad, 0x21, RL(14),     // R14 = ctx->env
     0x20, 0x0, 0x28, 0, STACK_OFF, 0xad, 0x21, RL(15),   // R15 = ctx->stack
