@@ -14,7 +14,7 @@ struct sw_displaytarget;
 struct bbgpu_screen {
    struct pipe_screen base;
    struct sw_winsys *winsys;
-   struct bbgpu_dev dev;
+   struct bbgpu_dev *dev;            /* one per process, shared by every screen (bbgpu_dev_get) */
    bool reported_error;
 };
 static inline struct bbgpu_screen *bbgpu_screen(struct pipe_screen *s) { return (struct bbgpu_screen *)s; }

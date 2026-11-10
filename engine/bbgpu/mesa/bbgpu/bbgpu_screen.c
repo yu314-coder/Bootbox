@@ -268,10 +268,10 @@ static struct pipe_resource *bbgpu_resource_create(struct pipe_screen *screen, c
    r->base = *templ;
    r->base.screen = screen;
    pipe_reference_init(&r->base.reference, 1);
-   r->id = bbgpu_new_id(&bs->dev);
+   r->id = bbgpu_new_id(bs->dev);
    if (templ->target == PIPE_BUFFER) {
       r->shadow = CALLOC(1, templ->width0 ? templ->width0 : 1);
-      BBGPU_CMD(&bs->dev, BBGPU_OP_RES_CREATE, r->id, BBGPU_TARGET_BUFFER, 0, templ->width0, 1, 1, 1, templ->bind);
+      BBGPU_CMD(bs->dev, BBGPU_OP_RES_CREATE, r->id, BBGPU_TARGET_BUFFER, 0, templ->width0, 1, 1, 1, templ->bind);
       return &r->base;
    }
    r->fmt = bbgpu_format(templ->format);
@@ -279,7 +279,7 @@ static struct pipe_resource *bbgpu_resource_create(struct pipe_screen *screen, c
       FREE(r);
       return NULL;
    }
-   BBGPU_CMD(&bs->dev, BBGPU_OP_RES_CREATE, r->id, BBGPU_TARGET_2D, r->fmt, templ->width0, templ->height0, 1,
+   BBGPU_CMD(bs->dev, BBGPU_OP_RES_CREATE, r->id, BBGPU_TARGET_2D, r->fmt, templ->width0, templ->height0, 1,
              templ->last_level + 1, templ->bind);
    if (templ->bind & (PIPE_BIND_DISPLAY_TARGET | PIPE_BIND_SCANOUT | PIPE_BIND_SHARED)) {
       r->dt = bs->winsys->displaytarget_create(bs->winsys, templ->bind, templ->format, templ->width0,
@@ -292,7 +292,7 @@ static void bbgpu_resource_destroy(struct pipe_screen *screen, struct pipe_resou
 {
    struct bbgpu_screen *bs = bbgpu_screen(screen);
    struct bbgpu_resource *r = bbgpu_resource(pres);
-   BBGPU_CMD(&bs->dev, BBGPU_OP_RES_DESTROY, r->id);
+   BBGPU_CMD(bs->dev, BBGPU_OP_RES_DESTROY, r->id);
    if (r->dt)
       bs->winsys->displaytarget_destroy(bs->winsys, r->dt);
    FREE(r->shadow);
@@ -323,8 +323,8 @@ static bool bbgpu_fence_finish(struct pipe_screen *screen, struct pipe_context *
    struct bbgpu_screen *bs = bbgpu_screen(screen);
    struct bbgpu_fence *f = (struct bbgpu_fence *)fence;
    if (!timeout)
-      return bbgpu_fence_done(&bs->dev, f->id);
-   bbgpu_fence_wait(&bs->dev, f->id);
+      return bbgpu_fence_done(bs->dev, f->id);
+   bbgpu_fence_wait(bs->dev, f->id);
    return true;
 }
 
@@ -342,22 +342,22 @@ static void bbgpu_flush_frontbuffer(struct pipe_screen *screen, struct pipe_cont
    if (!map)
       return;
    /* in slices that fit the heap */
-   unsigned row_bytes = w * 4, max_rows = MAX2(1u, (bs->dev.heap_size / 4) / row_bytes);
+   unsigned row_bytes = w * 4, max_rows = MAX2(1u, (bs->dev->heap_size / 4) / row_bytes);
    for (unsigned y = y0; y < y0 + rows; y += max_rows) {
       unsigned n = MIN2(max_rows, y0 + rows - y);
-      uint32_t off = bbgpu_heap_alloc(&bs->dev, n * row_bytes);
-      BBGPU_CMD(&bs->dev, BBGPU_OP_RES_READ, r->id, level, 0, y, w, n, off, row_bytes);
-      bbgpu_fence_wait(&bs->dev, bbgpu_dev_flush(&bs->dev));
+      uint32_t off = bbgpu_heap_alloc(bs->dev, n * row_bytes);
+      BBGPU_CMD(bs->dev, BBGPU_OP_RES_READ, r->id, level, 0, y, w, n, off, row_bytes);
+      bbgpu_fence_wait(bs->dev, bbgpu_dev_flush(bs->dev));
       for (unsigned i = 0; i < n; i++)
-         memcpy(map + (size_t)(y + i) * r->dt_stride, bs->dev.heap + off + (size_t)i * row_bytes, row_bytes);
-      bs->dev.stat_bytes_down += n * row_bytes;
+         memcpy(map + (size_t)(y + i) * r->dt_stride, bs->dev->heap + off + (size_t)i * row_bytes, row_bytes);
+      bs->dev->stat_bytes_down += n * row_bytes;
    }
    bs->winsys->displaytarget_unmap(bs->winsys, r->dt);
    bs->winsys->displaytarget_display(bs->winsys, r->dt, context_private, sub_box);
-   if (bbgpu_dev_error(&bs->dev) && !bs->reported_error) {
+   if (bbgpu_dev_error(bs->dev) && !bs->reported_error) {
       bs->reported_error = true;
-      fprintf(stderr, "bbgpu: renderer error %u (op %u)\n%s\n", bbgpu_dev_error(&bs->dev),
-              bs->dev.regs[BBGPU_REG_ERR_OP / 4], bbgpu_dev_log(&bs->dev));
+      fprintf(stderr, "bbgpu: renderer error %u (op %u)\n%s\n", bbgpu_dev_error(bs->dev),
+              bs->dev->regs[BBGPU_REG_ERR_OP / 4], bbgpu_dev_log(bs->dev));
    }
 }
 
@@ -369,8 +369,8 @@ static const void *bbgpu_get_compiler_options(struct pipe_screen *screen, enum p
 static void bbgpu_destroy(struct pipe_screen *screen)
 {
    struct bbgpu_screen *bs = bbgpu_screen(screen);
-   bbgpu_fence_wait(&bs->dev, bbgpu_dev_flush(&bs->dev));
-   bbgpu_dev_close(&bs->dev);
+   bbgpu_fence_wait(bs->dev, bbgpu_dev_flush(bs->dev));
+   bbgpu_dev_put(bs->dev);
    if (bs->winsys->destroy)
       bs->winsys->destroy(bs->winsys);
    FREE(bs);
@@ -383,7 +383,8 @@ struct pipe_screen *bbgpu_create_screen(struct sw_winsys *winsys)
    struct bbgpu_screen *bs = CALLOC_STRUCT(bbgpu_screen);
    if (!bs)
       return NULL;
-   if (!bbgpu_dev_open(&bs->dev)) {
+   bs->dev = bbgpu_dev_get();
+   if (!bs->dev) {
       fprintf(stderr, "bbgpu: no Bootbox GPU device (or /sys not writable); falling back\n");
       FREE(bs);
       return NULL;
@@ -407,6 +408,6 @@ struct pipe_screen *bbgpu_create_screen(struct sw_winsys *winsys)
    s->fence_finish = bbgpu_fence_finish;
    s->flush_frontbuffer = bbgpu_flush_frontbuffer;
    s->get_compiler_options = bbgpu_get_compiler_options;
-   fprintf(stderr, "bbgpu: Bootbox GPU bridge, %u MB shared\n", bs->dev.shm_size >> 20);
+   fprintf(stderr, "bbgpu: Bootbox GPU bridge, %u MB shared\n", bs->dev->shm_size >> 20);
    return s;
 }

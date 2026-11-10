@@ -23,6 +23,9 @@ struct bbgpu_dev {
 
 bool bbgpu_dev_open(struct bbgpu_dev *d);
 void bbgpu_dev_close(struct bbgpu_dev *d);
+/* the process-wide device (Mesa may create several screens: they must share one ring, heap and id space) */
+struct bbgpu_dev *bbgpu_dev_get(void);
+void bbgpu_dev_put(struct bbgpu_dev *d);
 /* append one command (op + n payload dwords); the ring is kicked by bbgpu_dev_flush */
 void bbgpu_cmd(struct bbgpu_dev *d, uint32_t op, const uint32_t *payload, uint32_t n);
 /* emit a fence and kick; returns the fence id */

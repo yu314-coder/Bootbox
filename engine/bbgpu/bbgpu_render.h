@@ -7,5 +7,6 @@ typedef struct BBRenderer BBRenderer;
 BBRenderer *bbr_create(uint8_t *shm, uint32_t shm_size);
 uint32_t bbr_execute(BBRenderer *r, uint32_t *tail, uint32_t head, uint32_t *fence_done, uint32_t *err_op);
 const char *bbr_log(BBRenderer *r);
+void bbr_reset(BBRenderer *r);
 uint64_t bbr_draws(BBRenderer *r);
 #endif

@@ -187,7 +187,11 @@ static int shader_create(BBRenderer *r, const uint32_t *p)
     GLint ok = 0; glGetShaderiv(o->gl, GL_COMPILE_STATUS, &ok);
     if (!ok) {
         char buf[2048]; glGetShaderInfoLog(o->gl, sizeof buf, NULL, buf);
-        logf_(r, "shader compile failed: %s\n%s\n", buf, "");
+        char head[161]; uint32_t k = len < 160 ? len : 160; memcpy(head, src, k); head[k] = 0;
+        for (uint32_t i = 0; i < k; i++) if ((unsigned char)head[i] < 32 && head[i] != '\n') head[i] = '?';
+        char where[64]; snprintf(where, sizeof where, "heap off %u len %u", off, len);
+        logf_(r, "shader compile failed (%s): %s\n--- source start ---\n", where, buf);
+        logf_(r, "%s\n%s", head, "");
         return BBGPU_ERR_SHADER;
     }
     return 0;
@@ -468,6 +472,16 @@ uint32_t bbr_execute(BBRenderer *r, uint32_t *tail, uint32_t head, uint32_t *fen
         if (e) { *err_op = op; return e; }
     }
     return 0;
+}
+
+/* a new client (device reset): drop every object of the previous one */
+void bbr_reset(BBRenderer *r)
+{
+    for (uint32_t i = 0; i < r->nobj; i++)
+        if (r->obj[i].kind) obj_free(&r->obj[i]);
+    r->program = 0; r->nve = r->nvb = 0; r->ib_res = 0; r->vc_n = r->fc_n = 0; r->flip = 0; r->log[0] = 0;
+    glUseProgram(0);
+    glBindFramebuffer(GL_FRAMEBUFFER, r->fbo);
 }
 
 const char *bbr_log(BBRenderer *r) { return r->log; }

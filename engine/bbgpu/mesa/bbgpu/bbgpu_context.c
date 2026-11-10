@@ -278,6 +278,16 @@ static uint32_t upload_glsl(struct bbgpu_dev *dev, uint32_t id, unsigned stage, 
    uint32_t off = bbgpu_heap_alloc(dev, len + 1);
    memcpy(dev->heap + off, src, len + 1);
    BBGPU_CMD(dev, BBGPU_OP_SHADER_CREATE, id, stage, off, len);
+   if (getenv("BBGPU_SYNC_SHADERS") && getenv("BBGPU_VERBOSE"))
+      fprintf(stderr, "bbgpu: SHADER_CREATE id %u at heap %u len %u (head %u tail %u)\n", id, off, len, dev->heap_head, dev->heap_tail);
+   if (getenv("BBGPU_SYNC_SHADERS")) {
+      bbgpu_fence_wait(dev, bbgpu_dev_flush(dev));
+      if (memcmp(dev->heap + off, src, len))
+         fprintf(stderr, "bbgpu: shader text at heap %u (len %u) CHANGED before the host compiled it (head %u tail %u chunks %u)\n",
+                 off, len, dev->heap_head, dev->heap_tail, dev->nchunks);
+      else if (bbgpu_dev_error(dev))
+         fprintf(stderr, "bbgpu: shader text at heap %u intact but the host failed (err %u)\n", off, bbgpu_dev_error(dev));
+   }
    return id;
 }
 
@@ -622,7 +632,7 @@ struct pipe_context *bbgpu_context_create(struct pipe_screen *screen, void *priv
    struct bbgpu_context *ctx = CALLOC_STRUCT(bbgpu_context);
    struct pipe_context *c = &ctx->base;
    ctx->bs = bbgpu_screen(screen);
-   ctx->dev = &ctx->bs->dev;
+   ctx->dev = ctx->bs->dev;
    c->screen = screen;
    c->priv = priv;
    c->destroy = destroy;

@@ -172,6 +172,7 @@ static void instruction(struct tr *t, const struct tgsi_full_instruction *in)
    case TGSI_OPCODE_MOV: X("%s", s[0]); break;
    case TGSI_OPCODE_ADD: X("%s + %s", s[0], s[1]); break;
    case TGSI_OPCODE_MUL: X("%s * %s", s[0], s[1]); break;
+   case TGSI_OPCODE_DIV: X("%s / %s", s[0], s[1]); break;
    case TGSI_OPCODE_MAD: X("%s * %s + %s", s[0], s[1], s[2]); break;
    case TGSI_OPCODE_DP2: X("vec4(dot((%s).xy, (%s).xy))", s[0], s[1]); break;
    case TGSI_OPCODE_DP3: X("vec4(dot((%s).xyz, (%s).xyz))", s[0], s[1]); break;

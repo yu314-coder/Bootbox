@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: MIT */
 #include <dirent.h>
 #include <fcntl.h>
+#include <pthread.h>
 #include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -77,6 +78,34 @@ void bbgpu_dev_close(struct bbgpu_dev *d)
    if (d->regs)
       munmap((void *)d->regs, 4096);
    memset(d, 0, sizeof *d);
+}
+
+static struct bbgpu_dev *the_dev;
+static int the_dev_refs;
+static pthread_mutex_t the_dev_lock = PTHREAD_MUTEX_INITIALIZER;
+
+struct bbgpu_dev *bbgpu_dev_get(void)
+{
+   pthread_mutex_lock(&the_dev_lock);
+   if (!the_dev) {
+      struct bbgpu_dev *d = calloc(1, sizeof *d);
+      if (d && bbgpu_dev_open(d)) the_dev = d; else free(d);
+   }
+   if (the_dev) the_dev_refs++;
+   struct bbgpu_dev *r = the_dev;
+   pthread_mutex_unlock(&the_dev_lock);
+   return r;
+}
+
+void bbgpu_dev_put(struct bbgpu_dev *d)
+{
+   pthread_mutex_lock(&the_dev_lock);
+   if (d == the_dev && --the_dev_refs == 0) {
+      bbgpu_dev_close(the_dev);
+      free(the_dev);
+      the_dev = NULL;
+   }
+   pthread_mutex_unlock(&the_dev_lock);
 }
 
 uint32_t bbgpu_new_id(struct bbgpu_dev *d) { return d->next_id++; }

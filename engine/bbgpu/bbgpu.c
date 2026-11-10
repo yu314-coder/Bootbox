@@ -100,10 +100,15 @@ static void *bbgpu_gpu_thread(void *opaque)
         qemu_mutex_lock(&s->lock);
         while (!s->head_dirty && !s->reset)
             qemu_cond_wait(&s->cond, &s->lock);
+        bool do_reset = s->reset;
+        /* a reset rewinds both ends of the ring: the new client starts at 0 (replaying the old
+         * client's commands from 0 to its last head would run stale commands over new data) */
+        if (s->reset) { s->reset = false; s->ring_tail = 0; s->error = 0; qatomic_set(&s->fence_done, 0); }
         uint32_t head = s->head;
         s->head_dirty = false;
-        if (s->reset) { s->reset = false; s->ring_tail = 0; s->error = 0; qatomic_set(&s->fence_done, 0); }
         qemu_mutex_unlock(&s->lock);
+        if (do_reset)
+            bbr_reset(r);
         if (s->error)
             continue;
         uint32_t tail = s->ring_tail, done = s->fence_done, op = 0;
@@ -142,7 +147,8 @@ static void bbgpu_reg_write(void *opaque, hwaddr addr, uint64_t val, unsigned si
         qemu_mutex_lock(&s->lock); s->head = (uint32_t)val; s->head_dirty = true; qemu_cond_signal(&s->cond); qemu_mutex_unlock(&s->lock);
         break;
     case BBGPU_REG_RESET:
-        qemu_mutex_lock(&s->lock); s->reset = true; s->fence_done = 0; qemu_cond_signal(&s->cond); qemu_mutex_unlock(&s->lock);
+        qemu_mutex_lock(&s->lock); s->reset = true; s->head = 0; s->head_dirty = false; s->fence_done = 0;
+        qemu_cond_signal(&s->cond); qemu_mutex_unlock(&s->lock);
         break;
 #else
     case BBGPU_REG_KICK:  bbgpu_execute(s, (uint32_t)val); break;
