@@ -171,7 +171,17 @@ void cpu_x86_update_cr3(CPUX86State *env, target_ulong new_cr3)
     if (env->cr[0] & CR0_PG_MASK) {
         qemu_log_mask(CPU_LOG_MMU,
                         "CR3 update: CR3=" TARGET_FMT_lx "\n", new_cr3);
-        tlb_flush(env_cpu(env));
+        qatomic_set(&bb_cnt_cr3, bb_cnt_cr3 + 1);
+        if (bb_tlbstats) bb_stats_tick();
+        if (bb_gflush == 3 && (env->cr[4] & CR4_PGE_MASK)) {
+            tlb_flush_keep_global(env_cpu(env), ((1 << NB_MMU_MODES) - 1) & ~((1 << MMU_NESTED_IDX) | (1 << MMU_PHYS_IDX)));
+        } else if (bb_gflush > 0 && (env->cr[4] & CR4_PGE_MASK)) {
+            /* x86: global translations survive a CR3 write while CR4.PGE is set. Keep them in
+             * the guest's own (non-nested, non-physical) mmu indexes. */
+            tlb_flush_nonglobal(env_cpu(env), ((1 << NB_MMU_MODES) - 1) & ~((1 << MMU_NESTED_IDX) | (1 << MMU_PHYS_IDX)));
+        } else {
+            tlb_flush(env_cpu(env));
+        }
     }
 }
 

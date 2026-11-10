@@ -41,6 +41,15 @@ The Bootbox changes are mostly in `tcg/wasm32.c`, `tcg/wasm32/tcg-target.c.inc` 
   instruction instead of 8-16 64-bit ops. Off by default: it is faster in Chrome but not under WebKit, the
   iPad's engine (Terminal, 3 alternating runs each: CPU-Z 11.6 / 28.3 with it, 11.8 / 28.3 without; glmark2
   33 against 33). The glmark2 "collapses" once blamed on it were the hidden-window throttling above
+- build 14 (`gflush=3`, default; `gflush=0` = stock QEMU): a guest address-space switch (CR3 write) no longer
+  throws away the kernel's global TLB entries. Stock QEMU flushes the whole software TLB on every CR3 write,
+  ignoring x86 global pages (CR4.PGE), so every process switch re-walked the kernel's page tables. The page walk
+  marks global leaf entries (`attrs.target_tlb_bit0`), they are recorded as they are filled, and the flush
+  re-inserts only those (~1,400) after the normal fast flush. Walking whole TLB tables (`gflush=1`) or the jump
+  cache (`gflush=2`) per switch was slower in wasm than the refills. Desktop, Chrome, 3 alternating rounds:
+  fork/exec loop -36%, Python start -23%, pipes -21%, xterm start -14%, find -9%; CPU-Z unchanged; checksum +
+  multiprocessing stress identical; Android and WebKit boots fine. Idea from Henge (TLB entries surviving
+  macOS's frequent flushes). `tlbstats=1` logs CR3 writes / TLB fills per second to the console
 - Correctness rigs for these (all identical to native QEMU and to Docker x86): `fpcheck`, `simdtest`
   (every inlined op, all shuffle immediates, all rounding modes), `reptest` (overlaps, DF=1, addr32, the
   register state at a page fault mid-copy)

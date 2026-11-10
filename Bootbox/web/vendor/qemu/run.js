@@ -354,6 +354,9 @@
       // again / SSE integer ops and packed conversions as helper calls instead of wasm SIMD (safety ladder).
       if (t.repbulk === 0) tune += "repbulk=0\n";
       if (t.simdinline === 0) tune += "simdinline=0\n";
+      // gflush=0 (build 14 engine, on by default): a guest address-space switch (CR3 write) flushes the
+      // whole TLB again, global kernel entries included (stock QEMU) - safety ladder.
+      if (t.gflush === 0) tune += "gflush=0\n";
       if (t.extra) tune += String(t.extra).replace(/[^a-z0-9=\n]/g, "") + "\n";   // harness experiments: raw key=value lines
       if (tune) mod.FS.writeFile("/bootbox-tune", tune);
     });

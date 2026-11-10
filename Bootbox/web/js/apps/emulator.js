@@ -1215,7 +1215,7 @@
             if (!window.QEMU_WASM) {
               await new Promise((res, rej) => {
                 const s = document.createElement("script");
-                s.src = "vendor/qemu/run.js?v=3";
+                s.src = "vendor/qemu/run.js?v=4";
                 s.onload = res; s.onerror = () => rej(new Error("missing QEMU-Wasm pack"));
                 document.head.appendChild(s);
               });
@@ -1303,15 +1303,18 @@
             // 1.1 engine, on by default: bulk REP MOVS/STOS (one helper call per page instead of a block exit
             // per element: Terminal glmark2 30 -> 53) and SSE integer/convert ops as wasm SIMD. The SIMD
             // inlining goes off with the float inlining (level 3), bulk string ops one level lower.
+            // Build 14 engine, on by default: a guest process switch keeps the kernel's global TLB entries
+            // (x86 CR4.PGE semantics; stock QEMU flushes everything) - Mac desktop harness: fork/exec loop
+            // -36%, Python start -23%, pipes -21%, xterm start -14%. Every step down turns it off (gflush=0).
             const fastTci = !!g.fastTci && cfg().interp2 !== "classic";
             const SAFE_LEVELS = [
               { name: "full speed", tune: fastTci ? { fasttci: 1 } : undefined },
-              { name: "classic interpreter, modules stored with every block", tune: { lazywasm: 0, split: 0, hammock: 0 } },
-              { name: "no TB chaining", tune: { chain: 0, lazywasm: 0, split: 0, hammock: 0 } },
-              { name: "no TB chaining, no SIMD float/integer inlining", tune: { chain: 0, fpinline: 0, simdinline: 0, lazywasm: 0, split: 0, hammock: 0 } },
-              { name: "no chaining/SIMD inlining/register locals/bulk string ops", tune: { chain: 0, fpinline: 0, simdinline: 0, repbulk: 0, regloc: 0, lazywasm: 0, split: 0, hammock: 0 } },
-              { name: "the above + fixed-size memory, fewer compiled blocks", tune: { chain: 0, fpinline: 0, simdinline: 0, repbulk: 0, regloc: 0, max: 8000, lazywasm: 0, split: 0, hammock: 0 }, presize: true },
-              { name: "interpreter only (slow)", tune: { chain: 0, fpinline: 0, simdinline: 0, repbulk: 0, regloc: 0, max: 8000, jit: 1000000000, lazywasm: 0, split: 0, hammock: 0 }, presize: true },
+              { name: "classic interpreter, modules stored with every block", tune: { lazywasm: 0, split: 0, hammock: 0, gflush: 0 } },
+              { name: "no TB chaining", tune: { chain: 0, lazywasm: 0, split: 0, hammock: 0, gflush: 0 } },
+              { name: "no TB chaining, no SIMD float/integer inlining", tune: { chain: 0, fpinline: 0, simdinline: 0, lazywasm: 0, split: 0, hammock: 0, gflush: 0 } },
+              { name: "no chaining/SIMD inlining/register locals/bulk string ops", tune: { chain: 0, fpinline: 0, simdinline: 0, repbulk: 0, regloc: 0, lazywasm: 0, split: 0, hammock: 0, gflush: 0 } },
+              { name: "the above + fixed-size memory, fewer compiled blocks", tune: { chain: 0, fpinline: 0, simdinline: 0, repbulk: 0, regloc: 0, max: 8000, lazywasm: 0, split: 0, hammock: 0, gflush: 0 }, presize: true },
+              { name: "interpreter only (slow)", tune: { chain: 0, fpinline: 0, simdinline: 0, repbulk: 0, regloc: 0, max: 8000, jit: 1000000000, lazywasm: 0, split: 0, hammock: 0, gflush: 0 }, presize: true },
             ];
             let safe = cfg().q64safe6 || { level: 0 };
             try {

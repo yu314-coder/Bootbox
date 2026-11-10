@@ -2091,6 +2091,7 @@ static void *tci_hot_keep[] __attribute__((used)) = { (void *)tci_hot_loop };   
 
 int wasm_fast_tci;   /* /bootbox-tune fasttci=1 */
 extern int bb_lazy_wasm;  /* /bootbox-tune lazywasm=1 (tcg.c) */
+extern int bb_gflush, bb_tlbstats;   /* /bootbox-tune gflush, tlbstats (accel/tcg/cputlb.c) */
 extern int bb_split_enabled;  /* /bootbox-tune split=0 (translate-all.c) */
 uint8_t *bb_tb_regen_wasm(CPUState *cpu, const void *tc_ptr);
 __thread int bb_fast_tci_depth, bb_force_slow_tci;
@@ -2196,15 +2197,19 @@ void bootbox_tune_init(void)
                 wasm_gvec_ool_enabled = v != 0;
             } else if (!strcmp(key, "sseatom")) {
                 bb_sse_atom16 = v != 0;
+            } else if (!strcmp(key, "gflush") && v >= 0 && v <= 3) {
+                bb_gflush = v;   /* CR3 writes keep global TLB entries (1) and kernel jump-cache entries (2) */
+            } else if (!strcmp(key, "tlbstats")) {
+                bb_tlbstats = v != 0;
             }
         }
         fclose(f);
         wasm_hot_num = (wasm_hot_share || wasm_sum_count) ? wasm_instantiate_num / 16 : wasm_instantiate_num;
-        fprintf(stderr, "[bootbox-tune] jit=%d max=%d fpinline=%d chain=%d/%s/%d regloc=%d hotshare=%d sumcnt=%d tsc=%d fasttci=%d lazywasm=%d hammock=%d repbulk=%d simdinline=%d gvecool=%d sseatom=%d\n",
+        fprintf(stderr, "[bootbox-tune] jit=%d max=%d fpinline=%d chain=%d/%s/%d regloc=%d hotshare=%d sumcnt=%d tsc=%d fasttci=%d lazywasm=%d hammock=%d repbulk=%d simdinline=%d gvecool=%d sseatom=%d gflush=%d\n",
                 wasm_instantiate_num, wasm_max_instance_alive, wasm_fp_inline_enabled,
                 wasm_tail_chain, wasm_chain_nested ? "nested" : "tail", wasm_chain_budget,
                 wasm_reg_locals, wasm_hot_share, wasm_sum_count, bootbox_tsc_lockfree, wasm_fast_tci, bb_lazy_wasm,
-                bb_hammock, bb_repbulk, wasm_simd_inline_enabled, wasm_gvec_ool_enabled, bb_sse_atom16);
+                bb_hammock, bb_repbulk, wasm_simd_inline_enabled, wasm_gvec_ool_enabled, bb_sse_atom16, bb_gflush);
     }
     qatomic_set(&state, 2);
 }

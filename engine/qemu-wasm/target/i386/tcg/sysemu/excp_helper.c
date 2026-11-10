@@ -36,6 +36,7 @@ typedef struct TranslateResult {
     hwaddr paddr;
     int prot;
     int page_size;
+    bool global;
 } TranslateResult;
 
 typedef enum TranslateFaultStage2 {
@@ -467,6 +468,10 @@ do_check_protect_pse36:
     out->paddr = paddr;
     out->prot = prot;
     out->page_size = page_size;
+    /* Bootbox: a global leaf survives CR3 writes while CR4.PGE is set (only for the guest's own
+     * stage-1 walk; never for nested/stage-2 translations) */
+    out->global = (pte & PG_GLOBAL_MASK) && (env->cr[4] & CR4_PGE_MASK) &&
+                  in->ptw_idx == MMU_PHYS_IDX && in->cr3 == env->cr[3];
     return true;
 
  do_fault_rsvd:
@@ -590,6 +595,7 @@ static bool get_physical_address(CPUX86State *env, vaddr addr,
 #endif
     out->prot = PAGE_READ | PAGE_WRITE | PAGE_EXEC;
     out->page_size = TARGET_PAGE_SIZE;
+    out->global = false;
     return true;
 }
 
@@ -607,9 +613,12 @@ bool x86_cpu_tlb_fill(CPUState *cs, vaddr addr, int size,
          * avoid filling it too fast.
          */
         assert(out.prot & (1 << access_type));
+        MemTxAttrs attrs = cpu_get_mem_attrs(env);
+        attrs.target_tlb_bit0 = out.global && mmu_idx != MMU_NESTED_IDX && mmu_idx != MMU_PHYS_IDX;
+        qatomic_set(&bb_cnt_fill, bb_cnt_fill + 1);
         tlb_set_page_with_attrs(cs, addr & TARGET_PAGE_MASK,
                                 out.paddr & TARGET_PAGE_MASK,
-                                cpu_get_mem_attrs(env),
+                                attrs,
                                 out.prot, mmu_idx, out.page_size);
         return true;
     }

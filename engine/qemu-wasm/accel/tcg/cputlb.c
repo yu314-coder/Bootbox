@@ -38,6 +38,10 @@
 #include "tb-hash.h"
 #include "internal-common.h"
 #include "internal-target.h"
+#include "tb-jmp-cache.h"
+#ifdef __EMSCRIPTEN__
+#include <emscripten.h>
+#endif
 #ifdef CONFIG_PLUGIN
 #include "qemu/plugin-memory.h"
 #endif
@@ -377,6 +381,151 @@ void tlb_flush_by_mmuidx(CPUState *cpu, uint16_t idxmap)
 void tlb_flush(CPUState *cpu)
 {
     tlb_flush_by_mmuidx(cpu, ALL_MMUIDX_BITS);
+}
+
+/* Bootbox: TLB statistics + a CR3 flush that keeps global entries (x86 CR4.PGE semantics). */
+uint64_t bb_cnt_cr3, bb_cnt_fill, bb_cnt_lookup, bb_cnt_jcmiss, bb_cnt_kept, bb_cnt_drop;
+int bb_gflush = 3, bb_tlbstats = 0;   /* 1.1 build 14: on by default (gflush=0 = stock QEMU) */
+void bb_stats_tick(void)
+{
+    static int64_t last; int64_t now = get_clock_realtime();
+    static uint64_t p[6];
+    if (!last) { last = now; return; }
+    if (now - last < 5000000000LL) return;
+    double s = (now - last) / 1e9; last = now;
+    uint64_t c[6] = { bb_cnt_cr3, bb_cnt_fill, bb_cnt_lookup, bb_cnt_jcmiss, bb_cnt_kept, bb_cnt_drop };
+#ifdef __EMSCRIPTEN__
+    emscripten_log(EM_LOG_CONSOLE, "[bbstat] cr3/s=%.0f fill/s=%.0f kept/flush=%.1f drop/flush=%.1f",
+            (c[0]-p[0])/s, (c[1]-p[1])/s,
+            c[0]-p[0] ? (double)(c[4]-p[4])/(c[0]-p[0]) : 0, c[0]-p[0] ? (double)(c[5]-p[5])/(c[0]-p[0]) : 0);
+    if (0)
+#endif
+    fprintf(stderr, "[bbstat] cr3/s=%.0f fill/s=%.0f lookup/s=%.0f jcmiss/s=%.0f kept/flush=%.1f drop/flush=%.1f\n",
+            (c[0]-p[0])/s, (c[1]-p[1])/s, (c[2]-p[2])/s, (c[3]-p[3])/s,
+            c[0]-p[0] ? (double)(c[4]-p[4])/(c[0]-p[0]) : 0, c[0]-p[0] ? (double)(c[5]-p[5])/(c[0]-p[0]) : 0);
+    memcpy(p, c, sizeof p);
+}
+
+/* Bootbox gflush=3: the global entries are recorded as they are filled (bb_glist_add), so a CR3
+ * write does the normal fast flush (memset + dynamic resize) and then puts back only those entries,
+ * instead of walking whole tables (a table walk per CR3 write was slower than the refills in wasm). */
+#define BB_GLIST_MAX 4096
+#define BB_GLIST_CPUS 64
+typedef struct { uint8_t idx; vaddr page; } BBGRec;
+static struct { uint32_t n; BBGRec r[BB_GLIST_MAX]; } *bb_glist[BB_GLIST_CPUS];
+static void bb_glist_add(CPUState *cpu, int mmu_idx, vaddr page)
+{
+    int c = cpu->cpu_index;
+    if (bb_gflush != 3 || c < 0 || c >= BB_GLIST_CPUS) return;
+    if (!bb_glist[c]) bb_glist[c] = g_new0(typeof(*bb_glist[0]), 1);
+    if (bb_glist[c]->n < BB_GLIST_MAX) bb_glist[c]->r[bb_glist[c]->n++] = (BBGRec){ mmu_idx, page };
+}
+static void tlb_add_large_page(CPUState *cpu, int mmu_idx, vaddr addr, uint64_t size);
+void tlb_flush_keep_global(CPUState *cpu, uint16_t keep_idxmap);
+void tlb_flush_keep_global(CPUState *cpu, uint16_t keep_idxmap)
+{
+    int c = cpu->cpu_index;
+    static __thread CPUTLBEntry *se; static __thread CPUTLBEntryFull *sf; static __thread BBGRec *sr;
+    uint32_t n = 0, kept = 0;
+    if (c < 0 || c >= BB_GLIST_CPUS || !bb_glist[c]) { tlb_flush(cpu); return; }
+    if (!se) { se = g_new(CPUTLBEntry, BB_GLIST_MAX); sf = g_new(CPUTLBEntryFull, BB_GLIST_MAX); sr = g_new(BBGRec, BB_GLIST_MAX); }
+    assert_cpu_is_self(cpu);
+    qemu_spin_lock(&cpu->neg.tlb.c.lock);
+    /* save the recorded entries that are still present and still global */
+    for (uint32_t i = 0; i < bb_glist[c]->n; i++) {
+        BBGRec r = bb_glist[c]->r[i];
+        if (!(keep_idxmap & (1 << r.idx))) continue;
+        CPUTLBDescFast *fast = &cpu->neg.tlb.f[r.idx];
+        uintptr_t ix = tlb_index(cpu, r.idx, r.page);
+        CPUTLBEntry *e = &fast->table[ix];
+        CPUTLBEntryFull *f = &cpu->neg.tlb.d[r.idx].fulltlb[ix];
+        if (!f->attrs.target_tlb_bit0) continue;
+        if (!tlb_hit_page(e->addr_read, r.page) && !tlb_hit_page(e->addr_write, r.page) &&
+            !tlb_hit_page(e->addr_code, r.page)) continue;
+        se[n] = *e; sf[n] = *f; sr[n] = r; n++;
+    }
+    qemu_spin_unlock(&cpu->neg.tlb.c.lock);
+    tlb_flush_by_mmuidx_async_work(cpu, RUN_ON_CPU_HOST_INT(ALL_MMUIDX_BITS));   /* memset + resize + jmp cache */
+    qemu_spin_lock(&cpu->neg.tlb.c.lock);
+    bb_glist[c]->n = 0;
+    for (uint32_t i = 0; i < n; i++) {
+        int k = sr[i].idx;
+        uintptr_t ix = tlb_index(cpu, k, sr[i].page);
+        CPUTLBEntry *e = &cpu->neg.tlb.f[k].table[ix];
+        if (e->addr_read != -1 || e->addr_write != -1 || e->addr_code != -1) continue;   /* duplicate */
+        *e = se[i];
+        cpu->neg.tlb.d[k].fulltlb[ix] = sf[i];
+        tlb_n_used_entries_inc(cpu, k);
+        cpu->neg.tlb.c.dirty |= 1 << k;
+        if (sf[i].lg_page_size > TARGET_PAGE_BITS) {
+            tlb_add_large_page(cpu, k, sr[i].page, 1ULL << sf[i].lg_page_size);
+        }
+        bb_glist[c]->r[bb_glist[c]->n++] = sr[i];
+        kept++;
+    }
+    qemu_spin_unlock(&cpu->neg.tlb.c.lock);
+    qatomic_set(&bb_cnt_kept, bb_cnt_kept + kept);
+}
+
+/* Drop every entry not marked global (attrs.target_tlb_bit0) in the given mmu indexes; flush the
+ * rest of ALL_MMUIDX_BITS completely. Must run on the vCPU itself (CR3 writes do). */
+void tlb_flush_nonglobal(CPUState *cpu, uint16_t keep_idxmap)
+{
+    int64_t now = get_clock_realtime();
+    uint64_t kept = 0, drop = 0;
+    assert_cpu_is_self(cpu);
+    qemu_spin_lock(&cpu->neg.tlb.c.lock);
+    for (int mmu_idx = 0; mmu_idx < NB_MMU_MODES; mmu_idx++) {
+        CPUTLBDesc *desc = &cpu->neg.tlb.d[mmu_idx];
+        CPUTLBDescFast *fast = &cpu->neg.tlb.f[mmu_idx];
+        if (!(cpu->neg.tlb.c.dirty & (1 << mmu_idx))) continue;
+        if (!(keep_idxmap & (1 << mmu_idx))) {
+            tlb_flush_one_mmuidx_locked(cpu, mmu_idx, now);
+            cpu->neg.tlb.c.dirty &= ~(1 << mmu_idx);
+            continue;
+        }
+        size_t n = tlb_n_entries(fast);
+        /* keep QEMU's dynamic TLB sizing: a resize reallocates the table, so flush it fully then */
+        tlb_mmu_resize_locked(desc, fast, now);
+        if (tlb_n_entries(fast) != n) {
+            tlb_mmu_flush_locked(desc, fast);
+            continue;
+        }
+        for (size_t i = 0; i < n; i++) {
+            CPUTLBEntry *e = &fast->table[i];
+            if (e->addr_read == -1 && e->addr_write == -1 && e->addr_code == -1) continue;
+            if (desc->fulltlb[i].attrs.target_tlb_bit0) { kept++; continue; }
+            memset(e, -1, sizeof(*e)); drop++;
+            desc->n_used_entries--;
+        }
+        for (int i = 0; i < CPU_VTLB_SIZE; i++) {
+            if (!desc->vfulltlb[i].attrs.target_tlb_bit0) memset(&desc->vtable[i], -1, sizeof(desc->vtable[i]));
+        }
+        /* large-page tracking stays as it was: conservative for tlb_flush_page */
+    }
+    qemu_spin_unlock(&cpu->neg.tlb.c.lock);
+    if (bb_gflush == 2 && cpu->tb_jmp_cache) {
+        /* keep jump-cache entries whose code pages (first and last byte) still have a global code
+         * translation in a kernel mmu index: those mappings are the same in every address space */
+        CPUJumpCache *jc = cpu->tb_jmp_cache;
+        for (int i = 0; i < TB_JMP_CACHE_SIZE; i++) {
+            TranslationBlock *tb = qatomic_read(&jc->array[i].tb);
+            if (!tb) continue;
+            vaddr pc = (tb_cflags(tb) & CF_PCREL) ? jc->array[i].pc : tb->pc;
+            vaddr last = pc + (tb->size ? tb->size - 1 : 0);
+            bool ok = false;
+            for (int k = 0; k < NB_MMU_MODES && !ok; k++) {
+                if (!(keep_idxmap & (1 << k))) continue;
+                CPUTLBEntry *e1 = tlb_entry(cpu, k, pc), *e2 = tlb_entry(cpu, k, last);
+                ok = tlb_hit(tlb_read_idx(e1, MMU_INST_FETCH), pc) && tlb_hit(tlb_read_idx(e2, MMU_INST_FETCH), last);
+            }
+            if (!ok) qatomic_set(&jc->array[i].tb, NULL);
+        }
+    } else {
+        tcg_flush_jmp_cache(cpu);
+    }
+    qatomic_set(&bb_cnt_kept, bb_cnt_kept + kept);
+    qatomic_set(&bb_cnt_drop, bb_cnt_drop + drop);
 }
 
 void tlb_flush_by_mmuidx_all_cpus(CPUState *src_cpu, uint16_t idxmap)
@@ -1272,6 +1421,9 @@ void tlb_set_page_full(CPUState *cpu, int mmu_idx,
 
     copy_tlb_helper_locked(te, &tn);
     tlb_n_used_entries_inc(cpu, mmu_idx);
+    if (full->attrs.target_tlb_bit0) {
+        bb_glist_add(cpu, mmu_idx, addr_page);
+    }
     qemu_spin_unlock(&tlb->c.lock);
 }
 

@@ -96,6 +96,11 @@ void tlb_flush_page_all_cpus_synced(CPUState *src, vaddr addr);
  * use one of the other functions for efficiency.
  */
 void tlb_flush(CPUState *cpu);
+void tlb_flush_nonglobal(CPUState *cpu, uint16_t keep_idxmap);
+void tlb_flush_keep_global(CPUState *cpu, uint16_t keep_idxmap);
+extern uint64_t bb_cnt_cr3, bb_cnt_fill, bb_cnt_lookup, bb_cnt_jcmiss, bb_cnt_kept, bb_cnt_drop;
+extern int bb_gflush, bb_tlbstats;
+void bb_stats_tick(void);
 /**
  * tlb_flush_all_cpus:
  * @cpu: src CPU of the flush
