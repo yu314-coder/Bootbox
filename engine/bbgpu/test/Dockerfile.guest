@@ -1,0 +1,4 @@
+FROM alpine-desktop:v18
+COPY out/dri /opt/bbgpu/dri
+COPY out/gltest init.sh /
+RUN chmod +x /init.sh /gltest

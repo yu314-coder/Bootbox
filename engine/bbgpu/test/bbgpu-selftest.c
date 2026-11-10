@@ -79,7 +79,7 @@ int main(void)
     E(BBGPU_OP_RES_CREATE, 1, BBGPU_TARGET_2D, BBGPU_FMT_RGBA8, 64, 64, 1, 1, 0);
     E(BBGPU_OP_RES_CREATE, 2, BBGPU_TARGET_2D, BBGPU_FMT_Z24S8, 64, 64, 1, 1, 0);
     E(BBGPU_OP_SET_FRAMEBUFFER, 1, 2, 1);
-    E(BBGPU_OP_SET_VIEWPORT, fu(0), fu(0), fu(64), fu(64), fu(0), fu(1));
+    E(BBGPU_OP_SET_VIEWPORT, fu(0), fu(0), fu(64), fu(64), fu(0), fu(1), 0);
     E(BBGPU_OP_CLEAR, GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT | GL_STENCIL_BUFFER_BIT, fu(1), fu(0), fu(0), fu(1), fu(1), 0);
     E(BBGPU_OP_RES_READ, 1, 0, 0, 0, 64, 64, rd, 0);
     printf("1 clear: %s\n", flush() ? "executed" : "FAILED");
@@ -154,7 +154,7 @@ int main(void)
     E(BBGPU_OP_RES_CREATE, 40, BBGPU_TARGET_2D, BBGPU_FMT_RGBA8, 64, 64, 1, 1, 0);
     E(BBGPU_OP_SET_DEPTH_STENCIL, 0, 0, GL_LESS, 0, GL_ALWAYS, 0, 0xff, GL_KEEP, GL_KEEP, GL_KEEP, 0xff);
     E(BBGPU_OP_CLEAR, GL_COLOR_BUFFER_BIT, fu(0.2f), fu(0.4f), fu(0.6f), fu(1), fu(1), 0);
-    E(BBGPU_OP_COPY_RES, 40, 0, 0, 0, 1, 0, 0, 0, 64, 64, 0);
+    E(BBGPU_OP_COPY_RES, 40, 0, 1, 0, 0, 0, 64, 64, 0, 0, 64, 64, 0);
     E(BBGPU_OP_RES_READ, 40, 0, 0, 0, 64, 64, rd, 0);
     printf("5 copy: %s\n", flush() ? "executed" : "FAILED");
     memcpy(px, HEAP + rd, sizeof px);

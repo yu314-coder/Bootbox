@@ -53,7 +53,8 @@ enum {
 
     /* state */
     BBGPU_OP_SET_FRAMEBUFFER,  /* ncbufs, zs, cbuf[ncbufs] (resource ids; 0 = none / default) */
-    BBGPU_OP_SET_VIEWPORT,     /* x, y, w, h (f32), znear, zfar (f32) */
+    BBGPU_OP_SET_VIEWPORT,     /* x, y, w, h (f32), znear, zfar (f32), yflip (u32: Gallium window FBOs are
+                                  y-down; the VS multiplies gl_Position.y by bb_flip and the front face flips) */
     BBGPU_OP_SET_SCISSOR,      /* enable, x, y, w, h */
     BBGPU_OP_SET_BLEND,        /* enable, rgb_eq, rgb_src, rgb_dst, a_eq, a_src, a_dst, colormask, color rgba (f32) */
     BBGPU_OP_SET_DEPTH_STENCIL,/* depth_test, depth_write, depth_func, stencil_test, func, ref, mask, fail, zfail, zpass, writemask */
@@ -68,7 +69,8 @@ enum {
     /* drawing */
     BBGPU_OP_CLEAR,            /* buffers (GL bits), r, g, b, a (f32), depth (f32), stencil */
     BBGPU_OP_DRAW,             /* mode, start, count, instances, index_bias (s32), indexed */
-    BBGPU_OP_COPY_RES,         /* dst, dst_level, dx, dy, src, src_level, sx, sy, w, h, filter (blit) */
+    BBGPU_OP_COPY_RES,         /* dst, dst_level, src, src_level, sx0, sy0, sx1, sy1, dx0, dy0, dx1, dy1, filter:
+                                  blitFramebuffer rectangles (flips and scaling allowed) */
 
     BBGPU_OP_COUNT
 };
@@ -93,6 +95,7 @@ enum {
  *   vertex inputs        in  ... bb_a0 .. bb_a15       (attribute location = index)
  *   uniforms             uniform vec4 bb_vc[N] (VS), bb_fc[N] (FS)
  *   samplers             uniform sampler2D bb_s0 .. bb_s15 (unit = index)
- *   fragment outputs     out vec4 bb_o0 .. (location = index) */
+ *   fragment outputs     out vec4 bb_o0 .. (location = index)
+ *   y flip               uniform float bb_flip (VS: gl_Position.y *= bb_flip) */
 
 #endif

@@ -17,7 +17,7 @@ typedef struct {
                                       buffer can never be used for other data, nor the other way round) */
     uint8_t *shadow;               /* buffers: host copy, fills the index twin */
     uint32_t w, h, levels, bind;
-    GLint loc_vc, loc_fc;          /* programs: uniform arrays */
+    GLint loc_vc, loc_fc, loc_flip; /* programs: uniform arrays, y flip */
 } Obj;
 
 typedef struct { uint32_t buffer, offset, size, type, normalized, integer, divisor; } VElem;
@@ -34,6 +34,7 @@ struct BBRenderer {
     VBuf vb[16]; uint32_t nvb;
     uint32_t ib_res, ib_size, ib_off;
     uint32_t fb_w, fb_h;
+    int flip, front_ccw;
     char log[BBGPU_LOG_SIZE];
     uint64_t draws;
 };
@@ -209,6 +210,7 @@ static int program_create(BBRenderer *r, const uint32_t *p)
     glUseProgram(o->gl);
     o->loc_vc = glGetUniformLocation(o->gl, "bb_vc");
     o->loc_fc = glGetUniformLocation(o->gl, "bb_fc");
+    o->loc_flip = glGetUniformLocation(o->gl, "bb_flip");
     for (int i = 0; i < 16; i++) {
         char name[16]; snprintf(name, sizeof name, "bb_s%d", i);
         GLint l = glGetUniformLocation(o->gl, name);
@@ -290,6 +292,8 @@ static int draw(BBRenderer *r, const uint32_t *p)
         if (prog->loc_fc >= 0 && r->fc_n) glUniform4fv(prog->loc_fc, r->fc_n, &r->fc[0][0]);
         r->uniforms_dirty = 0;
     }
+    if (prog->loc_flip >= 0) glUniform1f(prog->loc_flip, r->flip ? -1.0f : 1.0f);
+    glFrontFace((r->front_ccw ^ r->flip) ? GL_CCW : GL_CW);
     apply_vertex_state(r, indexed ? bias : 0);
     if (!inst) inst = 1;
     if (indexed) {
@@ -312,16 +316,21 @@ static int draw(BBRenderer *r, const uint32_t *p)
 
 static int copy_res(BBRenderer *r, const uint32_t *p)
 {
-    Obj *d = obj_kind(r, U(p, 0), K_TEXTURE), *s = obj_kind(r, U(p, 4), K_TEXTURE);
+    Obj *d = obj_kind(r, U(p, 0), K_TEXTURE), *s = obj_kind(r, U(p, 2), K_TEXTURE);
     if (!d || !s) return BBGPU_ERR_OBJECT;
-    uint32_t dx = U(p, 2), dy = U(p, 3), sx = U(p, 6), sy = U(p, 7), w = U(p, 8), h = U(p, 9);
-    GLbitfield mask = fmt_info[s->fmt].depth ? GL_DEPTH_BUFFER_BIT : GL_COLOR_BUFFER_BIT;
-    GLenum att = fmt_info[s->fmt].depth ? GL_DEPTH_ATTACHMENT : GL_COLOR_ATTACHMENT0;
+    int depth = fmt_info[s->fmt].depth;
+    GLbitfield mask = depth ? (GL_DEPTH_BUFFER_BIT | (depth == 2 ? GL_STENCIL_BUFFER_BIT : 0)) : GL_COLOR_BUFFER_BIT;
+    GLenum att = depth == 2 ? GL_DEPTH_STENCIL_ATTACHMENT : depth ? GL_DEPTH_ATTACHMENT : GL_COLOR_ATTACHMENT0;
     glBindFramebuffer(GL_READ_FRAMEBUFFER, r->read_fbo);
-    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, att, GL_TEXTURE_2D, s->gl, U(p, 5));
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, att, GL_TEXTURE_2D, s->gl, U(p, 3));
     glBindFramebuffer(GL_DRAW_FRAMEBUFFER, r->draw_fbo);
     glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, att, GL_TEXTURE_2D, d->gl, U(p, 1));
-    glBlitFramebuffer(sx, sy, sx + w, sy + h, dx, dy, dx + w, dy + h, mask, U(p, 10) ? GL_LINEAR : GL_NEAREST);
+    int scissor = glIsEnabled(GL_SCISSOR_TEST);
+    if (scissor) glDisable(GL_SCISSOR_TEST);
+    glBlitFramebuffer((GLint)U(p, 4), (GLint)U(p, 5), (GLint)U(p, 6), (GLint)U(p, 7),
+                      (GLint)U(p, 8), (GLint)U(p, 9), (GLint)U(p, 10), (GLint)U(p, 11), mask,
+                      (U(p, 12) && !depth) ? GL_LINEAR : GL_NEAREST);
+    if (scissor) glEnable(GL_SCISSOR_TEST);
     glFramebufferTexture2D(GL_READ_FRAMEBUFFER, att, GL_TEXTURE_2D, 0, 0);
     glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, att, GL_TEXTURE_2D, 0, 0);
     glBindFramebuffer(GL_FRAMEBUFFER, r->fbo);
@@ -351,7 +360,7 @@ static int exec_one(BBRenderer *r, uint32_t op, const uint32_t *p, uint32_t ndw,
     case BBGPU_OP_SET_FRAMEBUFFER: return set_framebuffer(r, p, ndw);
     case BBGPU_OP_SET_VIEWPORT:
         glViewport((GLint)F(p, 0), (GLint)F(p, 1), (GLsizei)F(p, 2), (GLsizei)F(p, 3));
-        glDepthRangef(F(p, 4), F(p, 5)); return 0;
+        glDepthRangef(F(p, 4), F(p, 5)); r->flip = ndw > 6 && U(p, 6); return 0;
     case BBGPU_OP_SET_SCISSOR:
         if (U(p, 0)) { glEnable(GL_SCISSOR_TEST); glScissor(U(p, 1), U(p, 2), U(p, 3), U(p, 4)); }
         else glDisable(GL_SCISSOR_TEST);
@@ -374,7 +383,7 @@ static int exec_one(BBRenderer *r, uint32_t op, const uint32_t *p, uint32_t ndw,
         return 0;
     case BBGPU_OP_SET_RASTER:
         if (U(p, 0)) { glEnable(GL_CULL_FACE); glCullFace(U(p, 0)); } else glDisable(GL_CULL_FACE);
-        glFrontFace(U(p, 1) ? GL_CCW : GL_CW);
+        r->front_ccw = U(p, 1) != 0;
         if (U(p, 2)) { glEnable(GL_POLYGON_OFFSET_FILL); glPolygonOffset(F(p, 3), F(p, 4)); } else glDisable(GL_POLYGON_OFFSET_FILL);
         return 0;
     case BBGPU_OP_USE_PROGRAM: {
@@ -434,6 +443,27 @@ uint32_t bbr_execute(BBRenderer *r, uint32_t *tail, uint32_t head, uint32_t *fen
         if (dw < 2 || at + dw * 4 > BBGPU_RING_SIZE) return BBGPU_ERR_RING;
         if (op == BBGPU_OP_WRAP) { *tail += BBGPU_RING_SIZE - at; continue; }
         uint32_t e = exec_one(r, op, c + 2, dw - 2, fence_done);
+#ifndef __EMSCRIPTEN__
+        static int trace = -1;
+        if (trace < 0) { const char *t = getenv("BBGPU_TRACE"); trace = t && *t == '1'; }
+        if (trace) {
+            const uint32_t *q = c + 2; GLenum ge = glGetError();
+            fprintf(stderr, "[bbr] op %2u dw %4u  %08x %08x %08x %08x %08x %08x  e=%u gl=0x%x\n", op, dw,
+                    dw > 2 ? q[0] : 0, dw > 3 ? q[1] : 0, dw > 4 ? q[2] : 0, dw > 5 ? q[3] : 0, dw > 6 ? q[4] : 0, dw > 7 ? q[5] : 0, e, ge);
+            if (op == BBGPU_OP_SET_UNIFORMS && dw > 6) fprintf(stderr, "[bbr]   uniforms[0] %g %g %g %g\n", F(q, 3), F(q, 4), F(q, 5), F(q, 6));
+            if (op == BBGPU_OP_DRAW) {
+                for (uint32_t i = 0; i < r->nve; i++) {
+                    VElem *ve = &r->ve[i]; VBuf *vb = ve->buffer < r->nvb ? &r->vb[ve->buffer] : NULL;
+                    Obj *o = vb ? obj_kind(r, vb->res, K_BUFFER) : NULL;
+                    float f[4] = {0}; if (o && vb->offset + ve->offset + 16 <= o->w) memcpy(f, o->shadow + vb->offset + ve->offset, 16);
+                    fprintf(stderr, "[bbr]   attr%u buf%u res%u stride %u off %u size %u type 0x%x: %g %g %g %g\n", i, ve->buffer,
+                            vb ? vb->res : 0, vb ? vb->stride : 0, vb ? vb->offset + ve->offset : 0, ve->size, ve->type, f[0], f[1], f[2], f[3]);
+                }
+                GLint vp[4]; glGetIntegerv(GL_VIEWPORT, vp);
+                fprintf(stderr, "[bbr]   viewport %d %d %d %d flip %d prog %u fb %ux%u\n", vp[0], vp[1], vp[2], vp[3], r->flip, r->program, r->fb_w, r->fb_h);
+            }
+        }
+#endif
         *tail += dw * 4;
         if (e) { *err_op = op; return e; }
     }
