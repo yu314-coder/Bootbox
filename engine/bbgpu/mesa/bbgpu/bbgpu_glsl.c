@@ -139,6 +139,21 @@ static void tex_expr(struct tr *t, const struct tgsi_full_instruction *in, const
    unsigned target = in->Texture.Texture;
    if (unit < 16) t->sampler_target[unit] = target;
    char coord[300];
+   bool shadow = target == TGSI_TEXTURE_SHADOW2D || target == TGSI_TEXTURE_SHADOWRECT || target == TGSI_TEXTURE_SHADOW1D;
+   if (shadow) {
+      /* sampler2DShadow: the reference is .z (TXP: divided by .w like the coordinates) */
+      const char *xy = target == TGSI_TEXTURE_SHADOW1D ? "vec2((%s).x, 0.5)" : "(%s).xy";
+      char c[200]; snprintf(c, sizeof c, xy, s[0]);
+      if (target == TGSI_TEXTURE_SHADOWRECT) { char r[300]; snprintf(r, sizeof r, "(%s / vec2(textureSize(bb_s%u, 0)))", c, unit); strcpy(c, r); }
+      switch (op) {
+      case TGSI_OPCODE_TXP: snprintf(out, n, "vec4(texture(bb_s%u, vec3(%s / (%s).w, (%s).z / (%s).w)))", unit, c, s[0], s[0], s[0]); break;
+      case TGSI_OPCODE_TXB: snprintf(out, n, "vec4(texture(bb_s%u, vec3(%s, (%s).z), (%s).w))", unit, c, s[0], s[0]); break;
+      case TGSI_OPCODE_TXL: snprintf(out, n, "vec4(textureLod(bb_s%u, vec3(%s, (%s).z), (%s).w))", unit, c, s[0], s[0]); break;
+      case TGSI_OPCODE_TXQ: snprintf(out, n, "vec4(vec2(textureSize(bb_s%u, int((%s).x))), 0.0, 1.0)", unit, s[0]); break;
+      default: snprintf(out, n, "vec4(texture(bb_s%u, vec3(%s, (%s).z)))", unit, c, s[0]); break;
+      }
+      return;
+   }
    if (target == TGSI_TEXTURE_1D) snprintf(coord, sizeof coord, "vec2((%s).x, 0.5)", s[0]);
    else if (target == TGSI_TEXTURE_RECT) snprintf(coord, sizeof coord, "((%s).xy / vec2(textureSize(bb_s%u, 0)))", s[0], unit);
    else if (target == TGSI_TEXTURE_2D) snprintf(coord, sizeof coord, "(%s).xy", s[0]);
@@ -320,8 +335,11 @@ char *bbgpu_glsl(const struct bbgpu_shader *sh, const struct bbgpu_shader *other
    if (t.vs)
       sb_printf(&out, "uniform float bb_flip;\n");
    for (unsigned i = 0; i < 16; i++)
-      if (sh->info.file_mask[TGSI_FILE_SAMPLER] & (1u << i) || t.sampler_target[i])
-         sb_printf(&out, "uniform sampler2D bb_s%u;\n", i);
+      if (sh->info.file_mask[TGSI_FILE_SAMPLER] & (1u << i) || t.sampler_target[i]) {
+         unsigned tg = t.sampler_target[i];
+         bool shadow = tg == TGSI_TEXTURE_SHADOW2D || tg == TGSI_TEXTURE_SHADOWRECT || tg == TGSI_TEXTURE_SHADOW1D;
+         sb_printf(&out, "uniform %s bb_s%u;\n", shadow ? "highp sampler2DShadow" : "sampler2D", i);
+      }
    if (t.decl.s)
       sb_printf(&out, "%s", t.decl.s);
    /* the FS reads varyings this VS does not write: declare and zero them (GLSL ES link rule) */

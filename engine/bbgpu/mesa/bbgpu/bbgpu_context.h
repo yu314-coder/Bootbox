@@ -44,7 +44,7 @@ struct bbgpu_vertex_elements {
    struct { unsigned buffer, offset, size, type, norm, divisor, stride; } e[16];
 };
 
-struct bbgpu_sampler { unsigned min_filter, mag_filter, wrap_s, wrap_t; };
+struct bbgpu_sampler { unsigned min_filter, mag_filter, wrap_s, wrap_t, compare; float lod_bias; };
 
 struct bbgpu_context {
    struct pipe_context base;

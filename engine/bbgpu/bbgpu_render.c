@@ -81,6 +81,8 @@ static const FmtInfo fmt_info[BBGPU_FMT_COUNT] = {
     [BBGPU_FMT_Z24X8]   = { GL_DEPTH_COMPONENT24, GL_DEPTH_COMPONENT, GL_UNSIGNED_INT, 4, 0, 1 },
     [BBGPU_FMT_Z24S8]   = { GL_DEPTH24_STENCIL8, GL_DEPTH_STENCIL, GL_UNSIGNED_INT_24_8, 4, 0, 2 },
     [BBGPU_FMT_Z32F]    = { GL_DEPTH_COMPONENT32F, GL_DEPTH_COMPONENT, GL_FLOAT, 4, 0, 1 },
+    [BBGPU_FMT_SRGBA8]  = { GL_SRGB8_ALPHA8, GL_RGBA, GL_UNSIGNED_BYTE, 4, 0, 0 },
+    [BBGPU_FMT_SBGRA8]  = { GL_SRGB8_ALPHA8, GL_RGBA, GL_UNSIGNED_BYTE, 4, 1, 0 },
 };
 
 static void swap_rb(uint8_t *p, uint32_t w, uint32_t h, uint32_t stride)
@@ -250,9 +252,10 @@ static int set_framebuffer(BBRenderer *r, const uint32_t *p, uint32_t ndw)
 static int set_textures(BBRenderer *r, const uint32_t *p, uint32_t ndw)
 {
     uint32_t first = U(p, 0), n = U(p, 1);
-    if (first + n > 16 || ndw < 2 + n * 6) return BBGPU_ERR_RANGE;
+    uint32_t per = ndw >= 2 + n * 8 ? 8 : 6;
+    if (first + n > 16 || ndw < 2 + n * per) return BBGPU_ERR_RANGE;
     for (uint32_t i = 0; i < n; i++) {
-        const uint32_t *t = p + 2 + i * 6;
+        const uint32_t *t = p + 2 + i * per;
         Obj *o = obj_kind(r, U(t, 0), K_TEXTURE);
         GLuint s = r->sampler[first + i];
         glActiveTexture(GL_TEXTURE0 + first + i);
@@ -262,6 +265,9 @@ static int set_textures(BBRenderer *r, const uint32_t *p, uint32_t ndw)
         glSamplerParameteri(s, GL_TEXTURE_MAG_FILTER, U(t, 2));
         glSamplerParameteri(s, GL_TEXTURE_WRAP_S, U(t, 3));
         glSamplerParameteri(s, GL_TEXTURE_WRAP_T, U(t, 4));
+        uint32_t cmp = per == 8 ? U(t, 6) : 0;
+        glSamplerParameteri(s, GL_TEXTURE_COMPARE_MODE, cmp ? GL_COMPARE_REF_TO_TEXTURE : GL_NONE);
+        if (cmp) glSamplerParameteri(s, GL_TEXTURE_COMPARE_FUNC, cmp);
     }
     glActiveTexture(GL_TEXTURE0);
     return 0;
@@ -381,9 +387,17 @@ static int exec_one(BBRenderer *r, uint32_t op, const uint32_t *p, uint32_t ndw,
         glDepthMask(U(p, 1) ? GL_TRUE : GL_FALSE);
         glDepthFunc(U(p, 2));
         if (U(p, 3)) glEnable(GL_STENCIL_TEST); else glDisable(GL_STENCIL_TEST);
-        glStencilFunc(U(p, 4), U(p, 5), U(p, 6));
-        glStencilOp(U(p, 7), U(p, 8), U(p, 9));
-        glStencilMask(U(p, 10));
+        {
+            int two = ndw >= 18;   /* separate back-face state */
+            glStencilFuncSeparate(two ? GL_FRONT : GL_FRONT_AND_BACK, U(p, 4), U(p, 5), U(p, 6));
+            glStencilOpSeparate(two ? GL_FRONT : GL_FRONT_AND_BACK, U(p, 7), U(p, 8), U(p, 9));
+            glStencilMaskSeparate(two ? GL_FRONT : GL_FRONT_AND_BACK, U(p, 10));
+            if (two) {
+                glStencilFuncSeparate(GL_BACK, U(p, 11), U(p, 12), U(p, 13));
+                glStencilOpSeparate(GL_BACK, U(p, 14), U(p, 15), U(p, 16));
+                glStencilMaskSeparate(GL_BACK, U(p, 17));
+            }
+        }
         return 0;
     case BBGPU_OP_SET_RASTER:
         if (U(p, 0)) { glEnable(GL_CULL_FACE); glCullFace(U(p, 0)); } else glDisable(GL_CULL_FACE);

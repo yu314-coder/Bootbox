@@ -57,14 +57,16 @@ enum {
                                   y-down; the VS multiplies gl_Position.y by bb_flip and the front face flips) */
     BBGPU_OP_SET_SCISSOR,      /* enable, x, y, w, h */
     BBGPU_OP_SET_BLEND,        /* enable, rgb_eq, rgb_src, rgb_dst, a_eq, a_src, a_dst, colormask, color rgba (f32) */
-    BBGPU_OP_SET_DEPTH_STENCIL,/* depth_test, depth_write, depth_func, stencil_test, func, ref, mask, fail, zfail, zpass, writemask */
+    BBGPU_OP_SET_DEPTH_STENCIL,/* depth_test, depth_write, depth_func, stencil_test, then front: func, ref, mask, fail, zfail,
+                                  zpass, writemask, then (optional) back: func, ref, mask, fail, zfail, zpass, writemask */
     BBGPU_OP_SET_RASTER,       /* cull_face (0 none, GL enum), front_ccw, poly_offset_enable, factor (f32), units (f32) */
     BBGPU_OP_USE_PROGRAM,      /* id */
     BBGPU_OP_SET_UNIFORMS,     /* stage, first_vec4, count, then count*4 f32 (uniform vec4 bb_vc[] / bb_fc[]) */
     BBGPU_OP_SET_VERTEX_ELEMENTS, /* n, then per element: buffer, offset, size, gl_type, normalized, integer, divisor */
     BBGPU_OP_SET_VERTEX_BUFFERS,  /* n, then per buffer: res id, stride, offset */
     BBGPU_OP_SET_INDEX_BUFFER,    /* res id (0 = none), index_size (1,2,4), offset */
-    BBGPU_OP_SET_TEXTURES,     /* first_unit, n, then per unit: res id, min_filter, mag_filter, wrap_s, wrap_t, swizzle (4x u8) */
+    BBGPU_OP_SET_TEXTURES,     /* first_unit, n, then per unit (8 dwords): res id, min_filter, mag_filter, wrap_s, wrap_t,
+                                  swizzle (4x u8, unused), compare (0 = none, else GL compare func), lod_bias (f32) */
 
     /* drawing */
     BBGPU_OP_CLEAR,            /* buffers (GL bits), r, g, b, a (f32), depth (f32), stencil */
@@ -85,6 +87,7 @@ enum {
     BBGPU_FMT_R8, BBGPU_FMT_RG8, BBGPU_FMT_A8,
     BBGPU_FMT_RGB565, BBGPU_FMT_RGBA16F, BBGPU_FMT_RGBA32F,
     BBGPU_FMT_Z16, BBGPU_FMT_Z24X8, BBGPU_FMT_Z24S8, BBGPU_FMT_Z32F,
+    BBGPU_FMT_SRGBA8, BBGPU_FMT_SBGRA8,
     BBGPU_FMT_COUNT
 };
 /* shader stages */

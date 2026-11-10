@@ -21,7 +21,7 @@ static int bbgpu_get_param(struct pipe_screen *screen, enum pipe_cap param)
    switch (param) {
    case PIPE_CAP_NPOT_TEXTURES:
    case PIPE_CAP_BLEND_EQUATION_SEPARATE:
-   case PIPE_CAP_FS_COORD_ORIGIN_LOWER_LEFT:
+   case PIPE_CAP_FS_COORD_ORIGIN_UPPER_LEFT:     /* GL row 0 = memory row 0 = Gallium's top row */
    case PIPE_CAP_FS_COORD_PIXEL_CENTER_HALF_INTEGER:
    case PIPE_CAP_MIXED_COLORBUFFER_FORMATS:
    case PIPE_CAP_VERTEX_COLOR_UNCLAMPED:
@@ -40,6 +40,10 @@ static int bbgpu_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_MAX_TEXTURE_ARRAY_LAYERS:
       return 0;
    case PIPE_CAP_MAX_RENDER_TARGETS:
+      return 1;
+   case PIPE_CAP_TEXTURE_SHADOW_MAP:          /* sampler2DShadow + sampler compare (WebGL2 has both) */
+   case PIPE_CAP_MIXED_FRAMEBUFFER_SIZES:     /* GLES 3.0 renders the intersection of the attachments */
+   case PIPE_CAP_MIXED_COLOR_DEPTH_BITS:
       return 1;
    case PIPE_CAP_MAX_VIEWPORTS:
       return 1;
@@ -81,7 +85,6 @@ static int bbgpu_get_param(struct pipe_screen *screen, enum pipe_cap param)
    case PIPE_CAP_INDEP_BLEND_FUNC:
    case PIPE_CAP_DEPTH_CLIP_DISABLE:
    case PIPE_CAP_SHADER_STENCIL_EXPORT:
-   case PIPE_CAP_TEXTURE_SHADOW_MAP:
    case PIPE_CAP_SEAMLESS_CUBE_MAP:
    case PIPE_CAP_CONDITIONAL_RENDER:
    case PIPE_CAP_TEXTURE_BARRIER:
@@ -201,6 +204,8 @@ int bbgpu_format(enum pipe_format f)
    case PIPE_FORMAT_Z24X8_UNORM:    return BBGPU_FMT_Z24X8;
    case PIPE_FORMAT_Z24_UNORM_S8_UINT: return BBGPU_FMT_Z24S8;
    case PIPE_FORMAT_Z32_FLOAT:      return BBGPU_FMT_Z32F;
+   case PIPE_FORMAT_R8G8B8A8_SRGB:  return BBGPU_FMT_SRGBA8;
+   case PIPE_FORMAT_B8G8R8A8_SRGB:  return BBGPU_FMT_SBGRA8;
    default: return 0;
    }
 }
@@ -371,9 +376,7 @@ static void bbgpu_destroy(struct pipe_screen *screen)
    struct bbgpu_screen *bs = bbgpu_screen(screen);
    bbgpu_fence_wait(bs->dev, bbgpu_dev_flush(bs->dev));
    bbgpu_dev_put(bs->dev);
-   if (bs->winsys->destroy)
-      bs->winsys->destroy(bs->winsys);
-   FREE(bs);
+   FREE(bs);              /* the winsys belongs to the pipe loader, which destroys it */
 }
 
 static int bbgpu_get_screen_fd(struct pipe_screen *screen) { return -1; }

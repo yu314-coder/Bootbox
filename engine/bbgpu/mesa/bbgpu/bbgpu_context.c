@@ -112,6 +112,8 @@ static void *create_sampler(struct pipe_context *c, const struct pipe_sampler_st
    b->mag_filter = s->mag_img_filter == PIPE_TEX_FILTER_LINEAR ? GL_LINEAR : GL_NEAREST;
    b->wrap_s = gl_wrap(s->wrap_s);
    b->wrap_t = gl_wrap(s->wrap_t);
+   b->compare = s->compare_mode == PIPE_TEX_COMPARE_R_TO_TEXTURE ? GL_NEVER + s->compare_func : 0;
+   b->lod_bias = s->lod_bias;
    return b;
 }
 static void bind_samplers(struct pipe_context *c, enum pipe_shader_type sh, unsigned start, unsigned n, void **s)
@@ -472,10 +474,13 @@ static void emit_state(struct bbgpu_context *ctx)
    }
    if ((dirty & BBGPU_DIRTY_DSA) && ctx->dsa) {
       const struct pipe_depth_stencil_alpha_state *z = ctx->dsa;
-      const struct pipe_stencil_state *s = &z->stencil[0];
+      const struct pipe_stencil_state *s = &z->stencil[0], *b = z->stencil[1].enabled ? &z->stencil[1] : &z->stencil[0];
+      unsigned bref = ctx->stencil_ref.ref_value[z->stencil[1].enabled ? 1 : 0];
       BBGPU_CMD(d, BBGPU_OP_SET_DEPTH_STENCIL, z->depth_enabled, z->depth_writemask, GL_NEVER + z->depth_func,
                 s->enabled, GL_NEVER + s->func, ctx->stencil_ref.ref_value[0], s->valuemask, gl_stencil_op(s->fail_op),
-                gl_stencil_op(s->zfail_op), gl_stencil_op(s->zpass_op), s->writemask);
+                gl_stencil_op(s->zfail_op), gl_stencil_op(s->zpass_op), s->writemask,
+                GL_NEVER + b->func, bref, b->valuemask, gl_stencil_op(b->fail_op), gl_stencil_op(b->zfail_op),
+                gl_stencil_op(b->zpass_op), b->writemask);
    }
    if ((dirty & BBGPU_DIRTY_RAST) && ctx->rast) {
       const struct pipe_rasterizer_state *r = ctx->rast;
@@ -524,18 +529,19 @@ static void emit_state(struct bbgpu_context *ctx)
       bbgpu_cmd(d, BBGPU_OP_SET_VERTEX_BUFFERS, q, 1 + ctx->num_vb * 3);
    }
    if (dirty & BBGPU_DIRTY_TEXTURES) {
-      uint32_t p[2 + 16 * 6];
+      uint32_t p[2 + 16 * 8];
       unsigned n = ctx->num_views;
       p[0] = 0; p[1] = n;
       for (unsigned i = 0; i < n; i++) {
          struct pipe_sampler_view *v = ctx->views[i];
          struct bbgpu_sampler *s = ctx->samplers[i];
-         uint32_t *x = p + 2 + i * 6;
+         uint32_t *x = p + 2 + i * 8;
          x[0] = v && v->texture ? bbgpu_resource(v->texture)->id : 0;
          x[1] = s ? s->min_filter : GL_NEAREST; x[2] = s ? s->mag_filter : GL_NEAREST;
          x[3] = s ? s->wrap_s : GL_CLAMP_TO_EDGE; x[4] = s ? s->wrap_t : GL_CLAMP_TO_EDGE; x[5] = 0x03020100;
+         x[6] = s ? s->compare : 0; x[7] = bbgpu_f2u(s ? s->lod_bias : 0.0f);
       }
-      bbgpu_cmd(d, BBGPU_OP_SET_TEXTURES, p, 2 + n * 6);
+      bbgpu_cmd(d, BBGPU_OP_SET_TEXTURES, p, 2 + n * 8);
    }
    ctx->dirty = 0;
 }
