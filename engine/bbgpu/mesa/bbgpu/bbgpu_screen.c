@@ -2,6 +2,8 @@
  * present). Capabilities are exactly what the host renderer can do on WebGL2 (GLES 3.0): OpenGL 2.1 /
  * GLSL 1.20 class with float-only shaders, so Mesa's GL front end lowers everything else (quads, user
  * clip planes, alpha test, two-sided colour, flat shading of legacy paths ...). SPDX-License-Identifier: MIT */
+#include <stdio.h>
+#include <string.h>
 #include "pipe/p_defines.h"
 #include "pipe/p_screen.h"
 #include "util/u_inlines.h"
@@ -384,8 +386,21 @@ static void bbgpu_destroy(struct pipe_screen *screen)
 
 static int bbgpu_get_screen_fd(struct pipe_screen *screen) { return -1; }
 
+/* X servers load the software DRI driver for their own (indirect GLX) use: they must not take the GPU
+ * (one client at a time) from the programs that draw with it */
+static bool is_x_server(void)
+{
+   char name[64] = "";
+   FILE *f = fopen("/proc/self/comm", "r");
+   if (f) { if (!fgets(name, sizeof name, f)) name[0] = 0; fclose(f); }
+   return !strncmp(name, "Xvnc", 4) || !strncmp(name, "Xorg", 4) || !strncmp(name, "Xvfb", 4) ||
+          !strncmp(name, "Xwayland", 8) || !strncmp(name, "Xephyr", 6);
+}
+
 struct pipe_screen *bbgpu_create_screen(struct sw_winsys *winsys)
 {
+   if (is_x_server() && !getenv("BBGPU_FORCE"))
+      return NULL;
    struct bbgpu_screen *bs = CALLOC_STRUCT(bbgpu_screen);
    if (!bs)
       return NULL;

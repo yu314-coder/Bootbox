@@ -125,7 +125,7 @@ built for learning Linux, scripting, retro computing and experiments.
 
 | System | Arch | Cores | Highlights | Download |
 |---|---|---|---|---|
-| **Linux (Desktop)** | x86-64 | **1–8 (default 2)** | Openbox + tint2 desktop · **WebKit web browser** (links can also open in the device's own browser) · PCManFM · terminal · Python 3.12 · **Benchmarks hub** (CPU-Z, 7-Zip, sysbench, glmark2, web) | ~420 MB, once |
+| **Linux (Desktop)** | x86-64 | **1–8 (default 2)** | Openbox + tint2 desktop · **WebKit web browser** (links can also open in the device's own browser) · PCManFM · terminal · Python 3.12 · **Benchmarks hub** (CPU-Z, 7-Zip, sysbench, glmark2, web) | ~410 MB, once |
 | **Linux (Terminal)** | x86-64 | **1–8 (default 2)** | Alpine · Python 3.12 + pip · real internet · file browser · `mc` · **wine-staging 11.5, esync on by default, warm prefix** | ~310 MB, once |
 | **Android 12 AOSP** | x86-64 | 4 | Full Android framework + ART · System UI · Launcher3 · touch/keyboard · **▤ Shell** (root terminal) · resumes from a home-screen snapshot in seconds · writable `/data` | ~900 MB, once |
 | **Your own images** | i686 (v86) | 1 | Import `.iso`/`.img` (for example your own Windows install media) via the Files app; paired save-states resume in ~1 s | — |

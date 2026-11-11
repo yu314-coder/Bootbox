@@ -94,6 +94,8 @@ enum VMStorage {
         "qemu-desktop15-rootfs-1277329886.data",
         "qemu-desktop16-rootfs-1276163988.data.gz", // desktop v16 → v17 (font caches valid at boot, benchmarks hold the browser pre-start, terminal prompt)
         "qemu-desktop16-rootfs-1276163988.data",
+        "qemu-desktop17-rootfs-1277919982.data.gz", // desktop v17 → v19 (Bootbox GPU bridge driver, privileged container)
+        "qemu-desktop17-rootfs-1277919982.data",
         "qemu-android64-warm4-2038076444.data.gz",  // Android v4 → v5 (build 93)
         "qemu-android64-warm4-2038076444.data",
         "qemu-android64-warm5-2161126625.data.gz",  // Android v5 → v6 (build 95)

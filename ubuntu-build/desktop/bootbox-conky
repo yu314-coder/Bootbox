@@ -1,12 +1,13 @@
 #!/bin/sh
 # bootbox-conky - the desktop's system widget (top right): one bar per emulated core, memory, load,
-# uptime and the busiest process - watch multi-threaded work spread across the cores. Bitmap fonts
-# (no Xft) and a 3 s refresh keep its own cost small on the emulated CPU.
+# uptime - watch multi-threaded work spread across the cores. Bitmap fonts (no Xft) and a 5 s refresh keep
+# its own cost small on the emulated CPU. v18: no busiest-process line - its /proc scan was 40% of the
+# widget's cost, and the 3 s refresh another 40% (idle desktop: ~4% of a core -> ~1.5%).
 N=$(nproc); C=/tmp/bootbox-conky.conf
 {
 cat <<'EOF'
 conky.config = {
-  alignment = 'top_right', gap_x = 18, gap_y = 18, update_interval = 3,
+  alignment = 'top_right', gap_x = 18, gap_y = 18, update_interval = 5,
   own_window = true, own_window_type = 'desktop', own_window_class = 'Conky',
   own_window_hints = 'undecorated,below,sticky,skip_taskbar,skip_pager',
   own_window_colour = '101826', double_buffer = true, use_xft = false, font = '7x13',
@@ -27,7 +28,6 @@ done
 cat <<'EOF'
 ${color1}RAM${color} $mem / $memmax
 ${membar 6}
-${color1}busiest${color}${alignr}${top name 1} ${top cpu 1}%
 ]]
 EOF
 } > "$C"

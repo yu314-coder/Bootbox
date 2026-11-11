@@ -16,9 +16,9 @@
   // longer listed.) No one-tap Windows: Windows 98 SE / 2000 are Microsoft software (App Review 5.2.1),
   // removed again in build 13 at the user's direction (Nov 9 2026). Your own images still boot (imports).
   const SYSTEMS = [
-    { id: "x64pwd", name: "Linux (Desktop)", sub: "64-bit Linux desktop · windows, taskbar, terminal, file manager, web browser", icon: "🖥️", svg: "desktop", tag: "DESKTOP", dlMB: 419,
+    { id: "x64pwd", name: "Linux (Desktop)", sub: "64-bit Linux desktop · windows, taskbar, terminal, file manager, web browser", icon: "🖥️", svg: "desktop", tag: "DESKTOP", dlMB: 412,
       guest: "x64pwd", ram: 1536,
-      note: "A full-screen 64-bit (x86_64) Linux desktop: windows (Openbox) + taskbar/clock (tint2), a terminal, a file manager, a web browser (WebKit) and Python 3.12 with pip. Tap Apps (bottom-left) or right-click the desktop for programs; the Benchmarks icon runs CPU-Z, 7-Zip and more. Downloaded once (~420 MB), then the guest disk is read straight from this device's storage as needed." },
+      note: "A full-screen 64-bit (x86_64) Linux desktop: windows (Openbox) + taskbar/clock (tint2), a terminal, a file manager, a web browser (WebKit) and Python 3.12 with pip. Tap Apps (bottom-left) or right-click the desktop for programs; the Benchmarks icon runs CPU-Z, 7-Zip and more. Downloaded once (~410 MB), then the guest disk is read straight from this device's storage as needed." },
     { id: "x64pw", name: "Linux (Terminal)", sub: "64-bit Linux console · Python 3.12 + pip · Wine for .exe · internet", icon: "🐍", svg: "terminal", tag: "TERMINAL", dlMB: 310,
       guest: "x64pw", ram: 1536,
       note: "64-bit (x86_64) Alpine Linux in a terminal — cores 1–8 in UEFI Setup. Python 3.12 + pip, Wine (32 & 64-bit .exe) and real internet. Terminal on the LEFT; the panel on the RIGHT has quick buttons and shows graphical output when you start an X app or a Wine .exe. Downloaded once (~310 MB), then the guest disk is read straight from this device's storage as needed." },
@@ -625,7 +625,7 @@
     s.interp = ecNow.interp2 === "classic" ? "classic" : "fast";
     let resetSafe = false;
     // Reflect the emulator's actual internet + resume state (it stores these in its own config).
-    try { const ec = emuCfg(); s.netInternet = (ec.netRelay !== "off"); s.resumeState = (ec.resumeState !== false); if (+ec.cores64) s.cores = +ec.cores64; } catch (e) {}
+    try { const ec = emuCfg(); s.netInternet = (ec.netRelay !== "off"); s.resumeState = (ec.resumeState !== false); if (+ec.cores64) s.cores = +ec.cores64; s.gpuOn = ec.gpu !== "off"; } catch (e) {}
     // Reflect the real background-grace setting (lives in native UserDefaults, not the JS config).
     const BG_SEC = { "About 30 s": 30, "Off": 0 };
     let store = null, dev = null, storeLoading = onDevice(), armed = null, armTimer = null, busyDel = false;
@@ -751,6 +751,8 @@
             help: "How the 64-bit systems run code before it is compiled. Fast (default): a compact interpreter WebKit fully optimizes — steady speed. Classic: the older one (in WebKit some runs slow to a crawl). Same setting as the emulator toolbar. Applies on the next boot." },
           { t: "select", label: "Compile Threshold", sub: "runs before a block is compiled", key: "jitPreset", opts: ["eager", "balanced", "lazy"], render: v => ({ eager: "3000", balanced: "10000", lazy: "30000" })[v],
             help: "How often a block of guest code runs (interpreted) before it is translated to WebAssembly. 10000 (default) measured fastest on WebKit; 3000 compiles more (more WebKit compile work, more memory); 30000 interprets longer. Applies on the next boot." },
+          { t: "toggle", label: "GPU Acceleration", sub: "Linux (Desktop): OpenGL on the iPad's GPU", key: "gpuOn",
+            help: "On (default): OpenGL programs in Linux (Desktop) — glmark2, the GPU benchmark, 3D apps — draw on the iPad's GPU through the Bootbox GPU bridge (WebGL), and the emulated CPU only prepares the commands. Off: everything is drawn by Mesa's software renderer (llvmpipe) on the emulated CPU, as before. If WebGL is not available, Linux uses the software renderer by itself. One OpenGL program uses the GPU at a time; a second one opened at the same time draws in software. Applies on the next boot." },
           { t: "info", label: "Engine Level", value: SAFE_NAMES[lvl] + (lvl ? " — set after a crash" : "") },
           ...(lvl ? [{ t: "action", label: "Reset Engine to Full Speed", act: "resetsafe",
             help: "When a 64-bit system crashes the page early in its boot, Bootbox turns off engine features one step at a time on the next boots and keeps the first level that runs — it never steps back up by itself. If a crash came from something else (too many cores or too much RAM for this device), the guest stays slow for nothing. Reset to try full speed again." }] : []),
@@ -972,6 +974,7 @@
         else ec.netRelay = "off";
         ec.resumeState = s.resumeState;
         ec.cores64 = clamp(+s.cores || 2, 1, 8);   // the same setting as the emulator toolbar's cores menu
+        if (s.gpuOn === false) ec.gpu = "off"; else delete ec.gpu;   // read by emulator.js (desktop: -device bbgpu)
         // the interpreter is the toolbar's setting too; a new pick restarts the crash fallback, as there
         if ((ec.interp2 === "classic" ? "classic" : "fast") !== s.interp) { ec.interp2 = s.interp; ec.q64safe6 = { level: 0 }; }
         if (resetSafe) ec.q64safe6 = { level: 0 };
