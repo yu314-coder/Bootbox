@@ -162,16 +162,35 @@ static int res_read(BBRenderer *r, const uint32_t *p)
     uint32_t level = U(p, 1), x = U(p, 2), y = U(p, 3), w = U(p, 4), h = U(p, 5), off = U(p, 6), stride = U(p, 7);
     if (!o) return BBGPU_ERR_OBJECT;
     const FmtInfo *f = &fmt_info[o->fmt];
-    if (f->depth || f->bpp != 4) return BBGPU_ERR_RANGE;     /* WebGL2: no depth read-back; RGBA8 class only */
-    if (!stride) stride = w * 4;
+    if (f->depth) return BBGPU_ERR_RANGE;                 /* WebGL2: no depth read-back */
+    if (!stride) stride = w * f->bpp;
     if (!range_ok(r, off, (uint64_t)stride * h)) return BBGPU_ERR_RANGE;
     glBindFramebuffer(GL_READ_FRAMEBUFFER, r->read_fbo);
     glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, o->gl, level);
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glPixelStorei(GL_PACK_ROW_LENGTH, stride / 4);
-    glReadPixels(x, y, w, h, GL_RGBA, GL_UNSIGNED_BYTE, r->heap + off);
-    glPixelStorei(GL_PACK_ROW_LENGTH, 0);
-    if (f->swap_rb) swap_rb(r->heap + off, w, h, stride);
+    if (f->bpp == 4 && f->type == GL_UNSIGNED_BYTE) {
+        glPixelStorei(GL_PACK_ROW_LENGTH, stride / 4);
+        glReadPixels(x, y, w, h, GL_RGBA, GL_UNSIGNED_BYTE, r->heap + off);
+        glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+        if (f->swap_rb) swap_rb(r->heap + off, w, h, stride);
+        return 0;
+    }
+    /* other normalized formats: RGBA8 read-back (always allowed by WebGL2), converted here */
+    static uint8_t *tmp; static size_t tmp_n;
+    if ((size_t)w * h * 4 > tmp_n) { tmp_n = (size_t)w * h * 4; tmp = realloc(tmp, tmp_n); }
+    glReadPixels(x, y, w, h, GL_RGBA, GL_UNSIGNED_BYTE, tmp);
+    for (uint32_t j = 0; j < h; j++) {
+        const uint8_t *s = tmp + (size_t)j * w * 4;
+        uint8_t *d = r->heap + off + (size_t)j * stride;
+        for (uint32_t i = 0; i < w; i++, s += 4) {
+            switch (o->fmt) {
+            case BBGPU_FMT_RGB565: { uint16_t v = ((s[0] >> 3) << 11) | ((s[1] >> 2) << 5) | (s[2] >> 3); memcpy(d + i * 2, &v, 2); break; }
+            case BBGPU_FMT_R8: case BBGPU_FMT_A8: d[i] = s[0]; break;
+            case BBGPU_FMT_RG8: d[i * 2] = s[0]; d[i * 2 + 1] = s[1]; break;
+            default: return BBGPU_ERR_RANGE;
+            }
+        }
+    }
     return 0;
 }
 

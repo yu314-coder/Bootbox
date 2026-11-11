@@ -154,3 +154,6 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
 
 # HPPA devices
 system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
+# Bootbox GPU bridge (engine/bbgpu): device + WebGL2 renderer on its own thread
+system_ss.add(when: 'CONFIG_PCI', if_true: [files('bbgpu_r.c', 'bbgpu_render.c', 'bbgpu_webgl.c'),
+  declare_dependency(link_args: ['-sMIN_WEBGL_VERSION=2', '-sMAX_WEBGL_VERSION=2'])])

@@ -347,7 +347,7 @@ static void bbgpu_flush_frontbuffer(struct pipe_screen *screen, struct pipe_cont
    if (!map)
       return;
    /* in slices that fit the heap */
-   unsigned row_bytes = w * 4, max_rows = MAX2(1u, (bs->dev->heap_size / 4) / row_bytes);
+   unsigned row_bytes = w * util_format_get_blocksize(pres->format), max_rows = MAX2(1u, (bs->dev->heap_size / 4) / row_bytes);
    for (unsigned y = y0; y < y0 + rows; y += max_rows) {
       unsigned n = MIN2(max_rows, y0 + rows - y);
       uint32_t off = bbgpu_heap_alloc(bs->dev, n * row_bytes);

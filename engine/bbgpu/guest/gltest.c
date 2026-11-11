@@ -12,7 +12,7 @@ static void expect(const char *what, int x, int y, int r, int g, int b)
 {
    unsigned char p[4];
    glReadPixels(x, y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, p);
-   int ok = abs(p[0] - r) < 8 && abs(p[1] - g) < 8 && abs(p[2] - b) < 8;
+   int ok = abs(p[0] - r) < 12 && abs(p[1] - g) < 12 && abs(p[2] - b) < 12;   /* 16-bit visuals round */
    printf("  %-34s %3d %3d %3d  %s\n", what, p[0], p[1], p[2], ok ? "ok" : "FAIL");
    fails += !ok;
 }
@@ -22,11 +22,11 @@ int main(int argc, char **argv)
 {
    Display *dpy = XOpenDisplay(NULL);
    if (!dpy) { printf("gltest: no X display\n"); return 1; }
-   int attr[] = { GLX_RGBA, GLX_DOUBLEBUFFER, GLX_RED_SIZE, 8, GLX_GREEN_SIZE, 8, GLX_BLUE_SIZE, 8, GLX_DEPTH_SIZE, 16, None };
+   int attr[] = { GLX_RGBA, GLX_DOUBLEBUFFER, GLX_DEPTH_SIZE, 16, None };   /* any colour depth (the desktop is 16-bit) */
    XVisualInfo *vi = glXChooseVisual(dpy, DefaultScreen(dpy), attr);
    if (!vi) { printf("gltest: no visual\n"); return 1; }
-   XSetWindowAttributes swa = { .colormap = XCreateColormap(dpy, RootWindow(dpy, vi->screen), vi->visual, AllocNone) };
-   Window w = XCreateWindow(dpy, RootWindow(dpy, vi->screen), 0, 0, 128, 128, 0, vi->depth, InputOutput, vi->visual, CWColormap, &swa);
+   XSetWindowAttributes swa = { .colormap = XCreateColormap(dpy, RootWindow(dpy, vi->screen), vi->visual, AllocNone), .border_pixel = 0 };
+   Window w = XCreateWindow(dpy, RootWindow(dpy, vi->screen), 0, 0, 128, 128, 0, vi->depth, InputOutput, vi->visual, CWColormap | CWBorderPixel, &swa);
    XMapWindow(dpy, w);
    GLXContext ctx = glXCreateContext(dpy, vi, NULL, True);
    glXMakeCurrent(dpy, w, ctx);

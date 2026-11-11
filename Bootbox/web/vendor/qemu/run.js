@@ -159,6 +159,9 @@
       const a = self.Module.arguments, i = a.indexOf("-smp");
       if (i >= 0 && a[i + 1] != null) a[i + 1] = String(opts.smp);
     }
+    // Extra devices (opt-in), e.g. ["-device", "bbgpu"] for the Bootbox GPU bridge (engine/bbgpu).
+    if (Array.isArray(opts.extraArgs) && opts.extraArgs.length && self.Module && self.Module.arguments)
+      self.Module.arguments.push(...opts.extraArgs.map(String));
     // Networking (opt-in): route the guest's -netdev socket over a WebSocket to a netstack
     // (c2w-net / gvisor-tap-vsock) that performs REAL native TCP — no CORS, no service worker.
     // opts.netWs = "ws://host:port/". Swaps the default "-nic none" for a virtio-net NIC whose

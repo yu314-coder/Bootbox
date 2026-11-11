@@ -121,7 +121,7 @@ void bbgpu_fence_wait(struct bbgpu_dev *d, uint32_t fence)
 {
    unsigned spins = 0;
    while (!bbgpu_fence_done(d, fence)) {
-      if (d->regs[BBGPU_REG_ERROR / 4])
+      if (d->regs[BBGPU_REG_ERROR / 4] == BBGPU_ERR_GL || d->regs[BBGPU_REG_ERROR / 4] == BBGPU_ERR_RING)
          return;                       /* the renderer stopped: do not hang the app */
       if (++spins > 64)
          sched_yield();
@@ -141,7 +141,7 @@ static void ring_wait(struct bbgpu_dev *d, uint32_t bytes)
    while (d->head + bytes - d->regs[BBGPU_REG_TAIL / 4] > BBGPU_RING_SIZE - 64) {
       if (d->kicked != d->head)
          kick(d);
-      if (d->regs[BBGPU_REG_ERROR / 4])
+      if (d->regs[BBGPU_REG_ERROR / 4] == BBGPU_ERR_GL || d->regs[BBGPU_REG_ERROR / 4] == BBGPU_ERR_RING)
          return;
       sched_yield();
    }
@@ -213,7 +213,7 @@ uint32_t bbgpu_heap_alloc(struct bbgpu_dev *d, uint32_t size)
       /* full: everything outstanding must finish first */
       uint32_t f = d->chunks[d->nchunks - 1].fence ? d->last_submitted_fence : bbgpu_dev_flush(d);
       bbgpu_fence_wait(d, f);
-      if (d->regs[BBGPU_REG_ERROR / 4])
+      if (d->regs[BBGPU_REG_ERROR / 4] == BBGPU_ERR_GL || d->regs[BBGPU_REG_ERROR / 4] == BBGPU_ERR_RING)
          return 0;
    }
 }

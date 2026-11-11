@@ -109,13 +109,16 @@ static void *bbgpu_gpu_thread(void *opaque)
         qemu_mutex_unlock(&s->lock);
         if (do_reset)
             bbr_reset(r);
-        if (s->error)
-            continue;
+        /* a failing command is skipped and reported (first error stays in REG_ERROR); execution goes on */
         uint32_t tail = s->ring_tail, done = s->fence_done, op = 0;
-        uint32_t e = bbr_execute(r, &tail, head, &done, &op);
-        qatomic_set(&s->ring_tail, tail);
-        qatomic_set(&s->fence_done, done);
-        if (e) { s->err_op = op; qatomic_set(&s->error, e); }
+        for (;;) {
+            uint32_t e = bbr_execute(r, &tail, head, &done, &op);
+            qatomic_set(&s->ring_tail, tail);
+            qatomic_set(&s->fence_done, done);
+            if (!e) break;
+            if (!s->error) { s->err_op = op; qatomic_set(&s->error, e); }
+            if (e == BBGPU_ERR_RING) break;   /* the ring itself is corrupt: wait for a reset */
+        }
     }
     return NULL;
 }
