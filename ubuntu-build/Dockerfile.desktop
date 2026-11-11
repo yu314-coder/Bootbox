@@ -15,6 +15,12 @@
 # once their window is mapped (xterm waitForMap) - the first prompt still came out one letter per line;
 # font caches stay valid in the guest (they were rebuilt by every GUI program on every boot: ~15 s of
 # emulated CPU each for openbox and the panel while the desktop started).
+# v19: Bootbox GPU bridge (engine/bbgpu): GL apps draw on the iPad's GPU through WebGL2 when the app adds the
+# bbgpu device; the container runs privileged in the VM (c2w spec) so the driver can map the device.
+# v18 (Mac harness profiling of the desktop's common actions): the text editor keeps 27 common syntax
+# languages instead of 137 - Mousepad loads every definition to build its Filetype menu (start-up CPU
+# -32%, ~6 s sooner); the system widget refreshes every 5 s and drops its busiest-process line (its
+# /proc scan was 40% of the widget's cost; idle CPU ~4% of a core -> ~1.5%).
 # v2 (build 73): graphical browser (Dillo) + file manager (PCManFM) + a real wallpaper. HISTORY: dillo/BadWolf "flooded the single-threaded Xvnc until the GUI froze" — but that
 # was tested BEFORE the cx16 engine fix, when every guest allocation took a stop-the-world exclusive
 # section (kernel SLUB uses lock cmpxchg16b). With the spinlock engine those light GUI apps get
@@ -189,6 +195,15 @@ RUN set -eux; \
     wine --version; command -v glmark2-es2; \
     python3 -c "import requests; print('python-ok')"; \
     echo "WINE-MESA-OK $(wine --version) wine=$(du -sm /usr/lib/wine | cut -f1)MB"
+# v19: Bootbox GPU bridge. The software DRI driver is Mesa 24.0.9 (the same release) built with the bbgpu
+# driver and llvmpipe (engine/bbgpu/mesa/Dockerfile -> image bbgpu-mesa:24.0.9). bbgpu is Mesa's first
+# choice and steps aside to llvmpipe without the device, without a writable /sys or when another program
+# already owns the GPU - so everything that ran on llvmpipe still does.
+COPY --from=bbgpu-mesa:24.0.9 /out/dri/libgallium_dri.so /usr/lib/xorg/modules/dri/libgallium_dri.so
+RUN set -eux; \
+    strings /usr/lib/xorg/modules/dri/libgallium_dri.so | grep -q "Bootbox GPU (WebGL2)"; \
+    ! ldd /usr/lib/xorg/modules/dri/libgallium_dri.so 2>&1 | grep -iE "not found|Error relocating"; \
+    echo "BBGPU-DRI-OK"
 ENV WINEPREFIX=/root/.wine WINEARCH=win64
 RUN set -eux; \
     timeout 900 wineboot --init 2>&1 | tail -4 || true; \
@@ -295,6 +310,13 @@ RUN set -eux; \
     fc-cache -f 2>/dev/null || true; \
     fc-cache -v > /tmp/fcv.log 2>&1 || true; grep -c 'existing cache is valid' /tmp/fcv.log; \
     ! grep -E 'caching, (new|updated)' /tmp/fcv.log; rm -f /tmp/fcv.log; echo "FONT-CACHE-NS-OK"; \
+    # v18: the editor's syntax languages - keep the common ones (see the header)
+    L=/usr/share/gtksourceview-3.0/language-specs; mkdir -p /tmp/lang; mv $L/* /tmp/lang/; \
+    for k in def sh python c cpp chdr cpp-header javascript json html css xml markdown yaml ini makefile diff \
+             java go rust sql dockerfile cmake perl ruby php desktop; do \
+      [ -f /tmp/lang/$k.lang ] && mv /tmp/lang/$k.lang $L/; done; \
+    mv /tmp/lang/*.rng $L/ 2>/dev/null || true; rm -rf /tmp/lang; \
+    n=$(ls $L/*.lang | wc -l); [ "$n" -ge 20 ] && [ -f $L/def.lang ] && [ -f $L/python.lang ] && echo "EDITOR-LANGS-OK $n"; \
     echo "SLIM usr=$(du -sm /usr | cut -f1)MB total=$(du -sm / 2>/dev/null | cut -f1)MB"
 
 # Boots straight into the full desktop (launcher menu + browser + file manager).

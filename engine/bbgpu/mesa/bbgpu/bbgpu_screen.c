@@ -12,6 +12,9 @@
 #include "nir/nir_to_tgsi.h"
 #include "bbgpu_context.h"
 #include "bbgpu_public.h"
+#ifdef GALLIUM_SOFTPIPE
+#include "softpipe/sp_public.h"
+#endif
 
 static const char *bbgpu_get_name(struct pipe_screen *s) { return "Bootbox GPU (WebGL2)"; }
 static const char *bbgpu_get_vendor(struct pipe_screen *s) { return "Bootbox"; }
@@ -388,7 +391,9 @@ struct pipe_screen *bbgpu_create_screen(struct sw_winsys *winsys)
       return NULL;
    bs->dev = bbgpu_dev_get();
    if (!bs->dev) {
-      fprintf(stderr, "bbgpu: no Bootbox GPU device (or /sys not writable); falling back\n");
+      /* no device, no /sys access or GPU busy: NULL lets Mesa take the next driver (llvmpipe) */
+      if (getenv("BBGPU_VERBOSE"))
+         fprintf(stderr, "bbgpu: no Bootbox GPU device (or /sys not writable); falling back\n");
       FREE(bs);
       return NULL;
    }

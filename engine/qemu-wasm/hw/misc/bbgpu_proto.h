@@ -21,6 +21,11 @@
 #define BBGPU_REG_OPS        0x20
 #define BBGPU_REG_RESET      0x24  /* W: any value */
 #define BBGPU_REG_ERR_OP     0x28  /* R: op of the first failing command */
+#define BBGPU_REG_STATUS     0x2c  /* R: renderer state, BBGPU_STATUS_* (survives resets) */
+
+#define BBGPU_STATUS_STARTING 0
+#define BBGPU_STATUS_READY    1
+#define BBGPU_STATUS_FAILED   2   /* no GL context (e.g. no WebGL2 in workers): guests must not use the device */
 
 /* errors */
 #define BBGPU_ERR_RING    1

@@ -43,7 +43,11 @@
     // qemu-aload — no duplication). The image auto-starts the desktop, so boot64 sends no start-desktop.
     { id: "x64pwd",    name: "Linux (Desktop)",  boot: "q64",
       base: "vendor/qemu-desktop/", wasm: "../qemu-aload/qemu-system-x86_64.wasm", url: "", ram: 1536, gui: true,
-      tune: { max: 40000, tsc: 1, lazywasm: 1 }, fastTci: true, cpuModelId: "Bootbox x86-64 (emulated in WebAssembly)" },   // same reason as x64pw
+      tune: { max: 40000, tsc: 1, lazywasm: 1 }, fastTci: true, cpuModelId: "Bootbox x86-64 (emulated in WebAssembly)",
+      gpu: true },   // same reason as x64pw
+    // gpu (desktop v19 + build 15 engine): the Bootbox GPU bridge device (engine/bbgpu). Guest OpenGL draws on
+    // the iPad's GPU through WebGL2 in the device's own worker; when WebGL2 is not available there the device
+    // reports it and Mesa in the guest stays on llvmpipe, so it is safe to leave on.
     // tsc=1 (build 100 engine): every guest RDTSC used to take one global lock around a JavaScript
     // clock call - 4 threads reading the clock ran 22x slower per call than 1. Lock-free now (Linux
     // guests; Android keeps the old path until verified there). CPU-Z itself isn't clock-bound: its
@@ -1364,6 +1368,7 @@
               cpuModelId: g.cpuModelId,
               cpuFlags: !g.android ? biosCpuFlags() : undefined,
               kernelArgs: !g.android ? biosKernelArgs() : undefined,
+              extraArgs: g.gpu && cfg().gpu !== "off" ? ["-device", "bbgpu"] : undefined,
               safeNote: safe.level ? level.name : undefined,   // shown on the "Connecting…" line
               vncLabel: g.android ? "Android" : undefined,
               bootTitle: g.name,   // the start-up card on the screen of a full-screen guest (run.js bootInfo)

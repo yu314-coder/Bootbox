@@ -14,5 +14,10 @@ for F in "$M/src/gallium/auxiliary/target-helpers/inline_sw_helper.h" "$M/src/ga
   sed -i '0,/^#ifdef GALLIUM_SOFTPIPE$/s||#ifdef GALLIUM_BBGPU\n#include "bbgpu/bbgpu_public.h"\n#endif\n\n#ifdef GALLIUM_SOFTPIPE|' "$F"
   sed -i '0,/^#if defined(GALLIUM_SOFTPIPE)$/s||#if defined(GALLIUM_BBGPU)\n   if (screen == NULL \&\& strcmp(driver, "bbgpu") == 0)\n      screen = bbgpu_create_screen(winsys);\n#endif\n\n#if defined(GALLIUM_SOFTPIPE)|' "$F"
 done
+# bbgpu is the first automatic choice of the software-driver list (it returns NULL without a device)
+for F in "$M/src/gallium/auxiliary/target-helpers/inline_sw_helper.h" "$M/src/gallium/auxiliary/target-helpers/sw_helper.h"; do
+  grep -q '"bbgpu"),' "$F" && continue
+  sed -i '0,/^      (sw_vk ? "" : debug_get_option("GALLIUM_DRIVER", "")),$/s||&\n#if defined(GALLIUM_BBGPU)\n      (sw_vk ? "" : "bbgpu"),\n#endif|' "$F"
+done
 F="$M/src/gallium/auxiliary/target-helpers/sw_helper.h"
 grep -c "bbgpu" "$M/meson_options.txt" "$M/meson.build" "$M/src/gallium/meson.build" "$M/src/gallium/targets/dri/meson.build" "$F"

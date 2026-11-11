@@ -47,6 +47,7 @@ struct BBGPUState {
     uint32_t head;
     bool head_dirty, reset;
 #endif
+    uint32_t status;       /* BBGPU_STATUS_* */
 };
 
 static uint32_t rd32(BBGPUState *s, uint32_t off) { uint32_t v; memcpy(&v, s->mem + off, 4); return le32_to_cpu(v); }
@@ -93,9 +94,11 @@ static void *bbgpu_gpu_thread(void *opaque)
     BBGPUState *s = opaque;
     if (bbgpu_gl_context_init()) {
         s->error = BBGPU_ERR_GL;
+        qatomic_set(&s->status, BBGPU_STATUS_FAILED);
         return NULL;
     }
     BBRenderer *r = bbr_create(s->mem, (uint32_t)s->shm_mb * MiB);
+    qatomic_set(&s->status, BBGPU_STATUS_READY);
     for (;;) {
         qemu_mutex_lock(&s->lock);
         while (!s->head_dirty && !s->reset)
@@ -137,6 +140,11 @@ static uint64_t bbgpu_reg_read(void *opaque, hwaddr addr, unsigned size)
     case BBGPU_REG_ERROR:      return s->error;
     case BBGPU_REG_OPS:        return (uint32_t)s->ops;
     case BBGPU_REG_ERR_OP:     return s->err_op;
+#ifdef BBGPU_RENDER
+    case BBGPU_REG_STATUS:     return qatomic_read(&s->status);
+#else
+    case BBGPU_REG_STATUS:     return BBGPU_STATUS_READY;   /* transport-only build */
+#endif
     }
     return 0;
 }

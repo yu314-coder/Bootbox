@@ -4,6 +4,7 @@
 #include <dirent.h>
 #include <fcntl.h>
 #include <pthread.h>
+#include <sys/file.h>
 #include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -60,6 +61,16 @@ bool bbgpu_dev_open(struct bbgpu_dev *d)
       fprintf(stderr, "bbgpu: device at %s is not protocol v%d\n", dev, BBGPU_PROTO_VERSION);
       return false;
    }
+   /* the renderer starts with the VM; give it a moment, and never use a device whose GL context failed */
+   for (int i = 0; i < 300 && d->regs[BBGPU_REG_STATUS / 4] == BBGPU_STATUS_STARTING; i++)
+      usleep(10000);
+   if (d->regs[BBGPU_REG_STATUS / 4] != BBGPU_STATUS_READY) {
+      fprintf(stderr, "bbgpu: the host renderer is not available (status %u); using software rendering\n",
+              d->regs[BBGPU_REG_STATUS / 4]);
+      munmap((void *)d->regs, 4096);
+      d->regs = NULL;
+      return false;
+   }
    d->shm_size = d->regs[BBGPU_REG_SHM_SIZE / 4];
    d->shm = map_bar(dev, 2, d->shm_size);
    if (!d->shm)
@@ -84,9 +95,32 @@ static struct bbgpu_dev *the_dev;
 static int the_dev_refs;
 static pthread_mutex_t the_dev_lock = PTHREAD_MUTEX_INITIALIZER;
 
+/* one GL client at a time (protocol v1 has a single context per device): an exclusive lock on a file;
+ * a second client falls back to software rendering instead of resetting the device under the first */
+static int the_lock_fd = -1;
+static bool take_client_lock(void)
+{
+   if (the_lock_fd >= 0)
+      return true;
+   int fd = open("/tmp/.bbgpu-client.lock", O_RDWR | O_CREAT | O_CLOEXEC, 0666);
+   if (fd < 0)
+      return true;                      /* no /tmp: do not block rendering */
+   if (flock(fd, LOCK_EX | LOCK_NB)) {
+      close(fd);
+      return false;
+   }
+   the_lock_fd = fd;
+   return true;
+}
+
 struct bbgpu_dev *bbgpu_dev_get(void)
 {
    pthread_mutex_lock(&the_dev_lock);
+   if (!the_dev && !take_client_lock()) {
+      pthread_mutex_unlock(&the_dev_lock);
+      fprintf(stderr, "bbgpu: another program is using the GPU; using software rendering\n");
+      return NULL;
+   }
    if (!the_dev) {
       struct bbgpu_dev *d = calloc(1, sizeof *d);
       if (d && bbgpu_dev_open(d)) the_dev = d; else free(d);
@@ -104,6 +138,7 @@ void bbgpu_dev_put(struct bbgpu_dev *d)
       bbgpu_dev_close(the_dev);
       free(the_dev);
       the_dev = NULL;
+      if (the_lock_fd >= 0) { close(the_lock_fd); the_lock_fd = -1; }
    }
    pthread_mutex_unlock(&the_dev_lock);
 }

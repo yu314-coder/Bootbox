@@ -1,11 +1,17 @@
 #!/bin/sh
-# gpu-bench - glmark2 (the standard OpenGL ES benchmark) on Mesa's software rasterizer (llvmpipe).
-# There is no GPU in an iPad's WebAssembly sandbox: every pixel is computed by the emulated CPU, so
-# this measures engine speed x cores, which is what any graphical app here gets.
+# gpu-bench - glmark2 (the standard OpenGL ES benchmark). v19: on the Bootbox GPU bridge when the bbgpu
+# device is there (drawing happens on the iPad's GPU through WebGL2; the guest only builds the commands),
+# else on Mesa's software rasterizer (llvmpipe), where every pixel is computed by the emulated CPU.
+# GPU=llvmpipe forces software rendering.
 #   gpu-bench        -> quick: 2 scenes (clear 8 s + build 30 s, after an untimed shader warm-up), 320x240
 #   gpu-bench full   -> the whole glmark2 suite (long)
 . /usr/local/lib/bb-hold.sh 2>/dev/null   # v17: background work waits while this runs
-export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER="${GPU:-llvmpipe}"
+export LIBGL_ALWAYS_SOFTWARE=1
+if [ -z "$GPU" ] && grep -qs 0xbb0b /sys/bus/pci/devices/*/vendor; then
+  unset GALLIUM_DRIVER; KIND="Bootbox GPU"; DRV="the Bootbox GPU bridge (WebGL2)"   # bbgpu is Mesa's first choice
+else
+  export GALLIUM_DRIVER="${GPU:-llvmpipe}"; KIND="software GPU"; DRV="Mesa $GALLIUM_DRIVER"
+fi
 LP_NUM_THREADS=$(nproc); export LP_NUM_THREADS
 # glmark2 gets its own X server: presenting to the desktop's Xvnc while it is busy can stall frames.
 pkill -f "Xvnc :1 " 2>/dev/null
@@ -13,7 +19,7 @@ pkill -f "Xvnc :1 " 2>/dev/null
 for i in 1 2 3 4 5 6 7 8 9 10; do timeout 5 xwininfo -display :1 -root >/dev/null 2>&1 && break; sleep 1; done
 trap 'pkill -f "Xvnc :1 " 2>/dev/null' EXIT
 VIS="red=1:green=1:blue=1:alpha=0:depth=1:stencil=0"
-echo "glmark2-es2 on Mesa $GALLIUM_DRIVER ($LP_NUM_THREADS render threads). Shaders compile on the emulated CPU first."
+echo "glmark2-es2 on $DRV. Shaders compile on the emulated CPU first."
 if [ "$1" != "full" ]; then
   # Untimed warm-up (v16, as the Terminal's GPU bench in app 1.1): llvmpipe compiles each shader to x86 code
   # with LLVM the first time it draws - seconds on the emulated CPU, and inside the timed build scene that
@@ -30,4 +36,4 @@ else
 fi
 echo "(took $(( $(date +%s) - S )) s)"
 SC=$(grep -o "glmark2 Score: [0-9]*" /tmp/gpu-bench.out | grep -o "[0-9]*$")
-[ -n "$SC" ] && bbresult gpu "glmark2 ${1:-quick} (software GPU)" score="$SC"
+[ -n "$SC" ] && bbresult gpu "glmark2 ${1:-quick} ($KIND)" score="$SC"
