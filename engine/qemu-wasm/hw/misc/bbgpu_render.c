@@ -11,7 +11,7 @@
 
 enum { K_NONE, K_BUFFER, K_TEXTURE, K_RENDERBUF, K_SHADER, K_PROGRAM };
 /* a texture shared between clients: one GL texture, several clients' objects (the GL context is shared) */
-typedef struct Shared { uint32_t key, refs; GLuint gl; struct Shared *next; } Shared;
+typedef struct Shared { uint32_t key, refs; GLuint gl; uint32_t fmt, w, h; struct Shared *next; } Shared;
 static Shared *shared_list;
 
 typedef struct {
@@ -24,6 +24,8 @@ typedef struct {
     uint32_t w, h, levels, bind;
     GLint loc_vc, loc_fc, loc_flip; /* programs: uniform arrays, y flip */
     GLint *loc_sw;                 /* programs: sampler swizzles bb_w<unit> (16) */
+    char *src; uint32_t src_len, stage;   /* shaders: GLSL source (kept for snapshots) */
+    char *vsrc, *fsrc;             /* programs: the linked sources (shaders may be deleted after linking) */
 } Obj;
 
 typedef struct { uint32_t buffer, offset, size, type, normalized, integer, divisor; } VElem;
@@ -51,6 +53,7 @@ struct BBRenderer {
     uint32_t tex[16][8]; uint32_t tex_used;
     uint32_t wins[8];               /* windows this client presented (removed from the viewer on reset) */
     int sw_dirty;                   /* sampler swizzles must be (re)set before the next draw */
+    uint32_t fbp[10], fbp_n;        /* last SET_FRAMEBUFFER (snapshots) */
 };
 enum { ST_VIEWPORT, ST_SCISSOR, ST_BLEND, ST_DS, ST_RASTER };
 
@@ -161,8 +164,8 @@ static void obj_free(Obj *o)
             }
         } else glDeleteTextures(1, &o->gl);
         break;
-    case K_SHADER: glDeleteShader(o->gl); break;
-    case K_PROGRAM: glDeleteProgram(o->gl); free(o->loc_sw); break;
+    case K_SHADER: glDeleteShader(o->gl); free(o->src); break;
+    case K_PROGRAM: glDeleteProgram(o->gl); free(o->loc_sw); free(o->vsrc); free(o->fsrc); break;
     }
     memset(o, 0, sizeof *o);
 }
@@ -244,6 +247,7 @@ static int shader_create(BBRenderer *r, const uint32_t *p)
     o->kind = K_SHADER;
     o->gl = glCreateShader(stage == BBGPU_STAGE_VS ? GL_VERTEX_SHADER : GL_FRAGMENT_SHADER);
     const char *src = (const char *)r->heap + off; GLint n = (GLint)len;
+    o->src = malloc(len + 1); memcpy(o->src, src, len); o->src[len] = 0; o->src_len = len; o->stage = stage;
     glShaderSource(o->gl, 1, &src, &n);
     glCompileShader(o->gl);
     GLint ok = 0; glGetShaderiv(o->gl, GL_COMPILE_STATUS, &ok);
@@ -264,6 +268,7 @@ static int program_create(BBRenderer *r, const uint32_t *p)
     Obj *o = obj_get(r, U(p, 0), 1), *vs = obj_kind(r, U(p, 1), K_SHADER), *fs = obj_kind(r, U(p, 2), K_SHADER);
     if (!o || o->kind != K_NONE || !vs || !fs) return BBGPU_ERR_OBJECT;
     o->kind = K_PROGRAM;
+    o->vsrc = strdup(vs->src ? vs->src : ""); o->fsrc = strdup(fs->src ? fs->src : "");
     o->gl = glCreateProgram();
     glAttachShader(o->gl, vs->gl); glAttachShader(o->gl, fs->gl);
     glLinkProgram(o->gl);
@@ -293,6 +298,7 @@ static int set_framebuffer(BBRenderer *r, const uint32_t *p, uint32_t ndw)
 {
     uint32_t n = U(p, 0), zs = U(p, 1);
     if (n > 8 || ndw < 2 + n) return BBGPU_ERR_RANGE;
+    memcpy(r->fbp, p, (2 + n) * 4); r->fbp_n = 2 + n;
     glBindFramebuffer(GL_FRAMEBUFFER, r->fbo);
     GLenum bufs[8];
     r->fb_w = r->fb_h = 0;
@@ -454,7 +460,8 @@ static int res_export(BBRenderer *r, const uint32_t *p)
         return 0;
     }
     x = calloc(1, sizeof *x);
-    x->key = key; x->refs = 1; x->gl = o->gl; x->next = shared_list; shared_list = x;
+    x->key = key; x->refs = 1; x->gl = o->gl; x->fmt = o->fmt; x->w = o->w; x->h = o->h;
+    x->next = shared_list; shared_list = x;
     o->shared = x;
     return 0;
 }
@@ -829,3 +836,292 @@ void bbr_reset(BBRenderer *r)
 
 const char *bbr_log(BBRenderer *r) { return r->log; }
 uint64_t bbr_draws(BBRenderer *r) { return r->draws; }
+
+/* ======================= snapshots =======================
+ * A warm snapshot (QEMU migration) must carry what lives only on the host GPU: every client's objects (buffers
+ * from their host copies, texture pixels read back, shaders and programs as GLSL source), its fixed-function
+ * state and the textures shared between clients. Saved on one GL (native GLES 3.0), restored on another
+ * (WebGL2): only portable data goes into the stream. Depth/float texture contents are not kept (WebGL2 cannot
+ * read them; render targets are redrawn every frame anyway). */
+#define BBR_SNAP_MAGIC 0x53524242u   /* "BBRS" */
+#define BBR_SNAP_VERSION 1
+
+static void put32(bbr_put_fn put, void *f, uint32_t v) { put(f, &v, 4); }
+static int get32(bbr_get_fn get, void *f, uint32_t *v) { return get(f, v, 4); }
+
+/* RGBA8 copy of a colour texture level (0 bytes for depth/float formats) */
+static uint8_t *tex_read(BBRenderer *r, const Obj *o, GLuint gl, uint32_t level, uint32_t *w, uint32_t *h)
+{
+    const FmtInfo *fi = &fmt_info[o->fmt];
+    *w = o->w >> level; *h = o->h >> level;
+    if (!*w) *w = 1;
+    if (!*h) *h = 1;
+    if (fi->depth || fi->type == GL_FLOAT || fi->type == GL_HALF_FLOAT) return NULL;
+    uint8_t *px = malloc((size_t)*w * *h * 4);
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, r->read_fbo);
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gl, level);
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, *w, *h, GL_RGBA, GL_UNSIGNED_BYTE, px);
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, r->fbo);
+    return px;
+}
+
+/* upload an RGBA8 copy back into a texture of format fmt */
+static void tex_write(GLuint gl, uint32_t fmt, uint32_t level, uint32_t w, uint32_t h, uint8_t *px)
+{
+    scratch_bind(gl);
+    glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+    size_t n = (size_t)w * h;
+    switch (fmt) {
+    case BBGPU_FMT_RGB565:
+        for (size_t i = 0; i < n; i++) { px[i * 3] = px[i * 4]; px[i * 3 + 1] = px[i * 4 + 1]; px[i * 3 + 2] = px[i * 4 + 2]; }
+        glTexSubImage2D(GL_TEXTURE_2D, level, 0, 0, w, h, GL_RGB, GL_UNSIGNED_BYTE, px); break;
+    case BBGPU_FMT_R8: case BBGPU_FMT_A8:
+        for (size_t i = 0; i < n; i++) px[i] = px[i * 4];
+        glTexSubImage2D(GL_TEXTURE_2D, level, 0, 0, w, h, GL_RED, GL_UNSIGNED_BYTE, px); break;
+    case BBGPU_FMT_RG8:
+        for (size_t i = 0; i < n; i++) { px[i * 2] = px[i * 4]; px[i * 2 + 1] = px[i * 4 + 1]; }
+        glTexSubImage2D(GL_TEXTURE_2D, level, 0, 0, w, h, GL_RG, GL_UNSIGNED_BYTE, px); break;
+    default:   /* RGBA8 storage (BGRA formats are kept swapped as RGBA) */
+        glTexSubImage2D(GL_TEXTURE_2D, level, 0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px); break;
+    }
+}
+
+static void put_tex_levels(BBRenderer *r, const Obj *o, GLuint gl, bbr_put_fn put, void *f)
+{
+    for (uint32_t l = 0; l < o->levels; l++) {
+        uint32_t w, h;
+        uint8_t *px = tex_read(r, o, gl, l, &w, &h);
+        put32(put, f, px ? (uint32_t)((size_t)w * h * 4) : 0);
+        if (px) { put(f, px, (size_t)w * h * 4); free(px); }
+    }
+}
+
+static int get_tex_levels(const Obj *o, GLuint gl, bbr_get_fn get, void *f)
+{
+    for (uint32_t l = 0; l < o->levels; l++) {
+        uint32_t n, w = o->w >> l, h = o->h >> l;
+        if (!w) w = 1;
+        if (!h) h = 1;
+        if (!get32(get, f, &n)) return -1;
+        if (!n) continue;
+        if (n != w * h * 4) return -1;
+        uint8_t *px = malloc(n);
+        if (!get(f, px, n)) { free(px); return -1; }
+        tex_write(gl, o->fmt, l, w, h, px);
+        free(px);
+    }
+    return 0;
+}
+
+static void put_str(bbr_put_fn put, void *f, const char *s)
+{
+    uint32_t n = s ? (uint32_t)strlen(s) : 0;
+    put32(put, f, n);
+    if (n) put(f, s, n);
+}
+
+static char *get_str(bbr_get_fn get, void *f)
+{
+    uint32_t n;
+    if (!get32(get, f, &n) || n > (16u << 20)) return NULL;
+    char *s = malloc(n + 1);
+    if (n && !get(f, s, n)) { free(s); return NULL; }
+    s[n] = 0;
+    return s;
+}
+
+/* the textures shared between clients: saved once, before the clients (they refer to them by index) */
+void bbr_save_shared(BBRenderer *any, bbr_put_fn put, void *f)
+{
+    uint32_t n = 0;
+    for (Shared *x = shared_list; x; x = x->next) n++;
+    put32(put, f, n);
+    uint32_t idx = 0;
+    for (Shared *x = shared_list; x; x = x->next, idx++) {
+        /* find an object of any client describing it: the device passes the first renderer, which may not
+           own it, so the size/format travel with the entry (recorded on the Shared at export) */
+        put32(put, f, x->key); put32(put, f, x->fmt); put32(put, f, x->w); put32(put, f, x->h);
+        Obj tmp = { .kind = K_TEXTURE, .fmt = (uint8_t)x->fmt, .w = x->w, .h = x->h, .levels = 1 };
+        put_tex_levels(any, &tmp, x->gl, put, f);
+    }
+}
+
+static Shared **shared_by_index;
+static uint32_t shared_count;
+
+int bbr_load_shared(BBRenderer *any, bbr_get_fn get, void *f)
+{
+    uint32_t n;
+    if (!get32(get, f, &n) || n > 65536) return -1;
+    free(shared_by_index);
+    shared_by_index = calloc(n ? n : 1, sizeof *shared_by_index);
+    shared_count = n;
+    for (uint32_t i = 0; i < n; i++) {
+        uint32_t key, fmt, w, h;
+        if (!get32(get, f, &key) || !get32(get, f, &fmt) || !get32(get, f, &w) || !get32(get, f, &h)) return -1;
+        if (fmt == 0 || fmt >= BBGPU_FMT_COUNT || !w || !h || w > 16384 || h > 16384) return -1;
+        Shared *x = calloc(1, sizeof *x);
+        x->key = key; x->fmt = fmt; x->w = w; x->h = h; x->refs = 0;
+        glGenTextures(1, &x->gl);
+        scratch_bind(x->gl);
+        glTexStorage2D(GL_TEXTURE_2D, 1, fmt_info[fmt].ifmt, w, h);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, 0);
+        Obj tmp = { .kind = K_TEXTURE, .fmt = (uint8_t)fmt, .w = w, .h = h, .levels = 1 };
+        if (get_tex_levels(&tmp, x->gl, get, f)) return -1;
+        x->next = shared_list; shared_list = x;
+        shared_by_index[i] = x;
+    }
+    (void)any;
+    return 0;
+}
+
+static uint32_t shared_index(const Shared *s)
+{
+    uint32_t i = 0;
+    for (Shared *x = shared_list; x; x = x->next, i++) if (x == s) return i;
+    return 0xffffffffu;
+}
+
+void bbr_save(BBRenderer *r, bbr_put_fn put, void *f)
+{
+    put32(put, f, BBR_SNAP_MAGIC); put32(put, f, BBR_SNAP_VERSION);
+    uint32_t used = 0;
+    for (uint32_t i = 0; i < r->nobj; i++) if (r->obj[i].kind) used++;
+    put32(put, f, used);
+    for (uint32_t i = 0; i < r->nobj; i++) {
+        Obj *o = &r->obj[i];
+        if (!o->kind) continue;
+        put32(put, f, i); put32(put, f, o->kind); put32(put, f, o->fmt);
+        put32(put, f, o->w); put32(put, f, o->h); put32(put, f, o->levels); put32(put, f, o->bind);
+        switch (o->kind) {
+        case K_BUFFER: put(f, o->shadow, o->w ? o->w : 1); break;
+        case K_TEXTURE:
+            put32(put, f, o->shared ? shared_index(o->shared) : 0xffffffffu);
+            if (!o->shared) put_tex_levels(r, o, o->gl, put, f);
+            break;
+        case K_SHADER: put32(put, f, o->stage); put_str(put, f, o->src); break;
+        case K_PROGRAM: put_str(put, f, o->vsrc); put_str(put, f, o->fsrc); break;
+        }
+    }
+    put32(put, f, r->program);
+    put32(put, f, r->vc_n); put(f, r->vc, sizeof r->vc);
+    put32(put, f, r->fc_n); put(f, r->fc, sizeof r->fc);
+    put32(put, f, r->nve); put(f, r->ve, sizeof r->ve);
+    put32(put, f, r->nvb); put(f, r->vb, sizeof r->vb);
+    put32(put, f, r->ib_res); put32(put, f, r->ib_size); put32(put, f, r->ib_off);
+    put32(put, f, (uint32_t)r->flip); put32(put, f, (uint32_t)r->front_ccw);
+    put(f, r->st, sizeof r->st); put(f, r->st_n, sizeof r->st_n);
+    put32(put, f, r->tex_used); put(f, r->tex, sizeof r->tex);
+    put(f, r->wins, sizeof r->wins);
+    put32(put, f, r->fbp_n); put(f, r->fbp, sizeof r->fbp);
+}
+
+static int link_program(BBRenderer *r, Obj *o)
+{
+    GLuint sh[2];
+    const char *src[2] = { o->vsrc, o->fsrc };
+    for (int k = 0; k < 2; k++) {
+        sh[k] = glCreateShader(k ? GL_FRAGMENT_SHADER : GL_VERTEX_SHADER);
+        glShaderSource(sh[k], 1, &src[k], NULL);
+        glCompileShader(sh[k]);
+    }
+    o->gl = glCreateProgram();
+    glAttachShader(o->gl, sh[0]); glAttachShader(o->gl, sh[1]);
+    glLinkProgram(o->gl);
+    glDeleteShader(sh[0]); glDeleteShader(sh[1]);
+    GLint ok = 0; glGetProgramiv(o->gl, GL_LINK_STATUS, &ok);
+    if (!ok) { logf_(r, "snapshot: program relink failed%s%s\n", "", ""); return -1; }
+    glUseProgram(o->gl);
+    o->loc_vc = glGetUniformLocation(o->gl, "bb_vc");
+    o->loc_fc = glGetUniformLocation(o->gl, "bb_fc");
+    o->loc_flip = glGetUniformLocation(o->gl, "bb_flip");
+    o->loc_sw = malloc(16 * sizeof(GLint));
+    for (int u = 0; u < 16; u++) {
+        char nm[8]; snprintf(nm, sizeof nm, "bb_w%d", u); o->loc_sw[u] = glGetUniformLocation(o->gl, nm);
+        snprintf(nm, sizeof nm, "bb_s%d", u);
+        GLint l = glGetUniformLocation(o->gl, nm);
+        if (l >= 0) glUniform1i(l, u);
+    }
+    return 0;
+}
+
+int bbr_load(BBRenderer *r, bbr_get_fn get, void *f)
+{
+    uint32_t magic, ver, used;
+    if (!get32(get, f, &magic) || !get32(get, f, &ver) || magic != BBR_SNAP_MAGIC || ver != BBR_SNAP_VERSION) return -1;
+    bbr_reset(r);
+    if (!get32(get, f, &used)) return -1;
+    for (uint32_t n = 0; n < used; n++) {
+        uint32_t id, kind, fmt, w, h, levels, bind;
+        if (!get32(get, f, &id) || !get32(get, f, &kind) || !get32(get, f, &fmt) || !get32(get, f, &w) ||
+            !get32(get, f, &h) || !get32(get, f, &levels) || !get32(get, f, &bind)) return -1;
+        Obj *o = obj_get(r, id, 1);
+        if (!o || o->kind) return -1;
+        switch (kind) {
+        case K_BUFFER: {
+            uint32_t c[8] = { id, BBGPU_TARGET_BUFFER, 0, w, 1, 1, 1, bind };
+            if (res_create(r, c)) return -1;
+            if (!get(f, o->shadow, w ? w : 1)) return -1;
+            glBindBuffer(GL_ARRAY_BUFFER, o->gl);
+            glBufferSubData(GL_ARRAY_BUFFER, 0, w, o->shadow);
+            break;
+        }
+        case K_TEXTURE: {
+            uint32_t si;
+            if (!get32(get, f, &si)) return -1;
+            if (si != 0xffffffffu) {
+                if (si >= shared_count || !shared_by_index[si]) return -1;
+                Shared *x = shared_by_index[si];
+                o->kind = K_TEXTURE; o->fmt = fmt; o->w = w; o->h = h; o->levels = levels ? levels : 1; o->bind = bind;
+                o->gl = x->gl; o->shared = x; x->refs++;
+                break;
+            }
+            uint32_t c[8] = { id, BBGPU_TARGET_2D, fmt, w, h, 1, levels, bind };
+            if (res_create(r, c)) return -1;
+            if (get_tex_levels(o, o->gl, get, f)) return -1;
+            break;
+        }
+        case K_SHADER: {
+            uint32_t stage;
+            if (!get32(get, f, &stage)) return -1;
+            char *src = get_str(get, f);
+            if (!src) return -1;
+            o->kind = K_SHADER; o->stage = stage; o->src = src; o->src_len = (uint32_t)strlen(src);
+            o->gl = glCreateShader(stage == BBGPU_STAGE_VS ? GL_VERTEX_SHADER : GL_FRAGMENT_SHADER);
+            glShaderSource(o->gl, 1, (const char *const *)&o->src, NULL);
+            glCompileShader(o->gl);
+            break;
+        }
+        case K_PROGRAM:
+            o->kind = K_PROGRAM;
+            o->vsrc = get_str(get, f); o->fsrc = get_str(get, f);
+            if (!o->vsrc || !o->fsrc || link_program(r, o)) return -1;
+            break;
+        default:
+            return -1;
+        }
+    }
+    uint32_t v;
+    if (!get32(get, f, &r->program) ||
+        !get32(get, f, &r->vc_n) || !get(f, r->vc, sizeof r->vc) ||
+        !get32(get, f, &r->fc_n) || !get(f, r->fc, sizeof r->fc) ||
+        !get32(get, f, &r->nve) || !get(f, r->ve, sizeof r->ve) ||
+        !get32(get, f, &r->nvb) || !get(f, r->vb, sizeof r->vb) ||
+        !get32(get, f, &r->ib_res) || !get32(get, f, &r->ib_size) || !get32(get, f, &r->ib_off)) return -1;
+    if (!get32(get, f, &v)) return -1;
+    r->flip = (int)v;
+    if (!get32(get, f, &v)) return -1;
+    r->front_ccw = (int)v;
+    if (!get(f, r->st, sizeof r->st) || !get(f, r->st_n, sizeof r->st_n) ||
+        !get32(get, f, &r->tex_used) || !get(f, r->tex, sizeof r->tex) ||
+        !get(f, r->wins, sizeof r->wins) ||
+        !get32(get, f, &r->fbp_n) || !get(f, r->fbp, sizeof r->fbp)) return -1;
+    if (r->fbp_n > 10) return -1;
+    if (r->fbp_n) set_framebuffer(r, r->fbp, r->fbp_n);
+    r->uniforms_dirty = 1;
+    bbr_activate(r);
+    return 0;
+}

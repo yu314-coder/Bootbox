@@ -121,8 +121,11 @@
       // on Skia/Vulkan instead of ANGLE GL (cold app launches ~2x faster); Settings, Files, the WebView
       // browser, Gallery, Contacts, Clock and Calendar were launched before the snapshot so the ones
       // still in memory resume instead of cold-starting; plain touchscreen + keyboard (v5), no bg dexopt.
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v6/qemu-android64-warm6-2141954248.data.gz",
-        name: "qemu-android64-warm6-2141954248.data.gz", mb: 911, size: 954588021 },
+      // v7 (Nov 2026): Android renders on the iPad's GPU (Bootbox GPU bridge: Mesa on WebGL2 instead of
+      // SwiftShader on the emulated CPU), the snapshot carries the GPU state; Lawnchair (Pixel-style home),
+      // gesture navigation, Material You colours from an original wallpaper; apps AOT-compiled and warmed.
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v7/qemu-android64-v7.data.gz",
+        name: "qemu-android64-warm7-2542215631.data.gz", mb: 1028, size: 1078091619 },
     ] },
   };
   // The boot menu (biosmenu.js) shows whether each system is downloaded and how big it is.

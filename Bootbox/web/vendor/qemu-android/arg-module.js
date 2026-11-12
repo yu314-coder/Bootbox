@@ -34,7 +34,11 @@ Module['arguments'] =
     // same position (last) so the PCI slot matches. Do NOT put any "-netdev" here: run.js
     // only injects when none is present, so a placeholder backend (build 82 used
     // `hubport`) leaves the guest resumed but cut off — no screen, no internet.
-    "-nographic", "-cpu", "qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt", "-m", "1280M",
+    // v7 (Nov 2026): Android draws on the iPad's GPU through the Bootbox GPU bridge (bbgpu: Mesa on WebGL2,
+    // 16 client slots - every Android GL process is a client); the snapshot carries the bridge's GPU objects
+    // (bbgpu savevm section). Captured on the native Linux rig with the app's netstack config (capnet),
+    // +rdrand (guest entropy). The device list/order below must match that capture exactly.
+    "-nographic", "-cpu", "qemu64,+ssse3,+sse4.1,+sse4.2,+popcnt,+rdrand", "-m", "1280M",
     "-accel", "tcg,tb-size=256,thread=multi", "-smp", "4",
     "-L", "/pack/",
     "-incoming", "file:/pack/vm.state",
@@ -44,6 +48,7 @@ Module['arguments'] =
     "-append", "nohz=on console=ttyS0,115200n8 root=/dev/vda rootwait ro loglevel=6 nowatchdog nosoftlockup audit=0 tsc=reliable no_timer_check cryptomgr.notests random.trust_cpu=on QEMU_MODE=1 init=/sbin/tini -- /bin/busybox env GODEBUG=cpu.all=off /sbin/init",
     "-virtfs", "local,path=/,mount_tag=wasi0,security_model=passthrough,id=wasi0",
     "-virtfs", "local,path=/pack,mount_tag=wasi1,security_model=passthrough,id=wasi1",
+    "-device", "bbgpu,slots=16,shm-mb=128",
     "-nic", "none"
 ]
 ;

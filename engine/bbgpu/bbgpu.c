@@ -19,6 +19,10 @@
 #include "hw/qdev-properties.h"
 #include "qom/object.h"
 #include "qemu/thread.h"
+#include "migration/register.h"
+#include "migration/qemu-file-types.h"
+#include "migration/vmstate.h"
+#include "qemu/error-report.h"
 #include "bbgpu_proto.h"
 #ifdef BBGPU_RENDER
 #include "bbgpu_render.h"
@@ -52,6 +56,11 @@ struct BBGPUState {
         bool head_dirty, reset, legacy;
         void *r;                       /* BBRenderer */
     } slot[BBGPU_MAX_SLOTS];
+    /* snapshots: save/load run on the GPU thread (it owns the GL context); the migration thread waits */
+    int xfer_op;                       /* 0 none, 1 save, 2 load */
+    void *xfer_file;
+    int xfer_result;
+    QemuCond xfer_done;
 #endif
     uint32_t status;       /* BBGPU_STATUS_* */
 };
@@ -126,6 +135,87 @@ static bool any_pending(BBGPUState *s)
     return false;
 }
 
+static void snap_put(void *f, const void *p, size_t n) { qemu_put_buffer((QEMUFile *)f, p, n); }
+static int snap_get(void *f, void *p, size_t n) { return qemu_get_buffer((QEMUFile *)f, p, n) == n; }
+
+/* GPU thread: every ring is drained (the guest is stopped); write the slots, the shared textures, then each
+ * client's objects and state */
+static int snapshot_save(BBGPUState *s)
+{
+    QEMUFile *f = s->xfer_file;
+    qemu_put_be32(f, s->nslots);
+    for (uint32_t i = 0; i < s->nslots; i++) {
+        struct BBSlot *sl = &s->slot[i];
+        qemu_put_be32(f, sl->ring_tail); qemu_put_be32(f, sl->fence_done); qemu_put_be32(f, sl->error);
+        qemu_put_be32(f, sl->err_op); qemu_put_be32(f, sl->legacy);
+    }
+    bbr_save_shared(s->slot[0].r, snap_put, f);
+    for (uint32_t i = 0; i < s->nslots; i++)
+        bbr_save(s->slot[i].r, snap_put, f);
+    return 0;
+}
+
+static int snapshot_load(BBGPUState *s)
+{
+    QEMUFile *f = s->xfer_file;
+    if (qemu_get_be32(f) != s->nslots) return -EINVAL;
+    for (uint32_t i = 0; i < s->nslots; i++) {
+        struct BBSlot *sl = &s->slot[i];
+        sl->ring_tail = qemu_get_be32(f); sl->fence_done = qemu_get_be32(f); sl->error = qemu_get_be32(f);
+        sl->err_op = qemu_get_be32(f); sl->legacy = qemu_get_be32(f);
+        sl->head = sl->ring_tail; sl->head_dirty = false; sl->reset = false;
+        uint8_t *m; uint32_t sz, ring;
+        slot_layout(s, i, &m, &sz, &ring);
+        bbr_layout(s->slot[i].r, m, sz, ring);
+    }
+    if (bbr_load_shared(s->slot[0].r, snap_get, f)) return -EINVAL;
+    for (uint32_t i = 0; i < s->nslots; i++)
+        if (bbr_load(s->slot[i].r, snap_get, f)) return -EINVAL;
+    return 0;
+}
+
+static int xfer(BBGPUState *s, int op, QEMUFile *f)
+{
+    /* the renderer may still be starting (GL context): wait for it */
+    while (qatomic_read(&s->status) == BBGPU_STATUS_STARTING) g_usleep(1000);
+    if (qatomic_read(&s->status) != BBGPU_STATUS_READY) return -ENODEV;
+    qemu_mutex_lock(&s->lock);
+    /* finish what the rings hold before saving */
+    for (;;) {
+        bool busy = false;
+        for (uint32_t i = 0; i < s->nslots; i++)
+            busy |= s->slot[i].head_dirty || s->slot[i].reset || s->slot[i].ring_tail != s->slot[i].head;
+        if (!busy || op == 2) break;
+        qemu_mutex_unlock(&s->lock); g_usleep(1000); qemu_mutex_lock(&s->lock);
+    }
+    s->xfer_file = f; s->xfer_op = op;
+    qemu_cond_broadcast(&s->cond);
+    while (s->xfer_op) qemu_cond_wait(&s->xfer_done, &s->lock);
+    int r = s->xfer_result;
+    qemu_mutex_unlock(&s->lock);
+    return r;
+}
+
+static void bbgpu_save_state(QEMUFile *f, void *opaque)
+{
+    BBGPUState *s = opaque;
+    int r = xfer(s, 1, f);
+    if (r) error_report("bbgpu: snapshot save failed (%d)", r);
+}
+
+static int bbgpu_load_state(QEMUFile *f, void *opaque, int version_id)
+{
+    BBGPUState *s = opaque;
+    int r = xfer(s, 2, f);
+    if (r) error_report("bbgpu: snapshot load failed (%d)", r);
+    return r;
+}
+
+static const SaveVMHandlers bbgpu_savevm = {
+    .save_state = bbgpu_save_state,
+    .load_state = bbgpu_load_state,
+};
+
 static void *bbgpu_gpu_thread(void *opaque)
 {
     BBGPUState *s = opaque;
@@ -152,6 +242,16 @@ static void *bbgpu_gpu_thread(void *opaque)
                 if (s->slot[i].head_dirty || s->slot[i].reset) work = i;
             }
             if (work >= 0) break;
+            if (s->xfer_op) {
+                int op = s->xfer_op;
+                qemu_mutex_unlock(&s->lock);
+                int res = op == 1 ? snapshot_save(s) : snapshot_load(s);
+                cur = NULL;                    /* the renderers bound their own state */
+                qemu_mutex_lock(&s->lock);
+                s->xfer_result = res; s->xfer_op = 0;
+                qemu_cond_broadcast(&s->xfer_done);
+                continue;
+            }
             if (any_pending(s)) {          /* held-back frames: offer them again once the viewer catches up */
                 qemu_mutex_unlock(&s->lock);
                 for (uint32_t i = 0; i < s->nslots; i++) {
@@ -321,9 +421,21 @@ static void bbgpu_realize(PCIDevice *pdev, Error **errp)
     s->nslots = s->slots < 1 ? 1 : s->slots > BBGPU_MAX_SLOTS ? BBGPU_MAX_SLOTS : s->slots;
     qemu_mutex_init(&s->lock);
     qemu_cond_init(&s->cond);
+    qemu_cond_init(&s->xfer_done);
+    register_savevm_live("bbgpu", 0, 1, &bbgpu_savevm, s);
     qemu_thread_create(&s->thread, "bbgpu", bbgpu_gpu_thread, s, QEMU_THREAD_DETACHED);
 #endif
 }
+
+static const VMStateDescription vmstate_bbgpu = {
+    .name = "bbgpu-pci",
+    .version_id = 1,
+    .minimum_version_id = 1,
+    .fields = (VMStateField[]) {
+        VMSTATE_PCI_DEVICE(parent_obj, BBGPUState),
+        VMSTATE_END_OF_LIST()
+    },
+};
 
 static Property bbgpu_props[] = {
     DEFINE_PROP_UINT32("shm-mb", BBGPUState, shm_mb, 64),
@@ -341,6 +453,7 @@ static void bbgpu_class_init(ObjectClass *klass, void *data)
     k->revision = BBGPU_PROTO_VERSION;
     k->class_id = PCI_CLASS_DISPLAY_OTHER;
     dc->desc = "Bootbox GPU bridge";
+    dc->vmsd = &vmstate_bbgpu;
     device_class_set_props(dc, bbgpu_props);
     set_bit(DEVICE_CATEGORY_DISPLAY, dc->categories);
 }

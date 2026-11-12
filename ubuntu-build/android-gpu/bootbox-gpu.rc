@@ -16,3 +16,6 @@ service bootbox-sfgpu /vendor/bin/bootbox-sf-gpu.sh
 
 on property:init.svc.surfaceflinger=running && property:ro.hardware.egl=mesa
     start bootbox-sfgpu
+
+on property:sys.boot_completed=1 && property:ro.hardware.egl=mesa
+    start bootbox-sfgpu
