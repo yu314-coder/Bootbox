@@ -1,0 +1,16 @@
+# Bootbox GPU bridge for Android: DRM + VGEM in the Android guest kernel (gralloc gbm needs a DRM node).
+# Apply after android64-container2wasm.patch: git -C android-c2w apply ../ubuntu-build/android64-drm.patch
+diff --git a/config/qemu/linux_x86_config b/config/qemu/linux_x86_config
+index dd7dfec..57f89c7 100644
+--- a/config/qemu/linux_x86_config
++++ b/config/qemu/linux_x86_config
+@@ -1642,7 +1644,8 @@ CONFIG_MFD_SYSCON=y
+ #
+ CONFIG_APERTURE_HELPERS=y
+ # CONFIG_AGP is not set
+-# CONFIG_DRM is not set
++CONFIG_DRM=y
++CONFIG_DRM_VGEM=y
+ # CONFIG_DRM_DEBUG_MODESET_LOCK is not set
+ 
+ #

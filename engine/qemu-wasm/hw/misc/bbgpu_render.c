@@ -10,14 +10,20 @@
 #include "bbgpu_render.h"
 
 enum { K_NONE, K_BUFFER, K_TEXTURE, K_RENDERBUF, K_SHADER, K_PROGRAM };
+/* a texture shared between clients: one GL texture, several clients' objects (the GL context is shared) */
+typedef struct Shared { uint32_t key, refs; GLuint gl; struct Shared *next; } Shared;
+static Shared *shared_list;
+
 typedef struct {
     uint8_t kind, fmt;
+    Shared *shared;                /* textures: exported/imported (the GL name belongs to the Shared) */
     GLuint gl;
     GLuint gl_index;               /* buffers: twin bound only as ELEMENT_ARRAY_BUFFER (WebGL: an index
                                       buffer can never be used for other data, nor the other way round) */
     uint8_t *shadow;               /* buffers: host copy, fills the index twin */
     uint32_t w, h, levels, bind;
     GLint loc_vc, loc_fc, loc_flip; /* programs: uniform arrays, y flip */
+    GLint *loc_sw;                 /* programs: sampler swizzles bb_w<unit> (16) */
 } Obj;
 
 typedef struct { uint32_t buffer, offset, size, type, normalized, integer, divisor; } VElem;
@@ -44,6 +50,7 @@ struct BBRenderer {
     uint32_t st[5][20]; uint8_t st_n[5];
     uint32_t tex[16][8]; uint32_t tex_used;
     uint32_t wins[8];               /* windows this client presented (removed from the viewer on reset) */
+    int sw_dirty;                   /* sampler swizzles must be (re)set before the next draw */
 };
 enum { ST_VIEWPORT, ST_SCISSOR, ST_BLEND, ST_DS, ST_RASTER };
 
@@ -54,7 +61,8 @@ static void logf_(BBRenderer *r, const char *fmt, const char *a, const char *b)
 {
     size_t n = strlen(r->log);
     if (n + 512 < sizeof r->log) snprintf(r->log + n, sizeof r->log - n, fmt, a, b);
-    if (r->heap_size > BBGPU_LOG_SIZE) memcpy(r->heap + r->heap_size - BBGPU_LOG_SIZE, r->log, sizeof r->log);
+    if (r->heap_size > BBGPU_LOG_SIZE)   /* after the status words (slots); the legacy layout has none, harmless */
+        memcpy(r->heap + r->heap_size - BBGPU_LOG_SIZE + BBGPU_SLOT_STATUS_BYTES, r->log, sizeof r->log - BBGPU_SLOT_STATUS_BYTES);
 }
 
 static Obj *obj_get(BBRenderer *r, uint32_t id, int create)
@@ -101,6 +109,17 @@ static void swap_rb(uint8_t *p, uint32_t w, uint32_t h, uint32_t stride)
     }
 }
 
+/* creating and uploading textures binds them on a scratch unit: units 0-15 hold the client's sampler
+ * bindings, which the guest does not re-send while they are unchanged (a create between its SET_TEXTURES and
+ * its DRAW would otherwise replace what the draw samples) */
+#define BBR_SCRATCH_UNIT 16
+static void scratch_bind(GLuint tex)
+{
+    glActiveTexture(GL_TEXTURE0 + BBR_SCRATCH_UNIT);
+    glBindTexture(GL_TEXTURE_2D, tex);
+}
+
+static int trace_share(void);
 static int range_ok(BBRenderer *r, uint64_t off, uint64_t len) { return off + len <= r->heap_size - BBGPU_LOG_SIZE; }
 
 /* ---- commands ---- */
@@ -121,7 +140,7 @@ static int res_create(BBRenderer *r, const uint32_t *p)
     if (fmt == 0 || fmt >= BBGPU_FMT_COUNT || !fmt_info[fmt].ifmt) return BBGPU_ERR_RANGE;
     o->kind = K_TEXTURE;
     glGenTextures(1, &o->gl);
-    glBindTexture(GL_TEXTURE_2D, o->gl);
+    scratch_bind(o->gl);
     glTexStorage2D(GL_TEXTURE_2D, o->levels, fmt_info[fmt].ifmt, w, h);
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAX_LEVEL, o->levels - 1);
     return 0;
@@ -131,9 +150,19 @@ static void obj_free(Obj *o)
 {
     switch (o->kind) {
     case K_BUFFER: glDeleteBuffers(1, &o->gl); if (o->gl_index) glDeleteBuffers(1, &o->gl_index); free(o->shadow); break;
-    case K_TEXTURE: glDeleteTextures(1, &o->gl); break;
+    case K_TEXTURE:
+        if (o->shared) {
+            if (--o->shared->refs == 0) {
+                Shared **pp = &shared_list;
+                while (*pp && *pp != o->shared) pp = &(*pp)->next;
+                if (*pp) *pp = o->shared->next;
+                glDeleteTextures(1, &o->shared->gl);
+                free(o->shared);
+            }
+        } else glDeleteTextures(1, &o->gl);
+        break;
     case K_SHADER: glDeleteShader(o->gl); break;
-    case K_PROGRAM: glDeleteProgram(o->gl); break;
+    case K_PROGRAM: glDeleteProgram(o->gl); free(o->loc_sw); break;
     }
     memset(o, 0, sizeof *o);
 }
@@ -155,8 +184,12 @@ static int res_write(BBRenderer *r, const uint32_t *p)
     const FmtInfo *f = &fmt_info[o->fmt];
     if (!stride) stride = w * f->bpp;
     if (!range_ok(r, off, (uint64_t)stride * h) || stride % f->bpp) return BBGPU_ERR_RANGE;
+    if (w == 2880 && trace_share()) {
+        uint32_t ck = 0; for (size_t q = 0; q < (size_t)stride * h; q += 64) ck = ck * 31 + r->heap[off + q];
+        fprintf(stderr, "[ck] r%p res %u y %u n %u off %u ck %08x\n", (void *)r, U(p, 0), y, h, off, ck);
+    }
     if (f->swap_rb) swap_rb(r->heap + off, w, h, stride);   /* in place: the guest no longer needs it */
-    glBindTexture(GL_TEXTURE_2D, o->gl);
+    scratch_bind(o->gl);
     glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
     glPixelStorei(GL_UNPACK_ROW_LENGTH, stride / f->bpp);
     glTexSubImage2D(GL_TEXTURE_2D, level, x, y, w, h, f->fmt, f->type, r->heap + off);
@@ -244,6 +277,8 @@ static int program_create(BBRenderer *r, const uint32_t *p)
     o->loc_vc = glGetUniformLocation(o->gl, "bb_vc");
     o->loc_fc = glGetUniformLocation(o->gl, "bb_fc");
     o->loc_flip = glGetUniformLocation(o->gl, "bb_flip");
+    o->loc_sw = malloc(16 * sizeof(GLint));
+    for (int u = 0; u < 16; u++) { char nm[8]; snprintf(nm, sizeof nm, "bb_w%d", u); o->loc_sw[u] = glGetUniformLocation(o->gl, nm); }
     for (int i = 0; i < 16; i++) {
         char name[16]; snprintf(name, sizeof name, "bb_s%d", i);
         GLint l = glGetUniformLocation(o->gl, name);
@@ -288,6 +323,7 @@ static int set_textures(BBRenderer *r, const uint32_t *p, uint32_t ndw)
         memset(r->tex[first + i], 0, sizeof r->tex[0]);
         memcpy(r->tex[first + i], t, per * 4);
         r->tex_used |= 1u << (first + i);
+        r->sw_dirty = 1;
         glActiveTexture(GL_TEXTURE0 + first + i);
         glBindTexture(GL_TEXTURE_2D, o ? o->gl : 0);
         glBindSampler(first + i, s);
@@ -333,6 +369,15 @@ static int draw(BBRenderer *r, const uint32_t *p)
         r->uniforms_dirty = 0;
     }
     if (prog->loc_flip >= 0) glUniform1f(prog->loc_flip, r->flip ? -1.0f : 1.0f);
+    if (r->sw_dirty && prog->loc_sw) {
+        for (int u = 0; u < 16; u++) {
+            if (prog->loc_sw[u] < 0) continue;
+            uint32_t w = (r->tex_used & (1u << u)) ? r->tex[u][5] : 0x03020100;
+            glUniform4i(prog->loc_sw[u], (int)(w & 0xff), (int)((w >> 8) & 0xff) - 1, (int)((w >> 16) & 0xff) - 2,
+                        (int)(w >> 24) - 3);
+        }
+        r->sw_dirty = 0;
+    }
     glFrontFace((r->front_ccw ^ r->flip) ? GL_CCW : GL_CW);
     apply_vertex_state(r, indexed ? bias : 0);
     if (!inst) inst = 1;
@@ -374,6 +419,70 @@ static int copy_res(BBRenderer *r, const uint32_t *p)
     glFramebufferTexture2D(GL_READ_FRAMEBUFFER, att, GL_TEXTURE_2D, 0, 0);
     glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, att, GL_TEXTURE_2D, 0, 0);
     glBindFramebuffer(GL_FRAMEBUFFER, r->fbo);
+    return 0;
+}
+
+/* ---- sharing between clients ---- */
+static Shared *shared_find(uint32_t key)
+{
+    for (Shared *x = shared_list; x; x = x->next) if (x->key == key) return x;
+    return NULL;
+}
+
+static int trace_share(void)
+{
+#ifdef __EMSCRIPTEN__
+    return 0;
+#else
+    static int t = -1;
+    if (t < 0) { const char *e = getenv("BBGPU_TRACE_SHARE"); t = e && *e == '1'; }
+    return t;
+#endif
+}
+
+static int res_export(BBRenderer *r, const uint32_t *p)
+{
+    Obj *o = obj_kind(r, U(p, 0), K_TEXTURE);
+    uint32_t key = U(p, 1);
+    if (!o || !key) return BBGPU_ERR_OBJECT;
+    if (trace_share()) fprintf(stderr, "[share] r%p export id %u key %u %ux%u fmt %u%s\n", (void *)r, U(p, 0), key, o->w, o->h, o->fmt, o->shared ? " (already)" : "");
+    if (o->shared) return 0;                         /* already shared */
+    Shared *x = shared_find(key);
+    if (x) {                                         /* the key was reused (old buffer gone in a dying client) */
+        glDeleteTextures(1, &o->gl);
+        o->gl = x->gl; x->refs++; o->shared = x;
+        return 0;
+    }
+    x = calloc(1, sizeof *x);
+    x->key = key; x->refs = 1; x->gl = o->gl; x->next = shared_list; shared_list = x;
+    o->shared = x;
+    return 0;
+}
+
+static int res_import(BBRenderer *r, const uint32_t *p)
+{
+    uint32_t id = U(p, 0), key = U(p, 1), fmt = U(p, 2), w = U(p, 3), h = U(p, 4), off = U(p, 5), stride = U(p, 6);
+    Shared *x = key ? shared_find(key) : NULL;
+    if (trace_share()) fprintf(stderr, "[share] r%p import id %u key %u %ux%u fmt %u stride %u -> %s gl %u\n", (void *)r, id, key, w, h, fmt, stride, x ? "alias" : "new", x ? x->gl : 0);
+    if (x) {
+        Obj *o = obj_get(r, id, 1);
+        if (!o || o->kind != K_NONE) return BBGPU_ERR_OBJECT;
+        o->kind = K_TEXTURE; o->fmt = fmt; o->w = w; o->h = h; o->levels = 1;
+        o->gl = x->gl; o->shared = x; x->refs++;
+        return 0;
+    }
+    uint32_t c[8] = { id, BBGPU_TARGET_2D, fmt, w, h, 1, 1, 0 };
+    int e = res_create(r, c);
+    if (e) return e;
+    if (stride) {
+        uint32_t wr[11] = { id, 0, 0, 0, 0, w, h, 1, off, stride, 0 };
+        e = res_write(r, wr);
+        if (e) return e;
+    }
+    if (key) {
+        uint32_t ex[2] = { id, key };
+        return res_export(r, ex);
+    }
     return 0;
 }
 
@@ -421,7 +530,7 @@ static int present(BBRenderer *r, const uint32_t *p)
         if (r->pend.tex) glDeleteTextures(1, &r->pend.tex);
         r->pend.tw = w > r->pend.tw ? w : r->pend.tw; r->pend.th = h > r->pend.th ? h : r->pend.th;
         glGenTextures(1, &r->pend.tex);
-        glBindTexture(GL_TEXTURE_2D, r->pend.tex);
+        scratch_bind(r->pend.tex);
         glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, r->pend.tw, r->pend.th);
     }
     glBindFramebuffer(GL_READ_FRAMEBUFFER, r->read_fbo);
@@ -522,7 +631,7 @@ static int exec_state(BBRenderer *r, uint32_t op, const uint32_t *p, uint32_t nd
         return 0;
     case BBGPU_OP_USE_PROGRAM: {
         Obj *o = obj_kind(r, U(p, 0), K_PROGRAM); if (!o) return BBGPU_ERR_OBJECT;
-        r->program = U(p, 0); glUseProgram(o->gl); r->uniforms_dirty = 1; return 0;
+        r->program = U(p, 0); glUseProgram(o->gl); r->uniforms_dirty = 1; r->sw_dirty = 1; return 0;
     }
     case BBGPU_OP_SET_UNIFORMS: {
         uint32_t stage = U(p, 0), first = U(p, 1), n = U(p, 2);
@@ -551,6 +660,8 @@ static int exec_state(BBRenderer *r, uint32_t op, const uint32_t *p, uint32_t nd
     case BBGPU_OP_DRAW: return draw(r, p);
     case BBGPU_OP_COPY_RES: return copy_res(r, p);
     case BBGPU_OP_PRESENT: return ndw < 8 ? BBGPU_ERR_RANGE : present(r, p);
+    case BBGPU_OP_RES_EXPORT: return ndw < 2 ? BBGPU_ERR_RANGE : res_export(r, p);
+    case BBGPU_OP_RES_IMPORT: return ndw < 7 ? BBGPU_ERR_RANGE : res_import(r, p);
     }
     return BBGPU_ERR_OP;
 }
@@ -588,6 +699,7 @@ void bbr_activate(BBRenderer *r)
     Obj *prog = obj_kind(r, r->program, K_PROGRAM);
     glUseProgram(prog ? prog->gl : 0);
     r->uniforms_dirty = 1;
+    r->sw_dirty = 1;
 }
 
 BBRenderer *bbr_create(uint8_t *shm, uint32_t shm_size, uint32_t ring_size)
@@ -629,6 +741,68 @@ uint32_t bbr_execute(BBRenderer *r, uint32_t *tail, uint32_t head, uint32_t *fen
                             vb ? vb->res : 0, vb ? vb->stride : 0, vb ? vb->offset + ve->offset : 0, ve->size, ve->type, f[0], f[1], f[2], f[3]);
                 }
                 GLint vp[4]; glGetIntegerv(GL_VIEWPORT, vp);
+                static int dumps;
+                const char *dfb = getenv("BBGPU_DUMPFB"), *dtx = getenv("BBGPU_DUMPTEX");
+                int samples_it = 0;
+                for (int u = 0; dtx && u < 16; u++)
+                    if (r->tex_used & (1u << u)) { Obj *t = obj_kind(r, r->tex[u][0], K_TEXTURE); if (t && (int)t->w == atoi(dtx)) {
+                        samples_it = 1;
+                        GLuint rf; glGenFramebuffers(1, &rf); glBindFramebuffer(GL_READ_FRAMEBUFFER, rf);
+                        glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, t->gl, 0);
+                        uint8_t px[4] = {0}; glReadPixels(t->w / 2, t->h / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+                        for (int yy = 939; yy < 946 && yy < (int)t->h; yy++) {
+                            uint8_t a[4], b[4]; glReadPixels(100, yy, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, a); glReadPixels(2000, yy, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, b);
+                            fprintf(stderr, "[bbr]   row %d: x100 %02x%02x%02x x2000 %02x%02x%02x\n", yy, a[0], a[1], a[2], b[0], b[1], b[2]);
+                        }
+                        fprintf(stderr, "[bbr]   unit %d tex id %u gl %u shared %p: center %02x%02x%02x%02x fbstatus 0x%x\n", u, r->tex[u][0], t->gl, (void *)t->shared, px[0], px[1], px[2], px[3], glCheckFramebufferStatus(GL_READ_FRAMEBUFFER));
+                        glBindFramebuffer(GL_READ_FRAMEBUFFER, r->read_fbo); glDeleteFramebuffers(1, &rf);
+                        glBindFramebuffer(GL_FRAMEBUFFER, r->fbo);
+                        GLint sp[8]; GLuint smp = r->sampler[u];
+                        glGetSamplerParameteriv(smp, GL_TEXTURE_MIN_FILTER, &sp[0]); glGetSamplerParameteriv(smp, GL_TEXTURE_WRAP_S, &sp[1]);
+                        fprintf(stderr, "[bbr]   sampler min 0x%x wrap 0x%x set[%x %x %x %x]\n", sp[0], sp[1], r->tex[u][1], r->tex[u][2], r->tex[u][3], r->tex[u][4]);
+                    } }
+                if (samples_it) {
+                    GLint att = 0; glGetFramebufferAttachmentParameteriv(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME, &att);
+                    uint8_t tc[4] = {0}; glReadPixels(r->fb_w / 2, r->fb_h / 2, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, tc);
+                    if (r->fb_w == 2880) for (int yy = 0; yy < (int)r->fb_h; yy++) {
+                        uint8_t a[4], b[4]; glReadPixels(100, yy, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, a); glReadPixels(2000, yy, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, b);
+                        static uint8_t pa[4], pb[4];
+                        if (yy && (abs(a[0] - pa[0]) > 12 || abs(b[0] - pb[0]) > 12)) fprintf(stderr, "[bbr]   target jump at row %d: x100 %02x%02x%02x (prev %02x) x2000 %02x%02x%02x (prev %02x)\n", yy, a[0], a[1], a[2], pa[0], b[0], b[1], b[2], pb[0]);
+                        memcpy(pa, a, 4); memcpy(pb, b, 4);
+                    }
+                    for (uint32_t i = 0; i < r->nve && i < 2; i++) {
+                        VElem *ve = &r->ve[i]; VBuf *vb = ve->buffer < r->nvb ? &r->vb[ve->buffer] : NULL;
+                        Obj *o = vb ? obj_kind(r, vb->res, K_BUFFER) : NULL;
+                        float g[12] = {0};
+                        if (o) { glBindBuffer(GL_ARRAY_BUFFER, o->gl); void *m = glMapBufferRange(GL_ARRAY_BUFFER, vb->offset + ve->offset, 48, GL_MAP_READ_BIT); if (m) { memcpy(g, m, 48); glUnmapBuffer(GL_ARRAY_BUFFER); } }
+                        GLint en = 0, bb = 0; void *ptr = 0; glGetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &en); glGetVertexAttribiv(i, GL_VERTEX_ATTRIB_ARRAY_BUFFER_BINDING, &bb); glGetVertexAttribPointerv(i, GL_VERTEX_ATTRIB_ARRAY_POINTER, &ptr);
+                        fprintf(stderr, "[bbr]   GL attr%u en %d buf %d ptr %ld: %g %g %g %g %g %g %g %g %g %g %g %g\n", i, en, bb, (long)(intptr_t)ptr, g[0], g[1], g[2], g[3], g[4], g[5], g[6], g[7], g[8], g[9], g[10], g[11]);
+                    }
+                    { Obj *pg = obj_kind(r, r->program, K_PROGRAM); GLint t0 = 0, sm = 0, au = 0, s0 = -9, fl = 0; GLint w0[4] = {0}; float flv = 0, fc[4] = {0};
+                      glGetIntegerv(GL_ACTIVE_TEXTURE, &au); glActiveTexture(GL_TEXTURE0); glGetIntegerv(GL_TEXTURE_BINDING_2D, &t0); glGetIntegerv(GL_SAMPLER_BINDING, &sm); glActiveTexture(au);
+                      GLint ls = glGetUniformLocation(pg->gl, "bb_s0"); if (ls >= 0) glGetUniformiv(pg->gl, ls, &s0);
+                      if (pg->loc_sw && pg->loc_sw[0] >= 0) glGetUniformiv(pg->gl, pg->loc_sw[0], w0);
+                      if (pg->loc_flip >= 0) glGetUniformfv(pg->gl, pg->loc_flip, &flv);
+                      if (pg->loc_fc >= 0) glGetUniformfv(pg->gl, pg->loc_fc, fc);
+                      GLint cur = 0; glGetIntegerv(GL_CURRENT_PROGRAM, &cur); (void)fl;
+                      fprintf(stderr, "[bbr]   unit0 tex %d sampler %d (r %u) bb_s0=%d bb_w0=%d,%d,%d,%d flip %g fc0 %g %g %g %g curprog %d (%u)\n", t0, sm, r->sampler[0], s0, w0[0], w0[1], w0[2], w0[3], flv, fc[0], fc[1], fc[2], fc[3], cur, pg->gl); }
+                    { GLint lp = glGetAttribLocation(obj_kind(r, r->program, K_PROGRAM)->gl, "bb_a0"), lp1 = glGetAttribLocation(obj_kind(r, r->program, K_PROGRAM)->gl, "bb_a1"); GLint vao = 0; glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &vao); fprintf(stderr, "[bbr]   attrib locs a0 %d a1 %d vao %d (r->vao %u)\n", lp, lp1, vao, r->vao); }
+                    GLboolean cm[4]; glGetBooleanv(GL_COLOR_WRITEMASK, cm);
+                    fprintf(stderr, "[bbr]   draw samples the %s-wide texture: prog %u fb %ux%u target gl %d -> center %02x%02x%02x%02x mask %d%d%d%d\n", dtx, r->program, r->fb_w, r->fb_h, att, tc[0], tc[1], tc[2], tc[3], cm[0], cm[1], cm[2], cm[3]);
+                    GLint p2 = 0; glGetIntegerv(GL_CURRENT_PROGRAM, &p2);
+                    Obj *pg = obj_kind(r, r->program, K_PROGRAM);
+                    if (pg && pg->loc_sw) for (int u = 0; u < 4; u++) if (pg->loc_sw[u] >= 0) { GLint v[4]; glGetUniformiv(pg->gl, pg->loc_sw[u], v); fprintf(stderr, "[bbr]   swz%d %d %d %d %d\n", u, v[0], v[1], v[2], v[3]); }
+                }
+                if (((dfb && (int)r->fb_w == atoi(dfb)) || samples_it) && dumps < 4) {   /* debug: the target after this draw, 1/8 size */
+                    glFinish();
+                    uint32_t w = r->fb_w, h = r->fb_h; uint8_t *px = malloc((size_t)w * h * 4);
+                    glReadPixels(0, 0, w, h, GL_RGBA, GL_UNSIGNED_BYTE, px);
+                    char fn[64]; snprintf(fn, sizeof fn, "/tmp/fb%d.ppm", dumps++);
+                    FILE *f = fopen(fn, "wb");
+                    fprintf(f, "P6 %u %u 255\n", w / 8, h / 8);
+                    for (uint32_t y = 0; y < h; y += 8) for (uint32_t x = 0; x < w; x += 8) fwrite(px + ((size_t)y * w + x) * 4, 3, 1, f);
+                    fclose(f); free(px);
+                }
                 fprintf(stderr, "[bbr]   viewport %d %d %d %d flip %d prog %u fb %ux%u\n", vp[0], vp[1], vp[2], vp[3], r->flip, r->program, r->fb_w, r->fb_h);
             }
         }

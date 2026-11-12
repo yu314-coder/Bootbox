@@ -4,6 +4,14 @@
 #define BBGPU_DEV_H
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
+/* messages: logcat on Android (stderr goes nowhere there), stderr elsewhere */
+#ifdef __ANDROID__
+#include <android/log.h>
+#define bbgpu_log(...) __android_log_print(ANDROID_LOG_WARN, "bbgpu", __VA_ARGS__)
+#else
+#define bbgpu_log(...) fprintf(stderr, __VA_ARGS__)
+#endif
 #include "bbgpu_proto.h"
 
 struct bbgpu_dev {
@@ -13,6 +21,7 @@ struct bbgpu_dev {
    uint8_t *bar;                     /* all of BAR2 (shm = this client's part) */
    uint32_t bar_size, ring_size;
    int slot, slot_fd;
+   bool mirror;                      /* fence/tail/error read from shared memory (BBGPU_CAP_STATUS_MIRROR) */
    uint8_t *shm, *heap;
    uint32_t shm_size, heap_size;     /* heap_size excludes the renderer's log area */
    uint32_t head;                    /* ring write position (monotonic) */

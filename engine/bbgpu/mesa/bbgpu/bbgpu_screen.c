@@ -14,6 +14,8 @@
 #include "util/hex.h"
 #include "util/format/u_format.h"
 #include "frontend/sw_winsys.h"
+#include "frontend/winsys_handle.h"
+#include <sys/stat.h>
 #include "nir/nir_to_tgsi.h"
 #include "bbgpu_context.h"
 #include "bbgpu_present.h"
@@ -28,6 +30,8 @@ static const char *bbgpu_get_vendor(struct pipe_screen *s) { return "Bootbox"; }
 static int bbgpu_get_param(struct pipe_screen *screen, enum pipe_cap param)
 {
    switch (param) {
+   case PIPE_CAP_DMABUF:          /* buffers are dma-bufs of the kms winsys (Android gralloc): import + export */
+      return 1 | 2;               /* DRM_PRIME_CAP_IMPORT | DRM_PRIME_CAP_EXPORT */
    case PIPE_CAP_NPOT_TEXTURES:
    case PIPE_CAP_BLEND_EQUATION_SEPARATE:
    case PIPE_CAP_FS_COORD_ORIGIN_UPPER_LEFT:     /* GL row 0 = memory row 0 = Gallium's top row */
@@ -370,11 +374,24 @@ static void bbgpu_flush_frontbuffer(struct pipe_screen *screen, struct pipe_cont
       bs->presenting = false;
    }
    if (sub_box) { y0 = sub_box->y; rows = sub_box->height; }
+   bbgpu_readback_dt(bs, r, level, y0, rows);
+   bs->winsys->displaytarget_display(bs->winsys, r->dt, context_private, sub_box);
+   if (bbgpu_dev_error(bs->dev) && !bs->reported_error) {
+      bs->reported_error = true;
+      bbgpu_log("bbgpu: renderer error %u (op %u)\n%s\n", bbgpu_dev_error(bs->dev),
+              *bs->dev->r_errop, bbgpu_dev_log(bs->dev));
+   }
+}
+
+/* copy rows of a GPU texture into its window-system image (guest memory) */
+void bbgpu_readback_dt(struct bbgpu_screen *bs, struct bbgpu_resource *r, unsigned level, unsigned y0, unsigned rows)
+{
+   unsigned w = r->base.width0;
    uint8_t *map = bs->winsys->displaytarget_map(bs->winsys, r->dt, PIPE_MAP_WRITE);
    if (!map)
       return;
    /* in slices that fit the heap */
-   unsigned row_bytes = w * util_format_get_blocksize(pres->format), max_rows = MAX2(1u, (bs->dev->heap_size / 4) / row_bytes);
+   unsigned row_bytes = w * util_format_get_blocksize(r->base.format), max_rows = MAX2(1u, (bs->dev->heap_size / 4) / row_bytes);
    for (unsigned y = y0; y < y0 + rows; y += max_rows) {
       unsigned n = MIN2(max_rows, y0 + rows - y);
       uint32_t off = bbgpu_heap_alloc(bs->dev, n * row_bytes);
@@ -385,12 +402,70 @@ static void bbgpu_flush_frontbuffer(struct pipe_screen *screen, struct pipe_cont
       bs->dev->stat_bytes_down += n * row_bytes;
    }
    bs->winsys->displaytarget_unmap(bs->winsys, r->dt);
-   bs->winsys->displaytarget_display(bs->winsys, r->dt, context_private, sub_box);
-   if (bbgpu_dev_error(bs->dev) && !bs->reported_error) {
-      bs->reported_error = true;
-      fprintf(stderr, "bbgpu: renderer error %u (op %u)\n%s\n", bbgpu_dev_error(bs->dev),
-              *bs->dev->r_errop, bbgpu_dev_log(bs->dev));
+}
+
+/* ---- buffers shared between processes (dma-bufs): the GPU texture is shared on the host by key ---- */
+static uint32_t handle_key(const struct winsys_handle *wh)
+{
+   struct stat st;
+   if (wh->type != WINSYS_HANDLE_TYPE_FD || fstat((int)wh->handle, &st))
+      return 0;
+   return (uint32_t)st.st_ino ? (uint32_t)st.st_ino : 1;
+}
+
+static struct pipe_resource *bbgpu_resource_from_handle(struct pipe_screen *screen, const struct pipe_resource *templ,
+                                                        struct winsys_handle *wh, unsigned usage)
+{
+   struct bbgpu_screen *bs = bbgpu_screen(screen);
+   if (templ->target != PIPE_TEXTURE_2D && templ->target != PIPE_TEXTURE_RECT)
+      return NULL;
+   int fmt = bbgpu_format(templ->format);
+   if (!fmt)
+      return NULL;
+   struct bbgpu_resource *r = CALLOC_STRUCT(bbgpu_resource);
+   if (!r)
+      return NULL;
+   r->base = *templ;
+   r->base.screen = screen;
+   pipe_reference_init(&r->base.reference, 1);
+   r->fmt = fmt;
+   r->dt = bs->winsys->displaytarget_from_handle(bs->winsys, templ, wh, &r->dt_stride);
+   if (!r->dt) {
+      FREE(r);
+      return NULL;
    }
+   r->id = bbgpu_new_id(bs->dev);
+   r->key = handle_key(wh);
+   /* first sight of a buffer no GPU client has drawn: its pixels come from guest memory (one upload) */
+   unsigned w = templ->width0, h = templ->height0, row = w * util_format_get_blocksize(templ->format);
+   uint32_t off = 0, stride = 0;
+   if ((size_t)row * h <= bs->dev->heap_size / 2) {
+      uint8_t *map = bs->winsys->displaytarget_map(bs->winsys, r->dt, PIPE_MAP_READ);
+      if (map) {
+         off = bbgpu_heap_alloc(bs->dev, row * h);
+         for (unsigned y = 0; y < h; y++)
+            memcpy(bs->dev->heap + off + (size_t)y * row, map + (size_t)y * r->dt_stride, row);
+         bs->winsys->displaytarget_unmap(bs->winsys, r->dt);
+         stride = row;
+      }
+   }
+   BBGPU_CMD(bs->dev, BBGPU_OP_RES_IMPORT, r->id, r->key, (uint32_t)fmt, w, h, off, stride);
+   return &r->base;
+}
+
+static bool bbgpu_resource_get_handle(struct pipe_screen *screen, struct pipe_context *ctx, struct pipe_resource *pres,
+                                      struct winsys_handle *wh, unsigned usage)
+{
+   struct bbgpu_screen *bs = bbgpu_screen(screen);
+   struct bbgpu_resource *r = bbgpu_resource(pres);
+   if (!r->dt || !bs->winsys->displaytarget_get_handle(bs->winsys, r->dt, wh))
+      return false;
+   if (!r->key && wh->type == WINSYS_HANDLE_TYPE_FD) {
+      r->key = handle_key(wh);
+      if (r->key)
+         BBGPU_CMD(bs->dev, BBGPU_OP_RES_EXPORT, r->id, r->key);
+   }
+   return true;
 }
 
 static const void *bbgpu_get_compiler_options(struct pipe_screen *screen, enum pipe_shader_ir ir, enum pipe_shader_type shader)
@@ -447,9 +522,18 @@ static bool is_x_server(void)
           !strncmp(name, "Xwayland", 8) || !strncmp(name, "Xephyr", 6);
 }
 
+/* processes that only allocate buffers (Android's gralloc allocator service) need no GPU slot */
+static bool allocates_only(void)
+{
+   char name[256] = "";         /* the command line: comm is cut at 15 characters */
+   FILE *f = fopen("/proc/self/cmdline", "r");
+   if (f) { size_t n = fread(name, 1, sizeof name - 1, f); name[n] = 0; fclose(f); }
+   return strstr(name, "graphics.allocator") != NULL;
+}
+
 struct pipe_screen *bbgpu_create_screen(struct sw_winsys *winsys)
 {
-   if (is_x_server() && !getenv("BBGPU_FORCE"))
+   if ((is_x_server() || allocates_only()) && !getenv("BBGPU_FORCE"))
       return NULL;
    struct bbgpu_screen *bs = CALLOC_STRUCT(bbgpu_screen);
    if (!bs)
@@ -458,7 +542,7 @@ struct pipe_screen *bbgpu_create_screen(struct sw_winsys *winsys)
    if (!bs->dev) {
       /* no device, no /sys access or GPU busy: NULL lets Mesa take the next driver (llvmpipe) */
       if (getenv("BBGPU_VERBOSE"))
-         fprintf(stderr, "bbgpu: no Bootbox GPU device (or /sys not writable); falling back\n");
+         bbgpu_log("bbgpu: no Bootbox GPU device (or /sys not writable); falling back\n");
       FREE(bs);
       return NULL;
    }
@@ -482,7 +566,15 @@ struct pipe_screen *bbgpu_create_screen(struct sw_winsys *winsys)
    s->flush_frontbuffer = bbgpu_flush_frontbuffer;
    s->get_compiler_options = bbgpu_get_compiler_options;
    s->get_disk_shader_cache = bbgpu_get_disk_shader_cache;
+   s->resource_from_handle = bbgpu_resource_from_handle;
+   s->resource_get_handle = bbgpu_resource_get_handle;
+   {  /* Android's compositor: its output buffers are read by the CPU (hwcomposer -> VNC bridge) */
+      char comm[32] = "";
+      FILE *f = fopen("/proc/self/comm", "r");
+      if (f) { if (!fgets(comm, sizeof comm, f)) comm[0] = 0; fclose(f); }
+      bs->readback_shared = !strncmp(comm, "surfaceflinger", 14) || getenv("BBGPU_READBACK_SHARED");
+   }
    bbgpu_disk_cache_create(bs);
-   fprintf(stderr, "bbgpu: Bootbox GPU bridge, %u MB shared\n", bs->dev->shm_size >> 20);
+   bbgpu_log("bbgpu: Bootbox GPU bridge, %u MB shared\n", bs->dev->shm_size >> 20);
    return s;
 }

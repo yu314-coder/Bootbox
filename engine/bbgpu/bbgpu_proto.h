@@ -26,6 +26,8 @@
                                       frames back and draw them through X. Changes at any time (viewer comes/goes) */
 
 #define BBGPU_REG_SLOTS      0x34  /* R: client slots (0 = one client on the registers above, whole BAR2) */
+#define BBGPU_REG_CAPS       0x38  /* R: BBGPU_CAP_* */
+#define BBGPU_CAP_STATUS_MIRROR 1u /* slot registers mirrored in the slot's memory (BBGPU_SLOT_STATUS_BYTES) */
 
 /* Several clients (each GL process): slot s has its own registers and its own part of BAR2, so programs do
  * not share a ring. A guest claims a slot with an exclusive lock (/tmp/.bbgpu-slot-<s>.lock) and RESETs it.
@@ -55,6 +57,10 @@
 
 /* The last 64 KB of the heap is the renderer's log area (shader info logs, NUL-terminated). */
 #define BBGPU_LOG_SIZE   (64u << 10)
+/* Client slots: the first 64 bytes of a slot's log area mirror its registers in plain memory (u32: fence done,
+ * ring tail, error), so waiting guests poll memory instead of trapping into the device (an MMIO read takes
+ * QEMU's global lock: several waiting programs starved the guest's timers). The log text follows. */
+#define BBGPU_SLOT_STATUS_BYTES 64
 
 /* ops: every command = u32 op, u32 dwords (total, incl. these two), payload (u32 / f32) */
 enum {
@@ -101,6 +107,13 @@ enum {
        (pure red + pure blue, i.e. the visual's red_mask | blue_mask: the guest sets it as the window background) */
     BBGPU_OP_PRESENT,          /* window id (any nonzero u32), res (0 = remove the window), sx, sy, w, h (source rect,
                                   y-down), dx, dy (screen position of the window's top-left corner) */
+
+    /* sharing between clients (Android: app buffers composited by SurfaceFlinger). key = any 32-bit name
+       both sides derive from the buffer (the guest uses the dma-buf's inode number) */
+    BBGPU_OP_RES_EXPORT,       /* id, key: other clients may now import this texture under key */
+    BBGPU_OP_RES_IMPORT,       /* id, key, format, width, height, heap_off, stride: id = the texture exported
+                                  under key; if no client exported it yet, a new texture is made from the pixels
+                                  at heap_off (stride 0 = none) and exported under key */
 
     BBGPU_OP_COUNT
 };

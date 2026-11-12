@@ -9,6 +9,7 @@
  *
  * xcb is loaded at run time (no new link dependency for the driver; no Xlib error handler is touched).
  * Anything unexpected = 0 = the caller reads the frame back as before. SPDX-License-Identifier: MIT */
+#ifdef BBGPU_X11
 #include <dlfcn.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -185,3 +186,13 @@ int bbgpu_present_unkey(uint32_t *removed, int max)
       X.flush(X.c);
    return n;
 }
+
+#else  /* no X11 (Android): windows are presented by the platform's own path */
+#include "bbgpu_present.h"
+bool bbgpu_present_where(void *context_private, unsigned w, unsigned h, uint32_t *win, int *x, int *y)
+{
+   (void)context_private; (void)w; (void)h; (void)win; (void)x; (void)y;
+   return false;
+}
+int bbgpu_present_unkey(uint32_t *removed, int max) { (void)removed; (void)max; return 0; }
+#endif

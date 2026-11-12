@@ -10,6 +10,7 @@
 #include "util/u_transfer.h"
 #include "util/u_framebuffer.h"
 #include "util/u_upload_mgr.h"
+#include <stdlib.h>
 #include "util/format/u_format.h"
 #include "util/hash_table.h"
 #include "tgsi/tgsi_dump.h"
@@ -43,6 +44,10 @@ void bbgpu_upload(struct bbgpu_dev *dev, uint32_t res, unsigned level, unsigned 
          memcpy(dev->heap + off + (size_t)i * row, src + (size_t)(r + i) * src_stride, row);
       BBGPU_CMD(dev, BBGPU_OP_RES_WRITE, res, level, x, y + r, 0, w, n, 1, off, row, 0);
       dev->stat_bytes_up += n * row;
+      if (w == 2880 && getenv("BBGPU_CKSUM")) {
+         uint32_t ck = 0; for (size_t q = 0; q < (size_t)n * row; q += 64) ck = ck * 31 + dev->heap[off + q];
+         bbgpu_log("bbgpu: upload res %u y %u n %u off %u ck %08x\n", res, y + r, n, off, ck);
+      }
    }
 }
 
@@ -170,7 +175,7 @@ static void *create_ve(struct pipe_context *c, unsigned n, const struct pipe_ver
    v->n = MIN2(n, 16u);
    for (unsigned i = 0; i < v->n; i++) {
       if (!bbgpu_vertex_format(e[i].src_format, &v->e[i].size, &v->e[i].type, &v->e[i].norm)) {
-         fprintf(stderr, "bbgpu: unsupported vertex format %s\n", util_format_name(e[i].src_format));
+         bbgpu_log("bbgpu: unsupported vertex format %s\n", util_format_name(e[i].src_format));
          v->e[i].size = 4; v->e[i].type = GL_FLOAT;
       }
       v->e[i].buffer = e[i].vertex_buffer_index;
@@ -225,6 +230,9 @@ static void set_framebuffer(struct pipe_context *c, const struct pipe_framebuffe
    struct bbgpu_context *ctx = bbgpu_context(c);
    util_copy_framebuffer_state(&ctx->fb, fb);
    ctx->dirty |= BBGPU_DIRTY_FB | BBGPU_DIRTY_VIEWPORT;
+   for (unsigned i = 0; i < fb->nr_cbufs; i++)
+      if (fb->cbufs[i] && bbgpu_resource(fb->cbufs[i]->texture)->key)
+         ctx->wrote_shared = true;
 }
 static void set_viewports(struct pipe_context *c, unsigned start, unsigned n, const struct pipe_viewport_state *v)
 {
@@ -281,14 +289,14 @@ static uint32_t upload_glsl(struct bbgpu_dev *dev, uint32_t id, unsigned stage, 
    memcpy(dev->heap + off, src, len + 1);
    BBGPU_CMD(dev, BBGPU_OP_SHADER_CREATE, id, stage, off, len);
    if (getenv("BBGPU_SYNC_SHADERS") && getenv("BBGPU_VERBOSE"))
-      fprintf(stderr, "bbgpu: SHADER_CREATE id %u at heap %u len %u (head %u tail %u)\n", id, off, len, dev->heap_head, dev->heap_tail);
+      bbgpu_log("bbgpu: SHADER_CREATE id %u at heap %u len %u (head %u tail %u)\n", id, off, len, dev->heap_head, dev->heap_tail);
    if (getenv("BBGPU_SYNC_SHADERS")) {
       bbgpu_fence_wait(dev, bbgpu_dev_flush(dev));
       if (memcmp(dev->heap + off, src, len))
-         fprintf(stderr, "bbgpu: shader text at heap %u (len %u) CHANGED before the host compiled it (head %u tail %u chunks %u)\n",
+         bbgpu_log("bbgpu: shader text at heap %u (len %u) CHANGED before the host compiled it (head %u tail %u chunks %u)\n",
                  off, len, dev->heap_head, dev->heap_tail, dev->nchunks);
       else if (bbgpu_dev_error(dev))
-         fprintf(stderr, "bbgpu: shader text at heap %u intact but the host failed (err %u)\n", off, bbgpu_dev_error(dev));
+         bbgpu_log("bbgpu: shader text at heap %u intact but the host failed (err %u)\n", off, bbgpu_dev_error(dev));
    }
    return id;
 }
@@ -307,9 +315,9 @@ static uint32_t get_program(struct bbgpu_context *ctx)
       pid = bbgpu_new_id(ctx->dev);
       BBGPU_CMD(ctx->dev, BBGPU_OP_PROGRAM_CREATE, pid, v, f);
       if (getenv("BBGPU_DUMP"))
-         fprintf(stderr, "---- bbgpu VS ----\n%s---- bbgpu FS ----\n%s", vsrc, fsrc);
+         bbgpu_log("---- bbgpu VS ----\n%s---- bbgpu FS ----\n%s", vsrc, fsrc);
    } else {
-      fprintf(stderr, "bbgpu: shader translation failed\n");
+      bbgpu_log("bbgpu: shader translation failed\n");
       tgsi_dump(vsrc ? ctx->fs->tokens : ctx->vs->tokens, 0);
    }
    free(vsrc);
@@ -538,7 +546,20 @@ static void emit_state(struct bbgpu_context *ctx)
          uint32_t *x = p + 2 + i * 8;
          x[0] = v && v->texture ? bbgpu_resource(v->texture)->id : 0;
          x[1] = s ? s->min_filter : GL_NEAREST; x[2] = s ? s->mag_filter : GL_NEAREST;
-         x[3] = s ? s->wrap_s : GL_CLAMP_TO_EDGE; x[4] = s ? s->wrap_t : GL_CLAMP_TO_EDGE; x[5] = 0x03020100;
+         x[3] = s ? s->wrap_s : GL_CLAMP_TO_EDGE; x[4] = s ? s->wrap_t : GL_CLAMP_TO_EDGE;
+         x[5] = 0x03020100;
+         if (v) {   /* the view's swizzle over the storage: X formats keep junk in alpha (stored as RGBA) */
+            int fmt = bbgpu_format(v->format);
+            bool xa = fmt == BBGPU_FMT_RGBX8 || fmt == BBGPU_FMT_BGRX8;
+            const unsigned char vs[4] = { v->swizzle_r, v->swizzle_g, v->swizzle_b, v->swizzle_a };
+            x[5] = 0;
+            for (int c = 0; c < 4; c++) {
+               unsigned code = vs[c];                       /* PIPE_SWIZZLE_X..W = 0..3, 0 = 4, 1 = 5 */
+               if (code == PIPE_SWIZZLE_W && xa) code = PIPE_SWIZZLE_1;
+               if (code > PIPE_SWIZZLE_1) code = c;
+               x[5] |= code << (c * 8);
+            }
+         }
          x[6] = s ? s->compare : 0; x[7] = bbgpu_f2u(s ? s->lod_bias : 0.0f);
       }
       bbgpu_cmd(d, BBGPU_OP_SET_TEXTURES, p, 2 + n * 8);
@@ -607,6 +628,30 @@ static void flush(struct pipe_context *c, struct pipe_fence_handle **fence, unsi
 {
    struct bbgpu_context *ctx = bbgpu_context(c);
    uint32_t id = bbgpu_dev_flush(ctx->dev);
+   /* apps hand a frame over at their swap; the Android compositor never swaps (it draws into the composer's
+      buffer and flushes), so there every flush that wrote a shared buffer publishes it */
+   if (ctx->wrote_shared && ((flags & PIPE_FLUSH_END_OF_FRAME) || ctx->bs->readback_shared)) {
+      /* the frame goes to another process (Android: queued to SurfaceFlinger) which samples the same GPU
+         texture on its own ring: it must be complete first. The compositor's own output is read by the CPU. */
+      bbgpu_fence_wait(ctx->dev, id);
+      if (ctx->bs->readback_shared)
+         for (unsigned i = 0; i < ctx->fb.nr_cbufs; i++) {
+            struct pipe_surface *sf = ctx->fb.cbufs[i];
+            struct bbgpu_resource *r = sf ? bbgpu_resource(sf->texture) : NULL;
+            if (r && r->key && r->dt)
+               bbgpu_readback_dt(ctx->bs, r, 0, 0, r->base.height0);
+         }
+      ctx->wrote_shared = false;
+      /* the current framebuffer stays bound: the next frame marks it again */
+      for (unsigned i = 0; i < ctx->fb.nr_cbufs; i++)
+         if (ctx->fb.cbufs[i] && bbgpu_resource(ctx->fb.cbufs[i]->texture)->key)
+            ctx->wrote_shared = true;
+   }
+   if (!ctx->bs->reported_error && bbgpu_dev_error(ctx->dev)) {
+      ctx->bs->reported_error = true;
+      bbgpu_log("bbgpu: renderer error %u (op %u)\n%s\n", bbgpu_dev_error(ctx->dev), *ctx->dev->r_errop,
+                bbgpu_dev_log(ctx->dev));
+   }
    if (fence)
       c->screen->fence_reference(c->screen, fence, NULL), *fence = bbgpu_fence_create(id);
 }
@@ -624,7 +669,7 @@ static void destroy(struct pipe_context *c)
       u_upload_destroy(c->stream_uploader);
    _mesa_hash_table_destroy(ctx->programs, NULL);
    if (getenv("BBGPU_STATS"))
-      fprintf(stderr, "bbgpu: %llu draws, %llu commands, %llu KB up, %llu KB down\n", (unsigned long long)ctx->draws,
+      bbgpu_log("bbgpu: %llu draws, %llu commands, %llu KB up, %llu KB down\n", (unsigned long long)ctx->draws,
               (unsigned long long)ctx->dev->stat_cmds, (unsigned long long)ctx->dev->stat_bytes_up >> 10,
               (unsigned long long)ctx->dev->stat_bytes_down >> 10);
    FREE(ctx);

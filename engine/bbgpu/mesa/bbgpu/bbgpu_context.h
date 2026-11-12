@@ -19,6 +19,8 @@ struct bbgpu_screen {
    bool presenting;                  /* the host viewer draws our windows (BBGPU_OP_PRESENT) */
    uint32_t present_fence;           /* the previous frame's: one frame in flight */
    struct disk_cache *disk_cache;    /* Mesa's shader cache: GLSL is compiled on the emulated CPU only once */
+   bool readback_shared;             /* this process's shared render targets are read by the CPU (the Android
+                                        compositor's output goes to the VNC bridge): read them back per frame */
 };
 static inline struct bbgpu_screen *bbgpu_screen(struct pipe_screen *s) { return (struct bbgpu_screen *)s; }
 
@@ -29,6 +31,7 @@ struct bbgpu_resource {
    uint8_t *shadow;                  /* buffers: guest copy (maps return it; writes are sent on unmap) */
    struct sw_displaytarget *dt;      /* window-system image for present */
    unsigned dt_stride;
+   uint32_t key;                     /* shared with other clients under this key (dma-buf inode), 0 = private */
 };
 static inline struct bbgpu_resource *bbgpu_resource(struct pipe_resource *r) { return (struct bbgpu_resource *)r; }
 
@@ -51,6 +54,7 @@ struct bbgpu_sampler { unsigned min_filter, mag_filter, wrap_s, wrap_t, compare;
 
 struct bbgpu_context {
    struct pipe_context base;
+   bool wrote_shared;                /* drew into a buffer another client will read: finish before the swap */
    struct bbgpu_screen *bs;
    struct bbgpu_dev *dev;
    /* state */
@@ -97,4 +101,5 @@ char *bbgpu_glsl(const struct bbgpu_shader *sh, const struct bbgpu_shader *other
 void bbgpu_upload(struct bbgpu_dev *dev, uint32_t res, unsigned level, unsigned x, unsigned y, unsigned w,
                   unsigned h, const uint8_t *src, unsigned src_stride, unsigned bpp, bool buffer);
 
+void bbgpu_readback_dt(struct bbgpu_screen *bs, struct bbgpu_resource *r, unsigned level, unsigned y0, unsigned rows);
 #endif

@@ -158,12 +158,14 @@ static void tex_expr(struct tr *t, const struct tgsi_full_instruction *in, const
    else if (target == TGSI_TEXTURE_RECT) snprintf(coord, sizeof coord, "((%s).xy / vec2(textureSize(bb_s%u, 0)))", s[0], unit);
    else if (target == TGSI_TEXTURE_2D) snprintf(coord, sizeof coord, "(%s).xy", s[0]);
    else { t->err = "unsupported texture target (only 1D/2D/RECT)"; snprintf(coord, sizeof coord, "(%s).xy", s[0]); }
+   /* colour reads go through the sampler's swizzle (bb_w<unit>, set by the renderer from the view: WebGL2 has
+      no texture swizzle - RGBX views read alpha 1, Mesa's emulated A8/L8/LA8 formats are views of R8/RG8) */
    switch (op) {
-   case TGSI_OPCODE_TEX: snprintf(out, n, "texture(bb_s%u, %s)", unit, coord); break;
-   case TGSI_OPCODE_TXP: snprintf(out, n, "texture(bb_s%u, %s / (%s).w)", unit, coord, s[0]); break;
-   case TGSI_OPCODE_TXB: snprintf(out, n, "texture(bb_s%u, %s, (%s).w)", unit, coord, s[0]); break;
-   case TGSI_OPCODE_TXL: snprintf(out, n, "textureLod(bb_s%u, %s, (%s).w)", unit, coord, s[0]); break;
-   case TGSI_OPCODE_TXD: snprintf(out, n, "textureGrad(bb_s%u, %s, (%s).xy, (%s).xy)", unit, coord, s[1], s[2]); break;
+   case TGSI_OPCODE_TEX: snprintf(out, n, "bb_swz(texture(bb_s%u, %s), bb_w%u)", unit, coord, unit); break;
+   case TGSI_OPCODE_TXP: snprintf(out, n, "bb_swz(texture(bb_s%u, %s / (%s).w), bb_w%u)", unit, coord, s[0], unit); break;
+   case TGSI_OPCODE_TXB: snprintf(out, n, "bb_swz(texture(bb_s%u, %s, (%s).w), bb_w%u)", unit, coord, s[0], unit); break;
+   case TGSI_OPCODE_TXL: snprintf(out, n, "bb_swz(textureLod(bb_s%u, %s, (%s).w), bb_w%u)", unit, coord, s[0], unit); break;
+   case TGSI_OPCODE_TXD: snprintf(out, n, "bb_swz(textureGrad(bb_s%u, %s, (%s).xy, (%s).xy), bb_w%u)", unit, coord, s[1], s[2], unit); break;
    case TGSI_OPCODE_TXQ: snprintf(out, n, "vec4(vec2(textureSize(bb_s%u, int((%s).x))), 0.0, 1.0)", unit, s[0]); break;
    }
 }
@@ -324,7 +326,7 @@ char *bbgpu_glsl(const struct bbgpu_shader *sh, const struct bbgpu_shader *other
    }
    tgsi_parse_free(&p);
    if (t.err) {
-      fprintf(stderr, "bbgpu: GLSL translation failed: %s\n", t.err);
+      bbgpu_log("bbgpu: GLSL translation failed: %s\n", t.err);
       free(t.decl.s); free(t.body.s);
       return NULL;
    }
@@ -334,11 +336,22 @@ char *bbgpu_glsl(const struct bbgpu_shader *sh, const struct bbgpu_shader *other
       sb_printf(&out, "uniform vec4 %s[%u];\n", t.vs ? "bb_vc" : "bb_fc", MIN2(sh->const_vec4s, 256u));
    if (t.vs)
       sb_printf(&out, "uniform float bb_flip;\n");
+   bool any_swz = false;
    for (unsigned i = 0; i < 16; i++)
       if (sh->info.file_mask[TGSI_FILE_SAMPLER] & (1u << i) || t.sampler_target[i]) {
          unsigned tg = t.sampler_target[i];
          bool shadow = tg == TGSI_TEXTURE_SHADOW2D || tg == TGSI_TEXTURE_SHADOWRECT || tg == TGSI_TEXTURE_SHADOW1D;
          sb_printf(&out, "uniform %s bb_s%u;\n", shadow ? "highp sampler2DShadow" : "sampler2D", i);
+         if (!shadow) {
+            if (!any_swz) {
+               /* s = component index - identity (all zeros = no swizzle); 4 = 0.0, 5 = 1.0 */
+               sb_printf(&out, "vec4 bb_swz(vec4 c, ivec4 s) {\n"
+                               "  float v[6] = float[6](c.x, c.y, c.z, c.w, 0.0, 1.0);\n"
+                               "  return vec4(v[s.x], v[1 + s.y], v[2 + s.z], v[3 + s.w]);\n}\n");
+               any_swz = true;
+            }
+            sb_printf(&out, "uniform ivec4 bb_w%u;\n", i);
+         }
       }
    if (t.decl.s)
       sb_printf(&out, "%s", t.decl.s);

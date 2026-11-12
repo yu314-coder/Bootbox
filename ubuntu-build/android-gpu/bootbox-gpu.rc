@@ -1,0 +1,18 @@
+# Bootbox GPU bridge: Android's GL (Mesa EGL + gralloc gbm) on the bbgpu device when the engine provides it.
+# Every GL process (SurfaceFlinger, apps) maps the device from user space and claims a client slot.
+on early-init
+    # software mode = Mesa's kms_swrast loader on the vgem node (EGL and GBM); with the bbgpu device present
+    # its first choice is the bridge driver, so the drawing happens on the host GPU
+    export LIBGL_ALWAYS_SOFTWARE 1
+    export LIBGL_DRIVERS_PATH /vendor/lib64/dri
+    export EGL_LOG_LEVEL warning
+    mkdir /dev/bbgpu 0777 root root
+
+service bootbox-sfgpu /vendor/bin/bootbox-sf-gpu.sh
+    oneshot
+    disabled
+    user root
+    group root
+
+on property:init.svc.surfaceflinger=running && property:ro.hardware.egl=mesa
+    start bootbox-sfgpu

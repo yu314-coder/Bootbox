@@ -5,6 +5,7 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <sys/file.h>
+#include <sys/stat.h>
 #include <sched.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,6 +13,16 @@
 #include <sys/mman.h>
 #include <unistd.h>
 #include "bbgpu_dev.h"
+
+/* where the per-slot lock files live: a directory every GL process can write */
+static const char *lock_dir(void)
+{
+#ifdef __ANDROID__
+   return "/dev/bbgpu";          /* created 0777 by the Bootbox init script (Android has no /tmp) */
+#else
+   return "/tmp";
+#endif
+}
 
 static int find_device(char *path, size_t n)
 {
@@ -80,14 +91,14 @@ bool bbgpu_dev_open(struct bbgpu_dev *d)
    d->regs = map_bar(dev, 0, 4096);
    if (!d->regs || d->regs[BBGPU_REG_MAGIC / 4] != BBGPU_MAGIC ||
        d->regs[BBGPU_REG_VERSION / 4] != BBGPU_PROTO_VERSION) {
-      fprintf(stderr, "bbgpu: device at %s is not protocol v%d\n", dev, BBGPU_PROTO_VERSION);
+      bbgpu_log("bbgpu: device at %s is not protocol v%d\n", dev, BBGPU_PROTO_VERSION);
       return false;
    }
    /* the renderer starts with the VM; give it a moment, and never use a device whose GL context failed */
    for (int i = 0; i < 300 && d->regs[BBGPU_REG_STATUS / 4] == BBGPU_STATUS_STARTING; i++)
       usleep(10000);
    if (d->regs[BBGPU_REG_STATUS / 4] != BBGPU_STATUS_READY) {
-      fprintf(stderr, "bbgpu: the host renderer is not available (status %u); using software rendering\n",
+      bbgpu_log("bbgpu: the host renderer is not available (status %u); using software rendering\n",
               d->regs[BBGPU_REG_STATUS / 4]);
       munmap((void *)d->regs, 4096);
       d->regs = NULL;
@@ -104,15 +115,16 @@ bool bbgpu_dev_open(struct bbgpu_dev *d)
       /* several clients: take a free slot (a lock file per slot - a crashed program's lock goes with it) */
       for (uint32_t i = 0; i < slots && d->slot < 0; i++) {
          char lp[64];
-         snprintf(lp, sizeof lp, "/tmp/.bbgpu-slot-%u.lock", i);
+         snprintf(lp, sizeof lp, "%s/.bbgpu-slot-%u.lock", lock_dir(), i);
          int fd = open(lp, O_RDWR | O_CREAT | O_CLOEXEC, 0666);
          if (fd < 0)
             continue;
+         fchmod(fd, 0666);             /* every program (any uid) may take this slot later */
          if (flock(fd, LOCK_EX | LOCK_NB)) { close(fd); continue; }
          d->slot = (int)i; d->slot_fd = fd;
       }
       if (d->slot < 0) {
-         fprintf(stderr, "bbgpu: all %u GPU slots are in use; using software rendering\n", slots);
+         bbgpu_log("bbgpu: all %u GPU slots are in use; using software rendering\n", slots);
          munmap(d->bar, d->bar_size);
          return false;
       }
@@ -122,6 +134,12 @@ bool bbgpu_dev_open(struct bbgpu_dev *d)
       d->shm_size = d->bar_size / slots;
       d->shm = d->bar + (size_t)d->slot * d->shm_size;
       d->ring_size = BBGPU_SLOT_RING;
+      /* waits poll the register mirror in shared memory (no device trap) */
+      if (R[BBGPU_REG_CAPS / 4] & BBGPU_CAP_STATUS_MIRROR) {
+         volatile uint32_t *mirror = (volatile uint32_t *)(d->shm + d->shm_size - BBGPU_LOG_SIZE);
+         d->r_fence = mirror; d->r_tail = mirror + 1; d->r_error = mirror + 2;
+         d->mirror = true;
+      }
    } else {
       d->r_kick = R + BBGPU_REG_KICK / 4; d->r_fence = R + BBGPU_REG_FENCE_DONE / 4; d->r_tail = R + BBGPU_REG_TAIL / 4;
       d->r_error = R + BBGPU_REG_ERROR / 4; d->r_errop = R + BBGPU_REG_ERR_OP / 4; d->r_reset = R + BBGPU_REG_RESET / 4;
@@ -181,7 +199,7 @@ struct bbgpu_dev *bbgpu_dev_get(void)
       if (d && bbgpu_dev_open(d)) the_dev = d; else free(d);
       /* an engine without client slots has one ring: one GL program at a time */
       if (the_dev && the_dev->slot < 0 && !the_dev->null && !take_client_lock()) {
-         fprintf(stderr, "bbgpu: another program is using the GPU; using software rendering\n");
+         bbgpu_log("bbgpu: another program is using the GPU; using software rendering\n");
          bbgpu_dev_close(the_dev); free(the_dev); the_dev = NULL;
       }
    }
@@ -205,7 +223,10 @@ void bbgpu_dev_put(struct bbgpu_dev *d)
 
 uint32_t bbgpu_new_id(struct bbgpu_dev *d) { return d->next_id++; }
 uint32_t bbgpu_dev_error(struct bbgpu_dev *d) { return (*d->r_error); }
-const char *bbgpu_dev_log(struct bbgpu_dev *d) { return (const char *)d->shm + d->shm_size - BBGPU_LOG_SIZE; }
+const char *bbgpu_dev_log(struct bbgpu_dev *d)
+{
+   return (const char *)d->shm + d->shm_size - BBGPU_LOG_SIZE + (d->mirror ? BBGPU_SLOT_STATUS_BYTES : 0);
+}
 
 bool bbgpu_fence_done(struct bbgpu_dev *d, uint32_t fence)
 {
@@ -218,7 +239,10 @@ void bbgpu_fence_wait(struct bbgpu_dev *d, uint32_t fence)
    while (!bbgpu_fence_done(d, fence)) {
       if ((*d->r_error) == BBGPU_ERR_GL || (*d->r_error) == BBGPU_ERR_RING)
          return;                       /* the renderer stopped: do not hang the app */
-      if (++spins > 64)
+      /* short waits spin; long ones sleep: a spinning vCPU is taken from the programs that are working */
+      if (++spins > 2000)
+         usleep(200);
+      else if (spins > 64)
          sched_yield();
    }
 }
@@ -237,12 +261,13 @@ static void kick(struct bbgpu_dev *d)
 /* ring space: the renderer's tail must not be lapped */
 static void ring_wait(struct bbgpu_dev *d, uint32_t bytes)
 {
+   unsigned spins = 0;
    while (d->head + bytes - (*d->r_tail) > d->ring_size - 64) {
       if (d->kicked != d->head)
          kick(d);
       if ((*d->r_error) == BBGPU_ERR_GL || (*d->r_error) == BBGPU_ERR_RING)
          return;
-      sched_yield();
+      if (++spins > 2000) usleep(200); else sched_yield();
    }
 }
 
@@ -295,7 +320,7 @@ uint32_t bbgpu_heap_alloc(struct bbgpu_dev *d, uint32_t size)
 {
    size = (size + 255) & ~255u;
    if (size > d->heap_size / 2) {
-      fprintf(stderr, "bbgpu: transfer of %u bytes exceeds the heap\n", size);
+      bbgpu_log("bbgpu: transfer of %u bytes exceeds the heap\n", size);
       size = d->heap_size / 2;
    }
    for (;;) {

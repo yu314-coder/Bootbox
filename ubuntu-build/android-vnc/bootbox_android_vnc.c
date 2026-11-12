@@ -392,10 +392,19 @@ static void relay_frames(void) {
             if (shared_fd < 0) break;
 
             size_t map_bytes = metadata[6];
+            size_t stride = (size_t)display_width * 4;
             if (map_bytes < frame_bytes || map_bytes > frame_bytes + 16 * 1024 * 1024) {
-                fprintf(stderr, "bootbox-vnc: rejected framebuffer size %zu\n", map_bytes);
-                close(shared_fd);
-                break;
+                /* not ReDroid's own gralloc handle (GPU mode: gbm buffers on the DRM node): the dma-buf
+                   knows its size; rows may be padded */
+                off_t end = lseek(shared_fd, 0, SEEK_END);
+                if (end < (off_t)frame_bytes || end > (off_t)(frame_bytes + 16 * 1024 * 1024)) {
+                    fprintf(stderr, "bootbox-vnc: rejected framebuffer size %zu / %lld\n", map_bytes, (long long)end);
+                    close(shared_fd);
+                    break;
+                }
+                map_bytes = (size_t)end;
+                stride = ((size_t)end / display_height) & ~(size_t)3;
+                if (stride < (size_t)display_width * 4) stride = (size_t)display_width * 4;
             }
             void *pixels = mmap(NULL, map_bytes, PROT_READ, MAP_SHARED, shared_fd, 0);
             if (pixels == MAP_FAILED) {
@@ -403,7 +412,13 @@ static void relay_frames(void) {
                 close(shared_fd);
                 break;
             }
-            memcpy(screen->frameBuffer, pixels, frame_bytes);
+            if (stride == (size_t)display_width * 4) {
+                memcpy(screen->frameBuffer, pixels, frame_bytes);
+            } else {
+                for (int y = 0; y < display_height; y++)
+                    memcpy(screen->frameBuffer + (size_t)y * display_width * 4, (uint8_t *)pixels + y * stride,
+                           (size_t)display_width * 4);
+            }
             munmap(pixels, map_bytes);
             close(shared_fd);
             rfbMarkRectAsModified(screen, 0, 0, display_width, display_height);

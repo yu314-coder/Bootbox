@@ -110,6 +110,15 @@ static void slot_layout(BBGPUState *s, uint32_t i, uint8_t **mem, uint32_t *size
     *ring = BBGPU_SLOT_RING;
 }
 
+/* the slot's register mirror in shared memory (client slots only) */
+static uint32_t *slot_status(BBGPUState *s, uint32_t i)
+{
+    uint8_t *m; uint32_t sz, ring;
+    if (s->slot[i].legacy) return NULL;
+    slot_layout(s, i, &m, &sz, &ring);
+    return (uint32_t *)(m + sz - BBGPU_LOG_SIZE);
+}
+
 static bool any_pending(BBGPUState *s)
 {
     for (uint32_t i = 0; i < s->nslots; i++)
@@ -176,16 +185,25 @@ static void *bbgpu_gpu_thread(void *opaque)
             slot_layout(s, work, &m, &sz, &ring);
             bbr_layout(r, m, sz, ring);
             bbr_reset(r);
+            uint32_t *mirror = slot_status(s, work);
+            if (mirror) { qatomic_set(&mirror[0], 0); qatomic_set(&mirror[1], 0); qatomic_set(&mirror[2], 0); }
         }
         /* a failing command is skipped and reported (first error stays in ERROR); execution goes on */
         uint32_t tail = sl->ring_tail, done = sl->fence_done, op = 0;
+        uint32_t *mirror = slot_status(s, work);
         for (;;) {
             uint32_t e = bbr_execute(r, &tail, head, &done, &op);
-            qatomic_set(&sl->ring_tail, tail);
-            qatomic_set(&sl->fence_done, done);
-            if (!e) break;
-            if (!sl->error) { sl->err_op = op; qatomic_set(&sl->error, e); }
-            if (e == BBGPU_ERR_RING) break;   /* the ring itself is corrupt: wait for a reset */
+            /* publish unless the slot was reset meanwhile (a new client must never see the old one's fences) */
+            qemu_mutex_lock(&s->lock);
+            bool stale = sl->reset;
+            if (!stale) {
+                qatomic_set(&sl->ring_tail, tail);
+                qatomic_set(&sl->fence_done, done);
+                if (e && !sl->error) { sl->err_op = op; qatomic_set(&sl->error, e); }
+                if (mirror) { qatomic_set(&mirror[2], sl->error); qatomic_set(&mirror[1], tail); qatomic_set(&mirror[0], done); }
+            }
+            qemu_mutex_unlock(&s->lock);
+            if (!e || stale || e == BBGPU_ERR_RING) break;   /* RING: the ring itself is corrupt, wait for a reset */
         }
     }
     return NULL;
@@ -203,6 +221,9 @@ static void slot_reset(BBGPUState *s, uint32_t i, bool legacy)
     qemu_mutex_lock(&s->lock);
     struct BBSlot *sl = &s->slot[i];
     sl->reset = true; sl->legacy = legacy; sl->head = 0; sl->head_dirty = false; sl->fence_done = 0; sl->ring_tail = 0;
+    sl->error = 0;
+    uint32_t *mirror = slot_status(s, i);
+    if (mirror) { qatomic_set(&mirror[0], 0); qatomic_set(&mirror[1], 0); qatomic_set(&mirror[2], 0); }
     qemu_cond_signal(&s->cond); qemu_mutex_unlock(&s->lock);
 }
 #endif
@@ -222,6 +243,7 @@ static uint64_t bbgpu_reg_read(void *opaque, hwaddr addr, unsigned size)
     case BBGPU_REG_ERROR:      return s->slot[0].error ? s->slot[0].error : s->error;
     case BBGPU_REG_ERR_OP:     return s->slot[0].err_op;
     case BBGPU_REG_SLOTS:      return s->nslots;
+    case BBGPU_REG_CAPS:       return BBGPU_CAP_STATUS_MIRROR;
     case BBGPU_REG_STATUS:     return qatomic_read(&s->status);
     case BBGPU_REG_PRESENT:    return qatomic_read(&s->status) == BBGPU_STATUS_READY && bbgpu_host[0] == 1;
 #else
@@ -230,6 +252,7 @@ static uint64_t bbgpu_reg_read(void *opaque, hwaddr addr, unsigned size)
     case BBGPU_REG_ERROR:      return s->error;
     case BBGPU_REG_ERR_OP:     return s->err_op;
     case BBGPU_REG_SLOTS:      return 0;
+    case BBGPU_REG_CAPS:       return 0;
     case BBGPU_REG_PRESENT:    return 0;
     case BBGPU_REG_STATUS:     return BBGPU_STATUS_READY;   /* transport-only build */
 #endif
