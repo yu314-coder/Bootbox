@@ -1,5 +1,5 @@
 #!/bin/sh
-# gpu-bench - glmark2 (the standard OpenGL ES benchmark). v19: on the Bootbox GPU bridge when the bbgpu
+# gpu-bench - glmark2 (the standard OpenGL ES benchmark). v20: on the bridge, on the desktop (direct present). v19: on the Bootbox GPU bridge when the bbgpu
 # device is there (drawing happens on the iPad's GPU through WebGL2; the guest only builds the commands),
 # else on Mesa's software rasterizer (llvmpipe), where every pixel is computed by the emulated CPU.
 # GPU=llvmpipe forces software rendering.
@@ -13,11 +13,19 @@ else
   export GALLIUM_DRIVER="${GPU:-llvmpipe}"; KIND="software GPU"; DRV="Mesa $GALLIUM_DRIVER"
 fi
 LP_NUM_THREADS=$(nproc); export LP_NUM_THREADS
-# glmark2 gets its own X server: presenting to the desktop's Xvnc while it is busy can stall frames.
-pkill -f "Xvnc :1 " 2>/dev/null
-(Xvnc :1 -geometry 640x480 -depth 24 -SecurityTypes None -rfbport 5901 -localhost yes -desktop gpubench >/tmp/xvnc-gpu.log 2>&1 &)
-for i in 1 2 3 4 5 6 7 8 9 10; do timeout 5 xwininfo -display :1 -root >/dev/null 2>&1 && break; sleep 1; done
-trap 'pkill -f "Xvnc :1 " 2>/dev/null' EXIT
+if [ "$KIND" = "Bootbox GPU" ] && [ -z "$BBGPU_NO_PRESENT" ]; then
+  # v20: on the bridge the window is drawn on the desktop by the app's viewer straight from the GPU (direct
+  # present: no read-back, no VNC encode), so glmark2 runs where you can watch it
+  D=:0
+else
+  # software (and read-back) frames go through X: glmark2 gets its own X server, presenting to the desktop's
+  # Xvnc while it is busy can stall frames
+  D=:1
+  pkill -f "Xvnc :1 " 2>/dev/null
+  (Xvnc :1 -geometry 640x480 -depth 24 -SecurityTypes None -rfbport 5901 -localhost yes -desktop gpubench >/tmp/xvnc-gpu.log 2>&1 &)
+  for i in 1 2 3 4 5 6 7 8 9 10; do timeout 5 xwininfo -display :1 -root >/dev/null 2>&1 && break; sleep 1; done
+  trap 'pkill -f "Xvnc :1 " 2>/dev/null' EXIT
+fi
 VIS="red=1:green=1:blue=1:alpha=0:depth=1:stencil=0"
 echo "glmark2-es2 on $DRV. Shaders compile on the emulated CPU first."
 if [ "$1" != "full" ]; then
@@ -25,14 +33,14 @@ if [ "$1" != "full" ]; then
   # with LLVM the first time it draws - seconds on the emulated CPU, and inside the timed build scene that
   # counted as rendering. One throwaway frame of each scene fills Mesa's shader cache first.
   W=$(date +%s)
-  DISPLAY=:1 glmark2-es2 --visual-config "$VIS" --size 320x240 -b clear:duration=0.1 -b build:use-vbo=true:duration=0.1 >/dev/null 2>&1
+  DISPLAY=$D glmark2-es2 --visual-config "$VIS" --size 320x240 -b clear:duration=0.1 -b build:use-vbo=true:duration=0.1 >/dev/null 2>&1
   echo "(shader compile warm-up: $(( $(date +%s) - W )) s, not counted)"
 fi
 S=$(date +%s)
 if [ "$1" = "full" ]; then
-  DISPLAY=:1 glmark2-es2 --visual-config "$VIS" --size 320x240 | tee /tmp/gpu-bench.out
+  DISPLAY=$D glmark2-es2 --visual-config "$VIS" --size 320x240 | tee /tmp/gpu-bench.out
 else
-  DISPLAY=:1 glmark2-es2 --visual-config "$VIS" --size 320x240 -b clear:duration=8 -b build:use-vbo=true:duration=30 | tee /tmp/gpu-bench.out
+  DISPLAY=$D glmark2-es2 --visual-config "$VIS" --size 320x240 -b clear:duration=8 -b build:use-vbo=true:duration=30 | tee /tmp/gpu-bench.out
 fi
 echo "(took $(( $(date +%s) - S )) s)"
 SC=$(grep -o "glmark2 Score: [0-9]*" /tmp/gpu-bench.out | grep -o "[0-9]*$")

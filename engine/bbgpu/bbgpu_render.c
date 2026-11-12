@@ -37,6 +37,7 @@ struct BBRenderer {
     int flip, front_ccw;
     char log[BBGPU_LOG_SIZE];
     uint64_t draws;
+    struct { uint32_t win, w, h; int32_t dx, dy; GLuint tex; uint32_t tw, th; } pend;   /* held-back present */
 };
 
 static uint32_t U(const uint32_t *p, int i) { return p[i]; }
@@ -366,6 +367,72 @@ static int copy_res(BBRenderer *r, const uint32_t *p)
     return 0;
 }
 
+/* ---- direct present ---- */
+static void present_now(BBRenderer *r, GLuint tex, uint32_t win, uint32_t sx, uint32_t sy, uint32_t w, uint32_t h, int32_t dx, int32_t dy)
+{
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, r->read_fbo);
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+    int scissor = glIsEnabled(GL_SCISSOR_TEST);
+    if (scissor) glDisable(GL_SCISSOR_TEST);
+    bbgpu_present_frame(win, sx, sy, w, h, dx, dy);
+    if (scissor) glEnable(GL_SCISSOR_TEST);
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, r->fbo);
+}
+
+static int present(BBRenderer *r, const uint32_t *p)
+{
+    uint32_t win = U(p, 0), res = U(p, 1), sx = U(p, 2), sy = U(p, 3), w = U(p, 4), h = U(p, 5);
+    int32_t dx = (int32_t)U(p, 6), dy = (int32_t)U(p, 7);
+    if (!res) {
+        if (r->pend.win == win) r->pend.win = 0;
+        bbgpu_present_remove(win);
+        return 0;
+    }
+    Obj *o = obj_kind(r, res, K_TEXTURE);
+    if (!o || fmt_info[o->fmt].depth) return BBGPU_ERR_OBJECT;
+    if (!w || !h || sx + w > o->w || sy + h > o->h || w > 8192 || h > 8192) return BBGPU_ERR_RANGE;
+    if (r->pend.win && r->pend.win != win)       /* another window waits: show it first (two at most in flight) */
+        bbr_present_retry(r);
+    if (bbgpu_present_ready()) {
+        if (r->pend.win == win) r->pend.win = 0;
+        present_now(r, o->gl, win, sx, sy, w, h, dx, dy);
+        return 0;
+    }
+    /* the viewer is behind: keep a copy of this frame (the app will draw its next one into the same
+       texture) and offer it again when the viewer has caught up; older held frames are replaced */
+    if (!r->pend.tex || r->pend.tw < w || r->pend.th < h) {
+        if (r->pend.tex) glDeleteTextures(1, &r->pend.tex);
+        r->pend.tw = w > r->pend.tw ? w : r->pend.tw; r->pend.th = h > r->pend.th ? h : r->pend.th;
+        glGenTextures(1, &r->pend.tex);
+        glBindTexture(GL_TEXTURE_2D, r->pend.tex);
+        glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, r->pend.tw, r->pend.th);
+    }
+    glBindFramebuffer(GL_READ_FRAMEBUFFER, r->read_fbo);
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, o->gl, 0);
+    glBindFramebuffer(GL_DRAW_FRAMEBUFFER, r->draw_fbo);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, r->pend.tex, 0);
+    int scissor = glIsEnabled(GL_SCISSOR_TEST);
+    if (scissor) glDisable(GL_SCISSOR_TEST);
+    glBlitFramebuffer(sx, sy, sx + w, sy + h, 0, 0, w, h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+    if (scissor) glEnable(GL_SCISSOR_TEST);
+    glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+    glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, 0, 0);
+    glBindFramebuffer(GL_FRAMEBUFFER, r->fbo);
+    r->pend.win = win; r->pend.w = w; r->pend.h = h; r->pend.dx = dx; r->pend.dy = dy;
+    return 0;
+}
+
+int bbr_present_pending(BBRenderer *r) { return r->pend.win != 0; }
+
+void bbr_present_retry(BBRenderer *r)
+{
+    if (!r->pend.win || !bbgpu_present_ready()) return;
+    uint32_t win = r->pend.win;
+    r->pend.win = 0;
+    present_now(r, r->pend.tex, win, 0, 0, r->pend.w, r->pend.h, r->pend.dx, r->pend.dy);
+}
+
 static int exec_one(BBRenderer *r, uint32_t op, const uint32_t *p, uint32_t ndw, uint32_t *fence_done)
 {
     switch (op) {
@@ -453,6 +520,7 @@ static int exec_one(BBRenderer *r, uint32_t op, const uint32_t *p, uint32_t ndw,
     }
     case BBGPU_OP_DRAW: return draw(r, p);
     case BBGPU_OP_COPY_RES: return copy_res(r, p);
+    case BBGPU_OP_PRESENT: return ndw < 8 ? BBGPU_ERR_RANGE : present(r, p);
     }
     return BBGPU_ERR_OP;
 }
@@ -513,6 +581,8 @@ void bbr_reset(BBRenderer *r)
     for (uint32_t i = 0; i < r->nobj; i++)
         if (r->obj[i].kind) obj_free(&r->obj[i]);
     r->program = 0; r->nve = r->nvb = 0; r->ib_res = 0; r->vc_n = r->fc_n = 0; r->flip = 0; r->log[0] = 0;
+    r->pend.win = 0;
+    bbgpu_present_remove(0);
     glUseProgram(0);
     glBindFramebuffer(GL_FRAMEBUFFER, r->fbo);
 }

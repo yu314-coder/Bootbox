@@ -50,6 +50,9 @@ struct BBGPUState {
     uint32_t status;       /* BBGPU_STATUS_* */
 };
 
+/* shared with the host viewer (wasm: the page writes [0] and [1] straight into this memory) */
+volatile uint32_t bbgpu_host[4];
+
 static uint32_t rd32(BBGPUState *s, uint32_t off) { uint32_t v; memcpy(&v, s->mem + off, 4); return le32_to_cpu(v); }
 
 /* Execute every complete command between ring_tail and head (byte offsets, wrapping at BBGPU_RING_SIZE). */
@@ -101,8 +104,17 @@ static void *bbgpu_gpu_thread(void *opaque)
     qatomic_set(&s->status, BBGPU_STATUS_READY);
     for (;;) {
         qemu_mutex_lock(&s->lock);
-        while (!s->head_dirty && !s->reset)
+        while (!s->head_dirty && !s->reset) {
+            if (bbr_present_pending(r)) {   /* a held-back frame: offer it again once the viewer catches up */
+                qemu_mutex_unlock(&s->lock);
+                bbr_present_retry(r);
+                qemu_mutex_lock(&s->lock);
+                if (s->head_dirty || s->reset || !bbr_present_pending(r)) continue;
+                qemu_cond_timedwait(&s->cond, &s->lock, 4);
+                continue;
+            }
             qemu_cond_wait(&s->cond, &s->lock);
+        }
         bool do_reset = s->reset;
         /* a reset rewinds both ends of the ring: the new client starts at 0 (replaying the old
          * client's commands from 0 to its last head would run stale commands over new data) */
@@ -142,7 +154,9 @@ static uint64_t bbgpu_reg_read(void *opaque, hwaddr addr, unsigned size)
     case BBGPU_REG_ERR_OP:     return s->err_op;
 #ifdef BBGPU_RENDER
     case BBGPU_REG_STATUS:     return qatomic_read(&s->status);
+    case BBGPU_REG_PRESENT:    return qatomic_read(&s->status) == BBGPU_STATUS_READY && bbgpu_host[0] == 1;
 #else
+    case BBGPU_REG_PRESENT:    return 0;
     case BBGPU_REG_STATUS:     return BBGPU_STATUS_READY;   /* transport-only build */
 #endif
     }

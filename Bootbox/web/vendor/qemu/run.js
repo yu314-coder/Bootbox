@@ -29,6 +29,28 @@
     } catch (e) { return false; }
   }
 
+  // Bootbox GPU bridge, direct present: the engine's GPU thread (a pthread worker) posts its window frames
+  // ({bbgpu:...} messages, emscripten ignores them) to this page; the WebGL desktop viewer
+  // (novnc/core/gldisplay.js) draws them. Every worker the engine creates gets the listener.
+  if (!self.__bbWorkerHook && typeof self.Worker === "function") {
+    self.__bbWorkerHook = true;
+    const W = self.Worker;
+    const BBWorker = function (url, o) {
+      const w = new W(url, o);
+      w.addEventListener("message", function (e) {
+        const d = e.data;
+        if (!d || !d.bbgpu) return;
+        if (d.bbgpu === "hello") self.__bbgpuHello = d;
+        const h = self.__bbgpuHost;
+        if (h) h.onMessage(d);
+        else if (d.bitmap) { try { d.bitmap.close(); } catch (x) {} }
+      });
+      return w;
+    };
+    BBWorker.prototype = W.prototype;
+    self.Worker = BBWorker;
+  }
+
   async function run(opts) {
     const base = opts.base || "vendor/qemu/";
     // A guest pack can reuse a compatible engine without duplicating its
@@ -842,7 +864,14 @@
           guiRetries = 0; bootP.connected = true; guiStatus(statusCb, null);
           console.log("[gui] display connected " + Math.round((Date.now() - guiT0) / 1000) + " s after start");
         });
+        try {   // WebGL viewer: a lost GPU context is restored empty - ask the guest for a whole frame
+          const myRfb = rfb, d = rfb._display;
+          if (d && d.detach) d.onRestore = function () {
+            try { RFB.messages.fbUpdateRequest(myRfb._sock, false, 0, 0, myRfb._fbWidth, myRfb._fbHeight); } catch (e) {}
+          };
+        } catch (e) {}
         rfb.addEventListener("disconnect", function () {
+          try { const d = rfb && rfb._display; if (d && d.detach) d.detach(); } catch (e) {}   // GL windows go back through X
           rfb = null;
           // Auto-retry until the guest's X server (Xvnc) is up. FAST cadence for the first ~10s
           // (Xvnc usually appears within moments of a tap once the guest is warm — 4s ticks made

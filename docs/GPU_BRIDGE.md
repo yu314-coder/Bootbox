@@ -29,6 +29,25 @@ guest app (OpenGL 2.1 / GLES 2-3)
   the X window with MIT-SHM (works with today's Xvnc desktop, no app changes). Phase 2: frames go
   straight to the screen canvas (no read-back), together with the display-path work.
 
+## Direct present (display phase 2, Nov 2026)
+Read-back was the cost: every frame went GPU -> heap -> guest X image -> Xvnc -> VNC encoder (all on the
+emulated CPU) -> noVNC. Now:
+- **The viewer is on the GPU.** noVNC's display is `novnc/core/gldisplay.js`: the desktop framebuffer is a
+  WebGL2 texture (decoded rectangles uploaded straight from the decoder's arrays, fills = scissored clears,
+  copies = blits), drawn as one quad per animation frame. Falls back to the 2D display without WebGL2.
+- **GL windows skip X.** The driver finds the X window of the drawable (GLX drisw: `xDrawable` of the loader's
+  drawable; EGL x11: `dri2_egl_surface.drawable`, offset 320 in Mesa 24.0 - both verified with the X server
+  through xcb, loaded at run time), sets its background to the colour key (red_mask|blue_mask = magenta) and
+  sends `PRESENT(win, res, src rect, screen x, y)` per frame - no read-back, no X image.
+- **Renderer -> page.** The GPU thread blits the texture into its OffscreenCanvas, takes it out with
+  `transferToImageBitmap()` (needs no event-loop turn) and posts it to the page (`{bbgpu:'present'}`); run.js
+  hooks every engine worker's messages. The viewer draws the frame wherever the desktop shows the key, so
+  menus and windows on top stay correct. Frames are acknowledged when shown: at most two in flight, a newer
+  frame is held in a copy and re-offered (the app is never blocked by the display rate).
+- **Register `PRESENT` (0x30)** = 1 while a viewer composites (the page writes `bbgpu_host[0]` in shared
+  memory); when the viewer goes away the driver removes the key and reads frames back again.
+Mac (Chrome): glmark2 build 400x300 24 fps (read-back) -> 230-260 fps, guest CPU ~9%.
+
 ## Protocol (v1)
 BAR layout: `[0, 4 KB)` registers + ring indices, `[4 KB, 4 MB)` command ring, `[4 MB, BAR end)` heap.
 Doorbell = 32-bit write to register `KICK` (QEMU MMIO callback wakes the GPU thread).
@@ -60,7 +79,7 @@ Versioned by a `PROTO_VERSION` register; caps (formats, limits) are read from a 
 3. **Guest driver** - bbgpu Gallium driver + sw-winsys display target in Mesa 24 (Alpine), NIR -> GLSL ES.
    First target: glxgears / glmark2 `build` and `texture` scenes.
 4. **Engine** - device + renderer in the wasm engine; WebGL2 on a GPU thread; harness + WebKit test.
-5. **Display phase 2, iPad tuning, shader cache, more of GL.**
+5. **Display phase 2** (direct present, done), iPad tuning, shader cache, more of GL, several GL clients.
 
 If Mesa's Gallium interface turns out to be the obstacle (size, guest CPU cost of its front end), the
 fallback is a fully original guest GL library speaking the same protocol.

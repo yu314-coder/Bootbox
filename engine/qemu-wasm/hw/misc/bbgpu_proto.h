@@ -22,6 +22,8 @@
 #define BBGPU_REG_RESET      0x24  /* W: any value */
 #define BBGPU_REG_ERR_OP     0x28  /* R: op of the first failing command */
 #define BBGPU_REG_STATUS     0x2c  /* R: renderer state, BBGPU_STATUS_* (survives resets) */
+#define BBGPU_REG_PRESENT    0x30  /* R: 1 = the host shows presented windows itself (BBGPU_OP_PRESENT); 0 = read
+                                      frames back and draw them through X. Changes at any time (viewer comes/goes) */
 
 #define BBGPU_STATUS_STARTING 0
 #define BBGPU_STATUS_READY    1
@@ -78,6 +80,11 @@ enum {
     BBGPU_OP_DRAW,             /* mode, start, count, instances, index_bias (s32), indexed */
     BBGPU_OP_COPY_RES,         /* dst, dst_level, src, src_level, sx0, sy0, sx1, sy1, dx0, dy0, dx1, dy1, filter:
                                   blitFramebuffer rectangles (flips and scaling allowed) */
+
+    /* direct present: the host viewer draws the window itself, wherever the X screen shows the colour key
+       (pure red + pure blue, i.e. the visual's red_mask | blue_mask: the guest sets it as the window background) */
+    BBGPU_OP_PRESENT,          /* window id (any nonzero u32), res (0 = remove the window), sx, sy, w, h (source rect,
+                                  y-down), dx, dy (screen position of the window's top-left corner) */
 
     BBGPU_OP_COUNT
 };

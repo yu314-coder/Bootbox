@@ -15,6 +15,7 @@ import { clientToElement } from './util/element.js';
 import { setCapture } from './util/events.js';
 import EventTargetMixin from './util/eventtarget.js';
 import Display from "./display.js";
+import GLDisplay from "./gldisplay.js";   // Bootbox: the desktop drawn by the GPU (falls back to the 2D canvas)
 import Inflator from "./inflator.js";
 import Deflator from "./deflator.js";
 import Keyboard from "./input/keyboard.js";
@@ -252,7 +253,13 @@ export default class RFB extends EventTargetMixin {
         // NB: nothing that needs explicit teardown should be done
         // before this point, since this can throw an exception
         try {
-            this._display = new Display(this._canvas);
+            this._display = null;
+            if (GLDisplay.supported()) {
+                try { this._display = new GLDisplay(this._canvas); } catch (e) { Log.Warn("WebGL display failed: " + e); }
+            }
+            if (!this._display) {
+                this._display = new Display(this._canvas);
+            }
         } catch (exc) {
             Log.Error("Display exception: " + exc);
             throw exc;

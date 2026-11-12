@@ -9,4 +9,14 @@ uint32_t bbr_execute(BBRenderer *r, uint32_t *tail, uint32_t head, uint32_t *fen
 const char *bbr_log(BBRenderer *r);
 void bbr_reset(BBRenderer *r);
 uint64_t bbr_draws(BBRenderer *r);
+/* direct present: a frame the host was too busy to take is kept and re-offered */
+int bbr_present_pending(BBRenderer *r);
+void bbr_present_retry(BBRenderer *r);
+
+/* provided by the embedder (wasm: bbgpu_webgl.c, native: bbgpu_egl.c) */
+int bbgpu_present_ready(void);                 /* 0: the viewer still has frames in flight - keep this one */
+/* draw the read framebuffer's [sx,sy,w,h] (y-down) as window `win` at screen (dx,dy) */
+void bbgpu_present_frame(uint32_t win, uint32_t sx, uint32_t sy, uint32_t w, uint32_t h, int32_t dx, int32_t dy);
+void bbgpu_present_remove(uint32_t win);       /* win 0 = all (client reset) */
+extern volatile uint32_t bbgpu_host[4];        /* [0] viewer composites presents, [1] frames it took, [2] frames sent */
 #endif

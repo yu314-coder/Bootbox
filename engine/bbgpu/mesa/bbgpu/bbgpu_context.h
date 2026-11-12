@@ -16,6 +16,8 @@ struct bbgpu_screen {
    struct sw_winsys *winsys;
    struct bbgpu_dev *dev;            /* one per process, shared by every screen (bbgpu_dev_get) */
    bool reported_error;
+   bool presenting;                  /* the host viewer draws our windows (BBGPU_OP_PRESENT) */
+   uint32_t present_fence;           /* the previous frame's: one frame in flight */
 };
 static inline struct bbgpu_screen *bbgpu_screen(struct pipe_screen *s) { return (struct bbgpu_screen *)s; }
 

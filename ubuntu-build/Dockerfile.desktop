@@ -15,6 +15,8 @@
 # once their window is mapped (xterm waitForMap) - the first prompt still came out one letter per line;
 # font caches stay valid in the guest (they were rebuilt by every GUI program on every boot: ~15 s of
 # emulated CPU each for openbox and the panel while the desktop started).
+# v20: direct present - GL windows on the bridge are drawn by the app's viewer straight from the GPU (no frame
+# read-back, no X image, no VNC encode); gpu-bench runs on the desktop when the bridge is there.
 # v19: Bootbox GPU bridge (engine/bbgpu): GL apps draw on the iPad's GPU through WebGL2 when the app adds the
 # bbgpu device; the container runs privileged in the VM (c2w spec) so the driver can map the device.
 # v18 (Mac harness profiling of the desktop's common actions): the text editor keeps 27 common syntax
@@ -202,6 +204,7 @@ RUN set -eux; \
 COPY --from=bbgpu-mesa:24.0.9 /out/dri/libgallium_dri.so /usr/lib/xorg/modules/dri/libgallium_dri.so
 RUN set -eux; \
     strings /usr/lib/xorg/modules/dri/libgallium_dri.so | grep -q "Bootbox GPU (WebGL2)"; \
+    strings /usr/lib/xorg/modules/dri/libgallium_dri.so | grep -q "xcb_translate_coordinates"; \
     ! ldd /usr/lib/xorg/modules/dri/libgallium_dri.so 2>&1 | grep -iE "not found|Error relocating"; \
     echo "BBGPU-DRI-OK"
 ENV WINEPREFIX=/root/.wine WINEARCH=win64

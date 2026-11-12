@@ -13,6 +13,7 @@
 #include "frontend/sw_winsys.h"
 #include "nir/nir_to_tgsi.h"
 #include "bbgpu_context.h"
+#include "bbgpu_present.h"
 #include "bbgpu_public.h"
 #ifdef GALLIUM_SOFTPIPE
 #include "softpipe/sp_public.h"
@@ -347,6 +348,24 @@ static void bbgpu_flush_frontbuffer(struct pipe_screen *screen, struct pipe_cont
    if (!r->dt)
       return;
    unsigned w = pres->width0, h = pres->height0, y0 = 0, rows = h;
+   /* direct present: the viewer draws the window from the GPU; no read-back, no X image, no VNC encode */
+   bool host = bs->dev->regs[BBGPU_REG_PRESENT / 4] == 1 && level == 0;
+   uint32_t win; int x, y;
+   if (host && bbgpu_present_where(context_private, w, h, &win, &x, &y)) {
+      bs->presenting = true;
+      if (bs->present_fence)
+         bbgpu_fence_wait(bs->dev, bs->present_fence);
+      BBGPU_CMD(bs->dev, BBGPU_OP_PRESENT, win, r->id, 0, 0, w, h, (uint32_t)x, (uint32_t)y);
+      bs->present_fence = bbgpu_dev_flush(bs->dev);
+      return;
+   }
+   if (bs->presenting && !host) {          /* the viewer went away: draw through X again */
+      uint32_t gone[16];
+      int n = bbgpu_present_unkey(gone, 16);
+      for (int i = 0; i < n; i++)
+         BBGPU_CMD(bs->dev, BBGPU_OP_PRESENT, gone[i], 0, 0, 0, 0, 0, 0, 0);
+      bs->presenting = false;
+   }
    if (sub_box) { y0 = sub_box->y; rows = sub_box->height; }
    uint8_t *map = bs->winsys->displaytarget_map(bs->winsys, r->dt, PIPE_MAP_WRITE);
    if (!map)
@@ -379,6 +398,12 @@ static const void *bbgpu_get_compiler_options(struct pipe_screen *screen, enum p
 static void bbgpu_destroy(struct pipe_screen *screen)
 {
    struct bbgpu_screen *bs = bbgpu_screen(screen);
+   if (bs->presenting) {                    /* take our windows off the viewer */
+      uint32_t gone[16];
+      int n = bbgpu_present_unkey(gone, 16);
+      for (int i = 0; i < n; i++)
+         BBGPU_CMD(bs->dev, BBGPU_OP_PRESENT, gone[i], 0, 0, 0, 0, 0, 0, 0);
+   }
    bbgpu_fence_wait(bs->dev, bbgpu_dev_flush(bs->dev));
    bbgpu_dev_put(bs->dev);
    FREE(bs);              /* the winsys belongs to the pipe loader, which destroys it */

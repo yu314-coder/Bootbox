@@ -11,7 +11,7 @@ import Base64 from "./base64.js";
 import { toSigned32bit } from './util/int.js';
 
 export default class Display {
-    constructor(target) {
+    constructor(target, gpu) {   // Bootbox: gpu = a subclass (GLDisplay) owns the canvases
         this._drawCtx = null;
 
         this._renderQ = [];  // queue drawing actions for in-oder rendering
@@ -40,14 +40,14 @@ export default class Display {
             throw new Error("no getContext method");
         }
 
-        this._targetCtx = this._target.getContext('2d');
+        this._targetCtx = gpu ? null : this._target.getContext('2d');
 
         // the visible canvas viewport (i.e. what actually gets seen)
         this._viewportLoc = { 'x': 0, 'y': 0, 'w': this._target.width, 'h': this._target.height };
 
         // The hidden canvas, where we do the actual rendering
         this._backbuffer = document.createElement('canvas');
-        this._drawCtx = this._backbuffer.getContext('2d');
+        this._drawCtx = gpu ? null : this._backbuffer.getContext('2d');
 
         this._damageBounds = { left: 0, top: 0,
                                right: this._backbuffer.width,
