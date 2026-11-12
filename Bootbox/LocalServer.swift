@@ -99,7 +99,7 @@ final class LocalServer {
         // Until a pack is expanded, the .gz mappings below keep the old whole-file path working.
         let expandedPacks: [String: String] = [
             "vendor/qemu-aload/qemu-system-x86_64.data": "qemu64-v5-rootfs-945742898.data",
-            "vendor/qemu-desktop/qemu-system-x86_64.data": "qemu-desktop19-rootfs-1257421745.data",
+            "vendor/qemu-desktop/qemu-system-x86_64.data": "qemu-desktop20-rootfs-1259031413.data",
             "vendor/qemu-android/qemu-system-x86_64.data": "qemu-android64-warm6-2141954248.data",
             "vendor/qemu-aarch64/qemu-system-aarch64.data": "qemu-aarch64-rootfs-265519785.data",
         ]
@@ -129,7 +129,7 @@ final class LocalServer {
         // Desktop guest (x86_64): rootfs download-on-demand; engine wasm shared from
         // qemu-aload (the page requests ../qemu-aload/...wasm, which normalizes to the bundled one).
         if rel == "vendor/qemu-desktop/qemu-system-x86_64.data.gz" {
-            let cached = VMStorage.importsDir().appendingPathComponent("qemu-desktop19-rootfs-1257421745.data.gz")
+            let cached = VMStorage.importsDir().appendingPathComponent("qemu-desktop20-rootfs-1259031413.data.gz")
             return FileManager.default.fileExists(atPath: cached.path) ? cached : nil
         }
         // Full Android 12 AOSP x86_64 guest. Its QEMU engine is shared with qemu-aload, while this

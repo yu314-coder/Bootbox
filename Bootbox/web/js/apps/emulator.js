@@ -111,8 +111,8 @@
       // v13-v14 (builds 102-103): faster Linux browser (one web process, mimalloc, ad blocker); Web opens
       // in the app's native browser. v15 (build 106): hub "Run all", glmark2 from the hub, the boot
       // terminal waits for its real width before the first prompt.
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v19/qemu-desktop19-rootfs.data.gz",
-        name: "qemu-desktop19-rootfs-1257421745.data.gz", mb: 412, size: 431495165 },
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v20/qemu-desktop20-rootfs.data.gz",
+        name: "qemu-desktop20-rootfs-1259031413.data.gz", mb: 412, size: 432091716 },
     ] },
     // Android is a full AOSP x86_64 userspace on Bootbox's QEMU guest kernel.
     // The rootfs is download-on-demand; the x86_64 engine is shared with Linux.
