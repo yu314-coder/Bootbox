@@ -49,10 +49,32 @@ static void *map_bar(const char *dev, int bar, size_t len)
    return m == MAP_FAILED ? NULL : m;
 }
 
+static bool null_open(struct bbgpu_dev *d)
+{
+   uint32_t *r = calloc(1, 4096);
+   d->shm_size = 16u << 20;
+   d->shm = calloc(1, d->shm_size);
+   if (!r || !d->shm)
+      return false;
+   r[BBGPU_REG_MAGIC / 4] = BBGPU_MAGIC; r[BBGPU_REG_VERSION / 4] = BBGPU_PROTO_VERSION;
+   r[BBGPU_REG_STATUS / 4] = BBGPU_STATUS_READY; r[BBGPU_REG_SHM_SIZE / 4] = d->shm_size;
+   d->regs = r;
+   d->null = true;
+   d->bar = d->shm; d->bar_size = d->shm_size; d->ring_size = BBGPU_RING_SIZE; d->slot = -1; d->slot_fd = -1;
+   d->r_kick = &r[BBGPU_REG_KICK / 4]; d->r_fence = &r[BBGPU_REG_FENCE_DONE / 4]; d->r_tail = &r[BBGPU_REG_TAIL / 4];
+   d->r_error = &r[BBGPU_REG_ERROR / 4]; d->r_errop = &r[BBGPU_REG_ERR_OP / 4]; d->r_reset = &r[BBGPU_REG_RESET / 4];
+   d->heap = d->shm + BBGPU_RING_SIZE;
+   d->heap_size = d->shm_size - BBGPU_RING_SIZE - BBGPU_LOG_SIZE;
+   d->next_id = 1;
+   return true;
+}
+
 bool bbgpu_dev_open(struct bbgpu_dev *d)
 {
    char dev[512];
    memset(d, 0, sizeof *d);
+   if (getenv("BBGPU_NULL"))
+      return null_open(d);
    if (find_device(dev, sizeof dev))
       return false;
    d->regs = map_bar(dev, 0, 4096);
@@ -71,21 +93,59 @@ bool bbgpu_dev_open(struct bbgpu_dev *d)
       d->regs = NULL;
       return false;
    }
-   d->shm_size = d->regs[BBGPU_REG_SHM_SIZE / 4];
-   d->shm = map_bar(dev, 2, d->shm_size);
-   if (!d->shm)
+   d->bar_size = d->regs[BBGPU_REG_SHM_SIZE / 4];
+   d->bar = map_bar(dev, 2, d->bar_size);
+   if (!d->bar)
       return false;
-   d->regs[BBGPU_REG_RESET / 4] = 1;
-   d->heap = d->shm + BBGPU_RING_SIZE;
-   d->heap_size = d->shm_size - BBGPU_RING_SIZE - BBGPU_LOG_SIZE;
+   volatile uint32_t *R = d->regs;
+   uint32_t slots = R[BBGPU_REG_SLOTS / 4];
+   d->slot = -1; d->slot_fd = -1;
+   if (slots > 0 && slots <= BBGPU_MAX_SLOTS) {
+      /* several clients: take a free slot (a lock file per slot - a crashed program's lock goes with it) */
+      for (uint32_t i = 0; i < slots && d->slot < 0; i++) {
+         char lp[64];
+         snprintf(lp, sizeof lp, "/tmp/.bbgpu-slot-%u.lock", i);
+         int fd = open(lp, O_RDWR | O_CREAT | O_CLOEXEC, 0666);
+         if (fd < 0)
+            continue;
+         if (flock(fd, LOCK_EX | LOCK_NB)) { close(fd); continue; }
+         d->slot = (int)i; d->slot_fd = fd;
+      }
+      if (d->slot < 0) {
+         fprintf(stderr, "bbgpu: all %u GPU slots are in use; using software rendering\n", slots);
+         munmap(d->bar, d->bar_size);
+         return false;
+      }
+      volatile uint32_t *S = R + BBGPU_SLOT_REG(d->slot) / 4;
+      d->r_kick = S + BBGPU_SREG_KICK / 4; d->r_fence = S + BBGPU_SREG_FENCE_DONE / 4; d->r_tail = S + BBGPU_SREG_TAIL / 4;
+      d->r_error = S + BBGPU_SREG_ERROR / 4; d->r_errop = S + BBGPU_SREG_ERR_OP / 4; d->r_reset = S + BBGPU_SREG_RESET / 4;
+      d->shm_size = d->bar_size / slots;
+      d->shm = d->bar + (size_t)d->slot * d->shm_size;
+      d->ring_size = BBGPU_SLOT_RING;
+   } else {
+      d->r_kick = R + BBGPU_REG_KICK / 4; d->r_fence = R + BBGPU_REG_FENCE_DONE / 4; d->r_tail = R + BBGPU_REG_TAIL / 4;
+      d->r_error = R + BBGPU_REG_ERROR / 4; d->r_errop = R + BBGPU_REG_ERR_OP / 4; d->r_reset = R + BBGPU_REG_RESET / 4;
+      d->shm_size = d->bar_size; d->shm = d->bar;
+      d->ring_size = BBGPU_RING_SIZE;
+   }
+   *d->r_reset = 1;
+   d->heap = d->shm + d->ring_size;
+   d->heap_size = d->shm_size - d->ring_size - BBGPU_LOG_SIZE;
    d->next_id = 1;
    return true;
 }
 
 void bbgpu_dev_close(struct bbgpu_dev *d)
 {
-   if (d->shm)
-      munmap(d->shm, d->shm_size);
+   if (d->null) {
+      free(d->shm); free((void *)d->regs);
+      memset(d, 0, sizeof *d);
+      return;
+   }
+   if (d->bar)
+      munmap(d->bar, d->bar_size);
+   if (d->slot_fd >= 0)
+      close(d->slot_fd);
    if (d->regs)
       munmap((void *)d->regs, 4096);
    memset(d, 0, sizeof *d);
@@ -116,14 +176,14 @@ static bool take_client_lock(void)
 struct bbgpu_dev *bbgpu_dev_get(void)
 {
    pthread_mutex_lock(&the_dev_lock);
-   if (!the_dev && !take_client_lock()) {
-      pthread_mutex_unlock(&the_dev_lock);
-      fprintf(stderr, "bbgpu: another program is using the GPU; using software rendering\n");
-      return NULL;
-   }
    if (!the_dev) {
       struct bbgpu_dev *d = calloc(1, sizeof *d);
       if (d && bbgpu_dev_open(d)) the_dev = d; else free(d);
+      /* an engine without client slots has one ring: one GL program at a time */
+      if (the_dev && the_dev->slot < 0 && !the_dev->null && !take_client_lock()) {
+         fprintf(stderr, "bbgpu: another program is using the GPU; using software rendering\n");
+         bbgpu_dev_close(the_dev); free(the_dev); the_dev = NULL;
+      }
    }
    if (the_dev) the_dev_refs++;
    struct bbgpu_dev *r = the_dev;
@@ -144,19 +204,19 @@ void bbgpu_dev_put(struct bbgpu_dev *d)
 }
 
 uint32_t bbgpu_new_id(struct bbgpu_dev *d) { return d->next_id++; }
-uint32_t bbgpu_dev_error(struct bbgpu_dev *d) { return d->regs[BBGPU_REG_ERROR / 4]; }
+uint32_t bbgpu_dev_error(struct bbgpu_dev *d) { return (*d->r_error); }
 const char *bbgpu_dev_log(struct bbgpu_dev *d) { return (const char *)d->shm + d->shm_size - BBGPU_LOG_SIZE; }
 
 bool bbgpu_fence_done(struct bbgpu_dev *d, uint32_t fence)
 {
-   return (int32_t)(d->regs[BBGPU_REG_FENCE_DONE / 4] - fence) >= 0;
+   return (int32_t)((*d->r_fence) - fence) >= 0;
 }
 
 void bbgpu_fence_wait(struct bbgpu_dev *d, uint32_t fence)
 {
    unsigned spins = 0;
    while (!bbgpu_fence_done(d, fence)) {
-      if (d->regs[BBGPU_REG_ERROR / 4] == BBGPU_ERR_GL || d->regs[BBGPU_REG_ERROR / 4] == BBGPU_ERR_RING)
+      if ((*d->r_error) == BBGPU_ERR_GL || (*d->r_error) == BBGPU_ERR_RING)
          return;                       /* the renderer stopped: do not hang the app */
       if (++spins > 64)
          sched_yield();
@@ -166,17 +226,21 @@ void bbgpu_fence_wait(struct bbgpu_dev *d, uint32_t fence)
 static void kick(struct bbgpu_dev *d)
 {
    __sync_synchronize();
-   d->regs[BBGPU_REG_KICK / 4] = d->head;
+   (*d->r_kick) = d->head;
    d->kicked = d->head;
+   if (d->null) {                       /* everything "executes" at once */
+      (*d->r_tail) = d->head;
+      (*d->r_fence) = d->next_fence;
+   }
 }
 
 /* ring space: the renderer's tail must not be lapped */
 static void ring_wait(struct bbgpu_dev *d, uint32_t bytes)
 {
-   while (d->head + bytes - d->regs[BBGPU_REG_TAIL / 4] > BBGPU_RING_SIZE - 64) {
+   while (d->head + bytes - (*d->r_tail) > d->ring_size - 64) {
       if (d->kicked != d->head)
          kick(d);
-      if (d->regs[BBGPU_REG_ERROR / 4] == BBGPU_ERR_GL || d->regs[BBGPU_REG_ERROR / 4] == BBGPU_ERR_RING)
+      if ((*d->r_error) == BBGPU_ERR_GL || (*d->r_error) == BBGPU_ERR_RING)
          return;
       sched_yield();
    }
@@ -184,12 +248,12 @@ static void ring_wait(struct bbgpu_dev *d, uint32_t bytes)
 
 void bbgpu_cmd(struct bbgpu_dev *d, uint32_t op, const uint32_t *payload, uint32_t n)
 {
-   uint32_t dw = 2 + n, at = d->head % BBGPU_RING_SIZE;
+   uint32_t dw = 2 + n, at = d->head % d->ring_size;
    ring_wait(d, dw * 4 + 8);
-   if (at + dw * 4 > BBGPU_RING_SIZE) {
-      uint32_t pad[2] = { BBGPU_OP_WRAP, (BBGPU_RING_SIZE - at) / 4 };
+   if (at + dw * 4 > d->ring_size) {
+      uint32_t pad[2] = { BBGPU_OP_WRAP, (d->ring_size - at) / 4 };
       memcpy(d->shm + at, pad, 8);
-      d->head += BBGPU_RING_SIZE - at;
+      d->head += d->ring_size - at;
       at = 0;
       ring_wait(d, dw * 4 + 8);
    }
@@ -248,7 +312,7 @@ uint32_t bbgpu_heap_alloc(struct bbgpu_dev *d, uint32_t size)
       /* full: everything outstanding must finish first */
       uint32_t f = d->chunks[d->nchunks - 1].fence ? d->last_submitted_fence : bbgpu_dev_flush(d);
       bbgpu_fence_wait(d, f);
-      if (d->regs[BBGPU_REG_ERROR / 4] == BBGPU_ERR_GL || d->regs[BBGPU_REG_ERROR / 4] == BBGPU_ERR_RING)
+      if ((*d->r_error) == BBGPU_ERR_GL || (*d->r_error) == BBGPU_ERR_RING)
          return 0;
    }
 }

@@ -25,6 +25,22 @@
 #define BBGPU_REG_PRESENT    0x30  /* R: 1 = the host shows presented windows itself (BBGPU_OP_PRESENT); 0 = read
                                       frames back and draw them through X. Changes at any time (viewer comes/goes) */
 
+#define BBGPU_REG_SLOTS      0x34  /* R: client slots (0 = one client on the registers above, whole BAR2) */
+
+/* Several clients (each GL process): slot s has its own registers and its own part of BAR2, so programs do
+ * not share a ring. A guest claims a slot with an exclusive lock (/tmp/.bbgpu-slot-<s>.lock) and RESETs it.
+ * Registers of slot s at BBGPU_SLOT_REG(s) + : */
+#define BBGPU_SLOT_REG(s)    (0x100 + (s) * 0x20)
+#define BBGPU_SREG_KICK       0x00
+#define BBGPU_SREG_FENCE_DONE 0x04
+#define BBGPU_SREG_TAIL       0x08
+#define BBGPU_SREG_ERROR      0x0c
+#define BBGPU_SREG_RESET      0x10
+#define BBGPU_SREG_ERR_OP     0x14
+#define BBGPU_MAX_SLOTS      16
+/* slot s's memory: BAR2 [s * size/slots, (s+1) * size/slots): ring (BBGPU_SLOT_RING), heap, last 64 KB = log */
+#define BBGPU_SLOT_RING      (1u << 20)
+
 #define BBGPU_STATUS_STARTING 0
 #define BBGPU_STATUS_READY    1
 #define BBGPU_STATUS_FAILED   2   /* no GL context (e.g. no WebGL2 in workers): guests must not use the device */

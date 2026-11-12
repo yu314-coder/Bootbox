@@ -9,6 +9,9 @@
 #include "util/u_inlines.h"
 #include "util/u_memory.h"
 #include "util/u_screen.h"
+#include "util/disk_cache.h"
+#include "util/mesa-sha1.h"
+#include "util/hex.h"
 #include "util/format/u_format.h"
 #include "frontend/sw_winsys.h"
 #include "nir/nir_to_tgsi.h"
@@ -386,7 +389,7 @@ static void bbgpu_flush_frontbuffer(struct pipe_screen *screen, struct pipe_cont
    if (bbgpu_dev_error(bs->dev) && !bs->reported_error) {
       bs->reported_error = true;
       fprintf(stderr, "bbgpu: renderer error %u (op %u)\n%s\n", bbgpu_dev_error(bs->dev),
-              bs->dev->regs[BBGPU_REG_ERR_OP / 4], bbgpu_dev_log(bs->dev));
+              *bs->dev->r_errop, bbgpu_dev_log(bs->dev));
    }
 }
 
@@ -395,9 +398,31 @@ static const void *bbgpu_get_compiler_options(struct pipe_screen *screen, enum p
    return nir_to_tgsi_get_compiler_options(screen, ir, shader);
 }
 
+/* Mesa's on-disk shader cache keyed by this driver's build: the state tracker stores the compiled IR of
+ * every linked program, so an app's shaders skip the GLSL compiler (the slow part on the emulated CPU) from
+ * the second run on - and from the first, for shaders cached when the image was built (BBGPU_NULL). */
+static void bbgpu_disk_cache_create(struct bbgpu_screen *bs)
+{
+   struct mesa_sha1 ctx;
+   unsigned char sha1[20];
+   char id[20 * 2 + 1];
+   _mesa_sha1_init(&ctx);
+   if (!disk_cache_get_function_identifier(bbgpu_disk_cache_create, &ctx))
+      return;
+   _mesa_sha1_final(&ctx, sha1);
+   mesa_bytes_to_hex(id, sha1, 20);
+   bs->disk_cache = disk_cache_create("bbgpu", id, 0);
+}
+
+static struct disk_cache *bbgpu_get_disk_shader_cache(struct pipe_screen *screen)
+{
+   return bbgpu_screen(screen)->disk_cache;
+}
+
 static void bbgpu_destroy(struct pipe_screen *screen)
 {
    struct bbgpu_screen *bs = bbgpu_screen(screen);
+   disk_cache_destroy(bs->disk_cache);
    if (bs->presenting) {                    /* take our windows off the viewer */
       uint32_t gone[16];
       int n = bbgpu_present_unkey(gone, 16);
@@ -456,6 +481,8 @@ struct pipe_screen *bbgpu_create_screen(struct sw_winsys *winsys)
    s->fence_finish = bbgpu_fence_finish;
    s->flush_frontbuffer = bbgpu_flush_frontbuffer;
    s->get_compiler_options = bbgpu_get_compiler_options;
+   s->get_disk_shader_cache = bbgpu_get_disk_shader_cache;
+   bbgpu_disk_cache_create(bs);
    fprintf(stderr, "bbgpu: Bootbox GPU bridge, %u MB shared\n", bs->dev->shm_size >> 20);
    return s;
 }

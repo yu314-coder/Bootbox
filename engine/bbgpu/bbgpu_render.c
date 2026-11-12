@@ -38,7 +38,14 @@ struct BBRenderer {
     char log[BBGPU_LOG_SIZE];
     uint64_t draws;
     struct { uint32_t win, w, h; int32_t dx, dy; GLuint tex; uint32_t tw, th; } pend;   /* held-back present */
+    uint32_t ring_size;
+    /* several clients share one GL context: the fixed-function state each one set is kept (as the command
+       payloads) and replayed when the GPU thread switches to it (bbr_activate) */
+    uint32_t st[5][20]; uint8_t st_n[5];
+    uint32_t tex[16][8]; uint32_t tex_used;
+    uint32_t wins[8];               /* windows this client presented (removed from the viewer on reset) */
 };
+enum { ST_VIEWPORT, ST_SCISSOR, ST_BLEND, ST_DS, ST_RASTER };
 
 static uint32_t U(const uint32_t *p, int i) { return p[i]; }
 static float F(const uint32_t *p, int i) { float f; memcpy(&f, &p[i], 4); return f; }
@@ -278,6 +285,9 @@ static int set_textures(BBRenderer *r, const uint32_t *p, uint32_t ndw)
         const uint32_t *t = p + 2 + i * per;
         Obj *o = obj_kind(r, U(t, 0), K_TEXTURE);
         GLuint s = r->sampler[first + i];
+        memset(r->tex[first + i], 0, sizeof r->tex[0]);
+        memcpy(r->tex[first + i], t, per * 4);
+        r->tex_used |= 1u << (first + i);
         glActiveTexture(GL_TEXTURE0 + first + i);
         glBindTexture(GL_TEXTURE_2D, o ? o->gl : 0);
         glBindSampler(first + i, s);
@@ -386,8 +396,14 @@ static int present(BBRenderer *r, const uint32_t *p)
     int32_t dx = (int32_t)U(p, 6), dy = (int32_t)U(p, 7);
     if (!res) {
         if (r->pend.win == win) r->pend.win = 0;
+        for (int i = 0; i < 8; i++) if (r->wins[i] == win) r->wins[i] = 0;
         bbgpu_present_remove(win);
         return 0;
+    }
+    {
+        int i, free_i = -1;
+        for (i = 0; i < 8 && r->wins[i] != win; i++) if (!r->wins[i] && free_i < 0) free_i = i;
+        if (i == 8 && free_i >= 0) r->wins[free_i] = win;
     }
     Obj *o = obj_kind(r, res, K_TEXTURE);
     if (!o || fmt_info[o->fmt].depth) return BBGPU_ERR_OBJECT;
@@ -433,7 +449,21 @@ void bbr_present_retry(BBRenderer *r)
     present_now(r, r->pend.tex, win, 0, 0, r->pend.w, r->pend.h, r->pend.dx, r->pend.dy);
 }
 
+static int exec_state(BBRenderer *r, uint32_t op, const uint32_t *p, uint32_t ndw, uint32_t *fence_done);
+
 static int exec_one(BBRenderer *r, uint32_t op, const uint32_t *p, uint32_t ndw, uint32_t *fence_done)
+{
+    int slot = op == BBGPU_OP_SET_VIEWPORT ? ST_VIEWPORT : op == BBGPU_OP_SET_SCISSOR ? ST_SCISSOR :
+               op == BBGPU_OP_SET_BLEND ? ST_BLEND : op == BBGPU_OP_SET_DEPTH_STENCIL ? ST_DS :
+               op == BBGPU_OP_SET_RASTER ? ST_RASTER : -1;
+    if (slot >= 0) {
+        if (ndw > 20) ndw = 20;
+        memcpy(r->st[slot], p, ndw * 4); r->st_n[slot] = (uint8_t)ndw;
+    }
+    return exec_state(r, op, p, ndw, fence_done);
+}
+
+static int exec_state(BBRenderer *r, uint32_t op, const uint32_t *p, uint32_t ndw, uint32_t *fence_done)
 {
     switch (op) {
     case BBGPU_OP_NOP: return 0;
@@ -525,11 +555,45 @@ static int exec_one(BBRenderer *r, uint32_t op, const uint32_t *p, uint32_t ndw,
     return BBGPU_ERR_OP;
 }
 
-BBRenderer *bbr_create(uint8_t *shm, uint32_t shm_size)
+void bbr_layout(BBRenderer *r, uint8_t *shm, uint32_t shm_size, uint32_t ring_size)
+{
+    r->shm = shm; r->shm_size = shm_size; r->ring_size = ring_size;
+    r->heap = shm + ring_size; r->heap_size = shm_size - ring_size;
+}
+
+/* this client's turn on the shared GL context: bind its objects and replay its fixed-function state */
+void bbr_activate(BBRenderer *r)
+{
+    static const uint32_t ops[5] = { BBGPU_OP_SET_VIEWPORT, BBGPU_OP_SET_SCISSOR, BBGPU_OP_SET_BLEND,
+                                     BBGPU_OP_SET_DEPTH_STENCIL, BBGPU_OP_SET_RASTER };
+    uint32_t f = 0;
+    glBindFramebuffer(GL_FRAMEBUFFER, r->fbo);
+    glBindVertexArray(r->vao);
+    for (int i = 0; i < 5; i++)
+        if (r->st_n[i]) exec_state(r, ops[i], r->st[i], r->st_n[i], &f);
+    if (!r->st_n[ST_SCISSOR]) glDisable(GL_SCISSOR_TEST);
+    if (!r->st_n[ST_BLEND]) { glDisable(GL_BLEND); glColorMask(1, 1, 1, 1); }
+    if (!r->st_n[ST_DS]) { glDisable(GL_DEPTH_TEST); glDisable(GL_STENCIL_TEST); glDepthMask(GL_TRUE); }
+    if (!r->st_n[ST_RASTER]) { glDisable(GL_CULL_FACE); glDisable(GL_POLYGON_OFFSET_FILL); }
+    for (uint32_t u = 0; u < 16; u++) {
+        if (r->tex_used & (1u << u)) {
+            uint32_t pl[2 + 8] = { u, 1 };
+            memcpy(pl + 2, r->tex[u], 32);
+            set_textures(r, pl, 10);
+        } else {
+            glActiveTexture(GL_TEXTURE0 + u); glBindTexture(GL_TEXTURE_2D, 0);
+        }
+    }
+    glActiveTexture(GL_TEXTURE0);
+    Obj *prog = obj_kind(r, r->program, K_PROGRAM);
+    glUseProgram(prog ? prog->gl : 0);
+    r->uniforms_dirty = 1;
+}
+
+BBRenderer *bbr_create(uint8_t *shm, uint32_t shm_size, uint32_t ring_size)
 {
     BBRenderer *r = calloc(1, sizeof *r);
-    r->shm = shm; r->shm_size = shm_size;
-    r->heap = shm + BBGPU_RING_SIZE; r->heap_size = shm_size - BBGPU_RING_SIZE;
+    bbr_layout(r, shm, shm_size, ring_size);
     glGenFramebuffers(1, &r->fbo); glGenFramebuffers(1, &r->read_fbo); glGenFramebuffers(1, &r->draw_fbo);
     glGenVertexArrays(1, &r->vao); glBindVertexArray(r->vao);
     glGenSamplers(16, r->sampler);
@@ -541,12 +605,12 @@ BBRenderer *bbr_create(uint8_t *shm, uint32_t shm_size)
 uint32_t bbr_execute(BBRenderer *r, uint32_t *tail, uint32_t head, uint32_t *fence_done, uint32_t *err_op)
 {
     while (*tail != head) {
-        uint32_t at = *tail % BBGPU_RING_SIZE;
-        if (at + 8 > BBGPU_RING_SIZE) return BBGPU_ERR_RING;
+        uint32_t at = *tail % r->ring_size;
+        if (at + 8 > r->ring_size) return BBGPU_ERR_RING;
         const uint32_t *c = (const uint32_t *)(r->shm + at);
         uint32_t op = c[0], dw = c[1];
-        if (dw < 2 || at + dw * 4 > BBGPU_RING_SIZE) return BBGPU_ERR_RING;
-        if (op == BBGPU_OP_WRAP) { *tail += BBGPU_RING_SIZE - at; continue; }
+        if (dw < 2 || at + dw * 4 > r->ring_size) return BBGPU_ERR_RING;
+        if (op == BBGPU_OP_WRAP) { *tail += r->ring_size - at; continue; }
         uint32_t e = exec_one(r, op, c + 2, dw - 2, fence_done);
 #ifndef __EMSCRIPTEN__
         static int trace = -1;
@@ -582,7 +646,9 @@ void bbr_reset(BBRenderer *r)
         if (r->obj[i].kind) obj_free(&r->obj[i]);
     r->program = 0; r->nve = r->nvb = 0; r->ib_res = 0; r->vc_n = r->fc_n = 0; r->flip = 0; r->log[0] = 0;
     r->pend.win = 0;
-    bbgpu_present_remove(0);
+    for (int i = 0; i < 8; i++) if (r->wins[i]) { bbgpu_present_remove(r->wins[i]); r->wins[i] = 0; }
+    memset(r->st_n, 0, sizeof r->st_n); r->tex_used = 0;
+    bbr_activate(r);
     glUseProgram(0);
     glBindFramebuffer(GL_FRAMEBUFFER, r->fbo);
 }

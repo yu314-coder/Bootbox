@@ -207,6 +207,19 @@ RUN set -eux; \
     strings /usr/lib/xorg/modules/dri/libgallium_dri.so | grep -q "xcb_translate_coordinates"; \
     ! ldd /usr/lib/xorg/modules/dri/libgallium_dri.so 2>&1 | grep -iE "not found|Error relocating"; \
     echo "BBGPU-DRI-OK"
+# v20: fill Mesa's shader cache for the bridge driver here, at native speed: BBGPU_NULL=1 runs the driver
+# without a device (commands are dropped) so Mesa compiles every glmark2 shader exactly as on the iPad;
+# GL apps then skip the GLSL compiler on the emulated CPU from their first run.
+RUN set -eux; \
+    apk add --no-cache xvfb 2>&1 | tail -1; \
+    (Xvfb :8 -screen 0 640x480x24 >/tmp/xvfb8.log 2>&1 &); sleep 3; \
+    export LIBGL_ALWAYS_SOFTWARE=1 BBGPU_NULL=1 HOME=/root; \
+    V=red=1:green=1:blue=1:alpha=0:depth=1:stencil=0; \
+    DISPLAY=:8 timeout 900 glmark2-es2 --visual-config $V -s 64x64 -b :duration=0.05 >/tmp/sc-es2.log 2>&1; \
+    DISPLAY=:8 timeout 900 glmark2 --visual-config $V -s 64x64 -b :duration=0.05 >/tmp/sc-gl.log 2>&1; \
+    grep -q "bbgpu: Bootbox GPU bridge" /tmp/sc-es2.log; grep -q "Score" /tmp/sc-es2.log; \
+    pkill -f "Xvfb :8" || true; apk del xvfb 2>&1 | tail -1; \
+    echo "SHADER-CACHE-OK $(du -sk /root/.cache/mesa_shader_cache | cut -f1)KB"
 ENV WINEPREFIX=/root/.wine WINEARCH=win64
 RUN set -eux; \
     timeout 900 wineboot --init 2>&1 | tail -4 || true; \

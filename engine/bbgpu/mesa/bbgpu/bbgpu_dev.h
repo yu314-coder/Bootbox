@@ -8,6 +8,11 @@
 
 struct bbgpu_dev {
    volatile uint32_t *regs;
+   /* this client's registers: its slot's, or the legacy single-client ones (engines before multi-client) */
+   volatile uint32_t *r_kick, *r_fence, *r_tail, *r_error, *r_errop, *r_reset;
+   uint8_t *bar;                     /* all of BAR2 (shm = this client's part) */
+   uint32_t bar_size, ring_size;
+   int slot, slot_fd;
    uint8_t *shm, *heap;
    uint32_t shm_size, heap_size;     /* heap_size excludes the renderer's log area */
    uint32_t head;                    /* ring write position (monotonic) */
@@ -19,6 +24,8 @@ struct bbgpu_dev {
    struct { uint32_t end, fence; } chunks[1024];
    uint32_t nchunks;
    uint64_t stat_bytes_up, stat_bytes_down, stat_cmds;
+   bool null;                        /* BBGPU_NULL=1: no device - commands are dropped (image builds fill the
+                                        shader cache this way: Mesa compiles every shader as on the bridge) */
 };
 
 bool bbgpu_dev_open(struct bbgpu_dev *d);

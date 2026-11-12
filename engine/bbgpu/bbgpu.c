@@ -34,18 +34,24 @@ struct BBGPUState {
     MemoryRegion regs;
     MemoryRegion shm;
     uint32_t shm_mb;
+    uint32_t slots;        /* client slots (property) */
     uint8_t *mem;          /* host pointer to BAR2 */
     uint32_t ring_tail;    /* byte offset of the next unread command */
     uint32_t fence_done;
     uint32_t error, err_op;
     uint64_t ops, bytes;
 #ifdef BBGPU_RENDER
-    /* GPU thread: owns the GL context and executes the ring; the doorbell only records the head */
+    /* GPU thread: owns the GL context and executes the rings; the doorbells only record the heads.
+       Slot 0 is also the single client of the legacy registers (whole BAR2, BBGPU_RING_SIZE ring). */
     QemuThread thread;
     QemuMutex lock;
     QemuCond cond;
-    uint32_t head;
-    bool head_dirty, reset;
+    uint32_t nslots;
+    struct BBSlot {
+        uint32_t head, ring_tail, fence_done, error, err_op;
+        bool head_dirty, reset, legacy;
+        void *r;                       /* BBRenderer */
+    } slot[BBGPU_MAX_SLOTS];
 #endif
     uint32_t status;       /* BBGPU_STATUS_* */
 };
@@ -53,8 +59,9 @@ struct BBGPUState {
 /* shared with the host viewer (wasm: the page writes [0] and [1] straight into this memory) */
 volatile uint32_t bbgpu_host[4];
 
-static uint32_t rd32(BBGPUState *s, uint32_t off) { uint32_t v; memcpy(&v, s->mem + off, 4); return le32_to_cpu(v); }
+static inline uint32_t rd32(BBGPUState *s, uint32_t off) { uint32_t v; memcpy(&v, s->mem + off, 4); return le32_to_cpu(v); }
 
+#ifndef BBGPU_RENDER
 /* Execute every complete command between ring_tail and head (byte offsets, wrapping at BBGPU_RING_SIZE). */
 static void bbgpu_execute(BBGPUState *s, uint32_t head)
 {
@@ -91,7 +98,25 @@ static void bbgpu_execute(BBGPUState *s, uint32_t head)
     }
 }
 
+#endif
+
 #ifdef BBGPU_RENDER
+static void slot_layout(BBGPUState *s, uint32_t i, uint8_t **mem, uint32_t *size, uint32_t *ring)
+{
+    uint64_t total = (uint64_t)s->shm_mb * MiB;
+    if (s->slot[i].legacy) { *mem = s->mem; *size = (uint32_t)total; *ring = BBGPU_RING_SIZE; return; }
+    *size = (uint32_t)(total / s->nslots);
+    *mem = s->mem + (uint64_t)i * *size;
+    *ring = BBGPU_SLOT_RING;
+}
+
+static bool any_pending(BBGPUState *s)
+{
+    for (uint32_t i = 0; i < s->nslots; i++)
+        if (bbr_present_pending(s->slot[i].r)) return true;
+    return false;
+}
+
 static void *bbgpu_gpu_thread(void *opaque)
 {
     BBGPUState *s = opaque;
@@ -100,42 +125,85 @@ static void *bbgpu_gpu_thread(void *opaque)
         qatomic_set(&s->status, BBGPU_STATUS_FAILED);
         return NULL;
     }
-    BBRenderer *r = bbr_create(s->mem, (uint32_t)s->shm_mb * MiB);
+    for (uint32_t i = 0; i < s->nslots; i++) {
+        uint8_t *m; uint32_t sz, ring;
+        s->slot[i].legacy = i == 0;
+        slot_layout(s, i, &m, &sz, &ring);
+        s->slot[i].r = bbr_create(m, sz, ring);
+    }
+    BBRenderer *cur = NULL;
+    uint32_t next = 0;                  /* round robin between clients */
     qatomic_set(&s->status, BBGPU_STATUS_READY);
     for (;;) {
         qemu_mutex_lock(&s->lock);
-        while (!s->head_dirty && !s->reset) {
-            if (bbr_present_pending(r)) {   /* a held-back frame: offer it again once the viewer catches up */
+        int work = -1;
+        for (;;) {
+            for (uint32_t k = 0; k < s->nslots && work < 0; k++) {
+                uint32_t i = (next + k) % s->nslots;
+                if (s->slot[i].head_dirty || s->slot[i].reset) work = i;
+            }
+            if (work >= 0) break;
+            if (any_pending(s)) {          /* held-back frames: offer them again once the viewer catches up */
                 qemu_mutex_unlock(&s->lock);
-                bbr_present_retry(r);
+                for (uint32_t i = 0; i < s->nslots; i++) {
+                    BBRenderer *r = s->slot[i].r;
+                    if (!bbr_present_pending(r)) continue;
+                    if (cur != r) { bbr_activate(r); cur = r; }
+                    bbr_present_retry(r);
+                }
                 qemu_mutex_lock(&s->lock);
-                if (s->head_dirty || s->reset || !bbr_present_pending(r)) continue;
-                qemu_cond_timedwait(&s->cond, &s->lock, 4);
+                if (any_pending(s)) qemu_cond_timedwait(&s->cond, &s->lock, 4);
                 continue;
             }
             qemu_cond_wait(&s->cond, &s->lock);
         }
-        bool do_reset = s->reset;
+        next = work + 1;
+        struct BBSlot *sl = &s->slot[work];
+        BBRenderer *r = sl->r;
+        bool do_reset = sl->reset;
         /* a reset rewinds both ends of the ring: the new client starts at 0 (replaying the old
          * client's commands from 0 to its last head would run stale commands over new data) */
-        if (s->reset) { s->reset = false; s->ring_tail = 0; s->error = 0; qatomic_set(&s->fence_done, 0); }
-        uint32_t head = s->head;
-        s->head_dirty = false;
+        if (sl->reset) {
+            sl->reset = false; sl->ring_tail = 0; sl->error = 0; qatomic_set(&sl->fence_done, 0);
+            if (work == 0) s->error = 0;
+        }
+        uint32_t head = sl->head;
+        sl->head_dirty = false;
         qemu_mutex_unlock(&s->lock);
-        if (do_reset)
+        if (cur != r) { bbr_activate(r); cur = r; }
+        if (do_reset) {
+            uint8_t *m; uint32_t sz, ring;
+            slot_layout(s, work, &m, &sz, &ring);
+            bbr_layout(r, m, sz, ring);
             bbr_reset(r);
-        /* a failing command is skipped and reported (first error stays in REG_ERROR); execution goes on */
-        uint32_t tail = s->ring_tail, done = s->fence_done, op = 0;
+        }
+        /* a failing command is skipped and reported (first error stays in ERROR); execution goes on */
+        uint32_t tail = sl->ring_tail, done = sl->fence_done, op = 0;
         for (;;) {
             uint32_t e = bbr_execute(r, &tail, head, &done, &op);
-            qatomic_set(&s->ring_tail, tail);
-            qatomic_set(&s->fence_done, done);
+            qatomic_set(&sl->ring_tail, tail);
+            qatomic_set(&sl->fence_done, done);
             if (!e) break;
-            if (!s->error) { s->err_op = op; qatomic_set(&s->error, e); }
+            if (!sl->error) { sl->err_op = op; qatomic_set(&sl->error, e); }
             if (e == BBGPU_ERR_RING) break;   /* the ring itself is corrupt: wait for a reset */
         }
     }
     return NULL;
+}
+
+static void slot_kick(BBGPUState *s, uint32_t i, uint32_t head)
+{
+    qemu_mutex_lock(&s->lock);
+    s->slot[i].head = head; s->slot[i].head_dirty = true;
+    qemu_cond_signal(&s->cond); qemu_mutex_unlock(&s->lock);
+}
+
+static void slot_reset(BBGPUState *s, uint32_t i, bool legacy)
+{
+    qemu_mutex_lock(&s->lock);
+    struct BBSlot *sl = &s->slot[i];
+    sl->reset = true; sl->legacy = legacy; sl->head = 0; sl->head_dirty = false; sl->fence_done = 0; sl->ring_tail = 0;
+    qemu_cond_signal(&s->cond); qemu_mutex_unlock(&s->lock);
 }
 #endif
 
@@ -145,21 +213,38 @@ static uint64_t bbgpu_reg_read(void *opaque, hwaddr addr, unsigned size)
     switch (addr) {
     case BBGPU_REG_MAGIC:      return BBGPU_MAGIC;
     case BBGPU_REG_VERSION:    return BBGPU_PROTO_VERSION;
-    case BBGPU_REG_FENCE_DONE: return s->fence_done;
     case BBGPU_REG_RING_SIZE:  return BBGPU_RING_SIZE;
     case BBGPU_REG_SHM_SIZE:   return (uint64_t)s->shm_mb * MiB;
-    case BBGPU_REG_TAIL:       return s->ring_tail;
-    case BBGPU_REG_ERROR:      return s->error;
     case BBGPU_REG_OPS:        return (uint32_t)s->ops;
-    case BBGPU_REG_ERR_OP:     return s->err_op;
 #ifdef BBGPU_RENDER
+    case BBGPU_REG_FENCE_DONE: return qatomic_read(&s->slot[0].fence_done);
+    case BBGPU_REG_TAIL:       return qatomic_read(&s->slot[0].ring_tail);
+    case BBGPU_REG_ERROR:      return s->slot[0].error ? s->slot[0].error : s->error;
+    case BBGPU_REG_ERR_OP:     return s->slot[0].err_op;
+    case BBGPU_REG_SLOTS:      return s->nslots;
     case BBGPU_REG_STATUS:     return qatomic_read(&s->status);
     case BBGPU_REG_PRESENT:    return qatomic_read(&s->status) == BBGPU_STATUS_READY && bbgpu_host[0] == 1;
 #else
+    case BBGPU_REG_FENCE_DONE: return s->fence_done;
+    case BBGPU_REG_TAIL:       return s->ring_tail;
+    case BBGPU_REG_ERROR:      return s->error;
+    case BBGPU_REG_ERR_OP:     return s->err_op;
+    case BBGPU_REG_SLOTS:      return 0;
     case BBGPU_REG_PRESENT:    return 0;
     case BBGPU_REG_STATUS:     return BBGPU_STATUS_READY;   /* transport-only build */
 #endif
     }
+#ifdef BBGPU_RENDER
+    if (addr >= BBGPU_SLOT_REG(0) && addr < BBGPU_SLOT_REG(s->nslots)) {
+        struct BBSlot *sl = &s->slot[(addr - BBGPU_SLOT_REG(0)) / 0x20];
+        switch ((addr - BBGPU_SLOT_REG(0)) % 0x20) {
+        case BBGPU_SREG_FENCE_DONE: return qatomic_read(&sl->fence_done);
+        case BBGPU_SREG_TAIL:       return qatomic_read(&sl->ring_tail);
+        case BBGPU_SREG_ERROR:      return qatomic_read(&sl->error);
+        case BBGPU_SREG_ERR_OP:     return sl->err_op;
+        }
+    }
+#endif
     return 0;
 }
 
@@ -168,12 +253,16 @@ static void bbgpu_reg_write(void *opaque, hwaddr addr, uint64_t val, unsigned si
     BBGPUState *s = opaque;
     switch (addr) {
 #ifdef BBGPU_RENDER
-    case BBGPU_REG_KICK:
-        qemu_mutex_lock(&s->lock); s->head = (uint32_t)val; s->head_dirty = true; qemu_cond_signal(&s->cond); qemu_mutex_unlock(&s->lock);
-        break;
-    case BBGPU_REG_RESET:
-        qemu_mutex_lock(&s->lock); s->reset = true; s->head = 0; s->head_dirty = false; s->fence_done = 0;
-        qemu_cond_signal(&s->cond); qemu_mutex_unlock(&s->lock);
+    case BBGPU_REG_KICK:  slot_kick(s, 0, (uint32_t)val); break;
+    case BBGPU_REG_RESET: slot_reset(s, 0, true); break;   /* a one-client driver: slot 0 owns all of BAR2 */
+    default:
+        if (addr >= BBGPU_SLOT_REG(0) && addr < BBGPU_SLOT_REG(s->nslots)) {
+            uint32_t i = (addr - BBGPU_SLOT_REG(0)) / 0x20;
+            switch ((addr - BBGPU_SLOT_REG(0)) % 0x20) {
+            case BBGPU_SREG_KICK:  slot_kick(s, i, (uint32_t)val); break;
+            case BBGPU_SREG_RESET: slot_reset(s, i, false); break;
+            }
+        }
         break;
 #else
     case BBGPU_REG_KICK:  bbgpu_execute(s, (uint32_t)val); break;
@@ -206,6 +295,7 @@ static void bbgpu_realize(PCIDevice *pdev, Error **errp)
     pci_register_bar(pdev, 2, PCI_BASE_ADDRESS_SPACE_MEMORY | PCI_BASE_ADDRESS_MEM_PREFETCH |
                      PCI_BASE_ADDRESS_MEM_TYPE_64, &s->shm);
 #ifdef BBGPU_RENDER
+    s->nslots = s->slots < 1 ? 1 : s->slots > BBGPU_MAX_SLOTS ? BBGPU_MAX_SLOTS : s->slots;
     qemu_mutex_init(&s->lock);
     qemu_cond_init(&s->cond);
     qemu_thread_create(&s->thread, "bbgpu", bbgpu_gpu_thread, s, QEMU_THREAD_DETACHED);
@@ -214,6 +304,7 @@ static void bbgpu_realize(PCIDevice *pdev, Error **errp)
 
 static Property bbgpu_props[] = {
     DEFINE_PROP_UINT32("shm-mb", BBGPUState, shm_mb, 64),
+    DEFINE_PROP_UINT32("slots", BBGPUState, slots, 4),
     DEFINE_PROP_END_OF_LIST(),
 };
 

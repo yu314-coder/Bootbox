@@ -18,6 +18,7 @@ struct bbgpu_screen {
    bool reported_error;
    bool presenting;                  /* the host viewer draws our windows (BBGPU_OP_PRESENT) */
    uint32_t present_fence;           /* the previous frame's: one frame in flight */
+   struct disk_cache *disk_cache;    /* Mesa's shader cache: GLSL is compiled on the emulated CPU only once */
 };
 static inline struct bbgpu_screen *bbgpu_screen(struct pipe_screen *s) { return (struct bbgpu_screen *)s; }
 

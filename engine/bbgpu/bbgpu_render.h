@@ -4,7 +4,9 @@
 #include <stdint.h>
 typedef struct BBRenderer BBRenderer;
 /* shm = the device's shared memory (ring + heap); a GLES 3.0 / WebGL2 context must be current */
-BBRenderer *bbr_create(uint8_t *shm, uint32_t shm_size);
+BBRenderer *bbr_create(uint8_t *shm, uint32_t shm_size, uint32_t ring_size);
+void bbr_layout(BBRenderer *r, uint8_t *shm, uint32_t shm_size, uint32_t ring_size);
+void bbr_activate(BBRenderer *r);   /* several clients share the GL context: call before running another one */
 uint32_t bbr_execute(BBRenderer *r, uint32_t *tail, uint32_t head, uint32_t *fence_done, uint32_t *err_op);
 const char *bbr_log(BBRenderer *r);
 void bbr_reset(BBRenderer *r);
