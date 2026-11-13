@@ -106,5 +106,7 @@ enum VMStorage {
         "qemu-android64-warm6-2141954248.data",
         "qemu-android64-warm7-2542215631.data.gz",  // Android v7 → v8 (GPU direct present, quicker UI)
         "qemu-android64-warm7-2542215631.data",
+        "qemu-android64-warm8-2535969139.data.gz",  // Android v8 → v9 (GPU driver thread-safety: no idle drain)
+        "qemu-android64-warm8-2535969139.data",
     ]
 }

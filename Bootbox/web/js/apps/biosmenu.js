@@ -22,7 +22,7 @@
     { id: "x64pw", name: "Linux (Terminal)", sub: "64-bit Linux console · Python 3.12 + pip · Wine for .exe · internet", icon: "🐍", svg: "terminal", tag: "TERMINAL", dlMB: 310,
       guest: "x64pw", ram: 1536,
       note: "64-bit (x86_64) Alpine Linux in a terminal — cores 1–8 in UEFI Setup. Python 3.12 + pip, Wine (32 & 64-bit .exe) and real internet. Terminal on the LEFT; the panel on the RIGHT has quick buttons and shows graphical output when you start an X app or a Wine .exe. Downloaded once (~310 MB), then the guest disk is read straight from this device's storage as needed." },
-    { id: "android64", name: "Android", sub: "Android 12 · GPU-accelerated · Pixel-style launcher · quad-core · touch + keyboard", icon: "🤖", svg: "android", tag: "ANDROID", dlMB: 1039,
+    { id: "android64", name: "Android", sub: "Android 12 · GPU-accelerated · Pixel-style launcher · quad-core · touch + keyboard", icon: "🤖", svg: "android", tag: "ANDROID", dlMB: 1043,
       guest: "android64", ram: 1280,
       note: "Android 12 AOSP (System UI + Launcher3) on 4 emulated cores. It resumes from a snapshot taken at the home screen, so it opens in seconds instead of a multi-minute cold boot. Touch the screen directly; ⌨ Type for text. Downloaded once (~901 MB). No Google Play, no GPU acceleration." },
   ];

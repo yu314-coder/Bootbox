@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <pthread.h>
 /* messages: logcat on Android (stderr goes nowhere there), stderr elsewhere */
 #ifdef __ANDROID__
 #include <android/log.h>
@@ -15,6 +16,9 @@
 #include "bbgpu_proto.h"
 
 struct bbgpu_dev {
+   /* one device per process, used from several threads (RenderThread, the buffer allocator importing a
+      window buffer, hwui upload threads): ring, heap and ids are written under this lock (recursive) */
+   pthread_mutex_t mtx;
    volatile uint32_t *regs;
    /* this client's registers: its slot's, or the legacy single-client ones (engines before multi-client) */
    volatile uint32_t *r_kick, *r_fence, *r_tail, *r_error, *r_errop, *r_reset;
@@ -51,6 +55,8 @@ void bbgpu_fence_wait(struct bbgpu_dev *d, uint32_t fence);
 /* heap space for an upload / read-back, valid until the next flush's fence completes */
 uint32_t bbgpu_heap_alloc(struct bbgpu_dev *d, uint32_t size);
 uint32_t bbgpu_new_id(struct bbgpu_dev *d);
+void bbgpu_dev_lock(struct bbgpu_dev *d);
+void bbgpu_dev_unlock(struct bbgpu_dev *d);
 const char *bbgpu_dev_log(struct bbgpu_dev *d);
 uint32_t bbgpu_dev_error(struct bbgpu_dev *d);
 

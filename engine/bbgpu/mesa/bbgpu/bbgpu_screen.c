@@ -398,11 +398,13 @@ void bbgpu_readback_dt(struct bbgpu_screen *bs, struct bbgpu_resource *r, unsign
    unsigned row_bytes = w * util_format_get_blocksize(r->base.format), max_rows = MAX2(1u, (bs->dev->heap_size / 4) / row_bytes);
    for (unsigned y = y0; y < y0 + rows; y += max_rows) {
       unsigned n = MIN2(max_rows, y0 + rows - y);
+      bbgpu_dev_lock(bs->dev);
       uint32_t off = bbgpu_heap_alloc(bs->dev, n * row_bytes);
       BBGPU_CMD(bs->dev, BBGPU_OP_RES_READ, r->id, level, 0, y, w, n, off, row_bytes);
       bbgpu_fence_wait(bs->dev, bbgpu_dev_flush(bs->dev));
       for (unsigned i = 0; i < n; i++)
          memcpy(map + (size_t)(y + i) * r->dt_stride, bs->dev->heap + off + (size_t)i * row_bytes, row_bytes);
+      bbgpu_dev_unlock(bs->dev);
       bs->dev->stat_bytes_down += n * row_bytes;
    }
 }
@@ -462,6 +464,9 @@ static struct pipe_resource *bbgpu_resource_from_handle(struct pipe_screen *scre
    /* first sight of a buffer no GPU client has drawn: its pixels come from guest memory (one upload) */
    unsigned w = templ->width0, h = templ->height0, row = w * util_format_get_blocksize(templ->format);
    uint32_t off = 0, stride = 0;
+   /* called on gralloc's allocator thread while the RenderThread draws: the key table, heap and ring are
+      shared, so the whole import (first-sight upload + command) runs under the device lock */
+   bbgpu_dev_lock(bs->dev);
    if (!key_seen(bs, r->key) && (size_t)row * h <= bs->dev->heap_size / 2) {
       uint8_t *map = bs->winsys->displaytarget_map(bs->winsys, r->dt, PIPE_MAP_READ);
       if (map) {
@@ -473,6 +478,7 @@ static struct pipe_resource *bbgpu_resource_from_handle(struct pipe_screen *scre
       }
    }
    BBGPU_CMD(bs->dev, BBGPU_OP_RES_IMPORT, r->id, r->key, (uint32_t)fmt, w, h, off, stride);
+   bbgpu_dev_unlock(bs->dev);
    return &r->base;
 }
 
@@ -486,8 +492,10 @@ static bool bbgpu_resource_get_handle(struct pipe_screen *screen, struct pipe_co
    if (!r->key && wh->type == WINSYS_HANDLE_TYPE_FD) {
       r->key = handle_key(wh);
       if (r->key) {
+         bbgpu_dev_lock(bs->dev);
          BBGPU_CMD(bs->dev, BBGPU_OP_RES_EXPORT, r->id, r->key);
          key_seen(bs, r->key);
+         bbgpu_dev_unlock(bs->dev);
       }
    }
    return true;

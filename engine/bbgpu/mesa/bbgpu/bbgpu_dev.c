@@ -196,7 +196,14 @@ struct bbgpu_dev *bbgpu_dev_get(void)
    pthread_mutex_lock(&the_dev_lock);
    if (!the_dev) {
       struct bbgpu_dev *d = calloc(1, sizeof *d);
-      if (d && bbgpu_dev_open(d)) the_dev = d; else free(d);
+      if (d && bbgpu_dev_open(d)) {
+         pthread_mutexattr_t a;   /* recursive: callers hold it across heap_alloc -> copy -> command */
+         pthread_mutexattr_init(&a);
+         pthread_mutexattr_settype(&a, PTHREAD_MUTEX_RECURSIVE);
+         pthread_mutex_init(&d->mtx, &a);
+         pthread_mutexattr_destroy(&a);
+         the_dev = d;
+      } else free(d);
       /* an engine without client slots has one ring: one GL program at a time */
       if (the_dev && the_dev->slot < 0 && !the_dev->null && !take_client_lock()) {
          bbgpu_log("bbgpu: another program is using the GPU; using software rendering\n");
@@ -221,7 +228,15 @@ void bbgpu_dev_put(struct bbgpu_dev *d)
    pthread_mutex_unlock(&the_dev_lock);
 }
 
-uint32_t bbgpu_new_id(struct bbgpu_dev *d) { return d->next_id++; }
+uint32_t bbgpu_new_id(struct bbgpu_dev *d)
+{
+   bbgpu_dev_lock(d);
+   uint32_t id = d->next_id++;
+   bbgpu_dev_unlock(d);
+   return id;
+}
+void bbgpu_dev_lock(struct bbgpu_dev *d) { pthread_mutex_lock(&d->mtx); }
+void bbgpu_dev_unlock(struct bbgpu_dev *d) { pthread_mutex_unlock(&d->mtx); }
 uint32_t bbgpu_dev_error(struct bbgpu_dev *d) { return (*d->r_error); }
 const char *bbgpu_dev_log(struct bbgpu_dev *d)
 {
@@ -273,6 +288,7 @@ static void ring_wait(struct bbgpu_dev *d, uint32_t bytes)
 
 void bbgpu_cmd(struct bbgpu_dev *d, uint32_t op, const uint32_t *payload, uint32_t n)
 {
+   bbgpu_dev_lock(d);
    uint32_t dw = 2 + n, at = d->head % d->ring_size;
    ring_wait(d, dw * 4 + 8);
    if (at + dw * 4 > d->ring_size) {
@@ -292,10 +308,12 @@ void bbgpu_cmd(struct bbgpu_dev *d, uint32_t op, const uint32_t *payload, uint32
       memcpy(d->shm + at + 8, payload, n * 4);
    d->head += dw * 4;
    d->stat_cmds++;
+   bbgpu_dev_unlock(d);
 }
 
 uint32_t bbgpu_dev_flush(struct bbgpu_dev *d)
 {
+   bbgpu_dev_lock(d);
    uint32_t id = ++d->next_fence;
    bbgpu_cmd(d, BBGPU_OP_FENCE, &id, 1);
    kick(d);
@@ -303,6 +321,7 @@ uint32_t bbgpu_dev_flush(struct bbgpu_dev *d)
    /* chunks allocated since the previous flush are released by this fence */
    for (int i = (int)d->nchunks - 1; i >= 0 && d->chunks[i].fence == 0; i--)
       d->chunks[i].fence = id;
+   bbgpu_dev_unlock(d);
    return id;
 }
 
@@ -322,6 +341,7 @@ static void heap_reclaim(struct bbgpu_dev *d)
 
 uint32_t bbgpu_heap_alloc(struct bbgpu_dev *d, uint32_t size)
 {
+   bbgpu_dev_lock(d);
    size = (size + 255) & ~255u;
    if (size > d->heap_size / 2) {
       bbgpu_log("bbgpu: transfer of %u bytes exceeds the heap\n", size);
@@ -336,12 +356,16 @@ uint32_t bbgpu_heap_alloc(struct bbgpu_dev *d, uint32_t size)
          d->chunks[d->nchunks].end = d->heap_head;
          d->chunks[d->nchunks].fence = 0;
          d->nchunks++;
-         return (d->heap_head - size) % d->heap_size;
+         uint32_t off = (d->heap_head - size) % d->heap_size;
+         bbgpu_dev_unlock(d);
+         return off;
       }
       /* full: everything outstanding must finish first */
       uint32_t f = d->chunks[d->nchunks - 1].fence ? d->last_submitted_fence : bbgpu_dev_flush(d);
       bbgpu_fence_wait(d, f);
-      if ((*d->r_error) == BBGPU_ERR_GL || (*d->r_error) == BBGPU_ERR_RING)
+      if ((*d->r_error) == BBGPU_ERR_GL || (*d->r_error) == BBGPU_ERR_RING) {
+         bbgpu_dev_unlock(d);
          return 0;
+      }
    }
 }

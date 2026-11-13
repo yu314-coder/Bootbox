@@ -126,8 +126,10 @@
       // gesture navigation, Material You colours from an original wallpaper; apps AOT-compiled and warmed.
       // v8 (build 18): SurfaceFlinger's screen is presented straight on the GPU (no per-frame readback + VNC
       // copy): drawer open/close median frame 300 -> 200 ms, guest CPU -52%; working quick-settings tiles.
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v8/qemu-android64-v8.data.gz",
-        name: "qemu-android64-warm8-2535969139.data.gz", mb: 1039, size: 1089819916 },
+      // v9 (build 19): GPU driver thread-safety - a window-buffer import on a helper thread no longer races
+      // the RenderThread on the bridge's ring/heap (it could spin forever: ~half a CPU lost at idle).
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v9/qemu-android64-v9.data.gz",
+        name: "qemu-android64-warm9-2538335184.data.gz", mb: 1043, size: 1093325667 },
     ] },
   };
   // The boot menu (biosmenu.js) shows whether each system is downloaded and how big it is.

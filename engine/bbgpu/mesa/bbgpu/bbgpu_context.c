@@ -28,9 +28,11 @@ void bbgpu_upload(struct bbgpu_dev *dev, uint32_t res, unsigned level, unsigned 
       unsigned max = dev->heap_size / 4;
       for (unsigned done = 0; done < w; ) {
          unsigned n = MIN2(max, w - done);
+         bbgpu_dev_lock(dev);   /* no other thread may flush (and so free the chunk) before the command */
          uint32_t off = bbgpu_heap_alloc(dev, n);
          memcpy(dev->heap + off, src + done, n);
          BBGPU_CMD(dev, BBGPU_OP_RES_WRITE, res, 0, x + done, 0, 0, n, 1, 1, off, 0, 0);
+         bbgpu_dev_unlock(dev);
          done += n;
          dev->stat_bytes_up += n;
       }
@@ -39,10 +41,12 @@ void bbgpu_upload(struct bbgpu_dev *dev, uint32_t res, unsigned level, unsigned 
    unsigned row = w * bpp, max_rows = MAX2(1u, (dev->heap_size / 4) / MAX2(row, 1u));
    for (unsigned r = 0; r < h; r += max_rows) {
       unsigned n = MIN2(max_rows, h - r);
+      bbgpu_dev_lock(dev);
       uint32_t off = bbgpu_heap_alloc(dev, n * row);
       for (unsigned i = 0; i < n; i++)
          memcpy(dev->heap + off + (size_t)i * row, src + (size_t)(r + i) * src_stride, row);
       BBGPU_CMD(dev, BBGPU_OP_RES_WRITE, res, level, x, y + r, 0, w, n, 1, off, row, 0);
+      bbgpu_dev_unlock(dev);
       dev->stat_bytes_up += n * row;
       if (w == 2880 && getenv("BBGPU_CKSUM")) {
          uint32_t ck = 0; for (size_t q = 0; q < (size_t)n * row; q += 64) ck = ck * 31 + dev->heap[off + q];
@@ -285,9 +289,11 @@ static void delete_shader(struct pipe_context *c, void *s)
 static uint32_t upload_glsl(struct bbgpu_dev *dev, uint32_t id, unsigned stage, const char *src)
 {
    unsigned len = strlen(src);
+   bbgpu_dev_lock(dev);
    uint32_t off = bbgpu_heap_alloc(dev, len + 1);
    memcpy(dev->heap + off, src, len + 1);
    BBGPU_CMD(dev, BBGPU_OP_SHADER_CREATE, id, stage, off, len);
+   bbgpu_dev_unlock(dev);
    if (getenv("BBGPU_SYNC_SHADERS") && getenv("BBGPU_VERBOSE"))
       bbgpu_log("bbgpu: SHADER_CREATE id %u at heap %u len %u (head %u tail %u)\n", id, off, len, dev->heap_head, dev->heap_tail);
    if (getenv("BBGPU_SYNC_SHADERS")) {
@@ -397,10 +403,12 @@ static void *texture_map(struct pipe_context *c, struct pipe_resource *res, unsi
       unsigned row = box->width * 4, max_rows = MAX2(1u, (ctx->dev->heap_size / 4) / row);
       for (int y = 0; y < box->height; y += max_rows) {
          unsigned n = MIN2(max_rows, (unsigned)(box->height - y));
+         bbgpu_dev_lock(ctx->dev);   /* held until the copy: the chunk must not be reused meanwhile */
          uint32_t off = bbgpu_heap_alloc(ctx->dev, n * row);
          BBGPU_CMD(ctx->dev, BBGPU_OP_RES_READ, r->id, level, box->x, box->y + y, box->width, n, off, row);
          bbgpu_fence_wait(ctx->dev, bbgpu_dev_flush(ctx->dev));
          memcpy(t->staging + (size_t)y * row, ctx->dev->heap + off, (size_t)n * row);
+         bbgpu_dev_unlock(ctx->dev);
          ctx->dev->stat_bytes_down += n * row;
       }
    }
