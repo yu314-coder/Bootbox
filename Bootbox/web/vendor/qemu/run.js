@@ -90,7 +90,7 @@
       let p = null; try { p = self.BootboxLazyPack && self.BootboxLazyPack.progress(); } catch (e) {}
       const snap = p && p.snapshot && p.snapshot.size ? p.snapshot : null;
       const marks = opts.touchGuest
-        ? [["Start the x86-64 engine", !!bootP.engine], ["Load the saved Android state", !!(snap && snap.read >= snap.size)], ["Connect the screen", false]]
+        ? [["Start the ARM64 engine", !!bootP.engine], ["Load the saved Android state", !!(snap && snap.read >= snap.size)], ["Connect the screen", false]]
         : [["Start the x86-64 engine", !!bootP.engine], ["Boot the Linux kernel", !!bootP.kernel], ["Start the system", !!bootP.system], ["Open the desktop", false]];
       if (opts.touchGuest && !snap && bootP.engine) marks[1][1] = !!bootP.handed;
       let on = marks.findIndex((m) => !m[1]); if (on < 0) on = marks.length - 1;

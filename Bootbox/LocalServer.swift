@@ -100,7 +100,7 @@ final class LocalServer {
         let expandedPacks: [String: String] = [
             "vendor/qemu-aload/qemu-system-x86_64.data": "qemu64-v5-rootfs-945742898.data",
             "vendor/qemu-desktop/qemu-system-x86_64.data": "qemu-desktop20-rootfs-1259031413.data",
-            "vendor/qemu-android/qemu-system-x86_64.data": "qemu-android64-warm9-2538335184.data",
+            "vendor/qemu-android/qemu-system-x86_64.data": "qemu-android64-arm10-2195540803.data",
             "vendor/qemu-aarch64/qemu-system-aarch64.data": "qemu-aarch64-rootfs-265519785.data",
         ]
         if let name = expandedPacks[rel] {
@@ -132,11 +132,11 @@ final class LocalServer {
             let cached = VMStorage.importsDir().appendingPathComponent("qemu-desktop20-rootfs-1259031413.data.gz")
             return FileManager.default.fileExists(atPath: cached.path) ? cached : nil
         }
-        // Full Android 12 AOSP x86_64 guest. Its QEMU engine is shared with qemu-aload, while this
+        // Full Android 12 AOSP guest - ARM64 since v10 (engine: the bundled vendor/qemu-aarch64). This
         // size-tagged guest pack (system/vendor/product + prepared ext4 userdata) is downloaded once.
         // Keep the filename in sync with emulator.js ROOTFS_REMOTE and qemu-android/load.js.
         if rel == "vendor/qemu-android/qemu-system-x86_64.data.gz" {
-            let cached = VMStorage.importsDir().appendingPathComponent("qemu-android64-warm9-2538335184.data.gz")
+            let cached = VMStorage.importsDir().appendingPathComponent("qemu-android64-arm10-2195540803.data.gz")
             return FileManager.default.fileExists(atPath: cached.path) ? cached : nil
         }
         guard let root = LocalServer.webRoot else { return nil }

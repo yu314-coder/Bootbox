@@ -1,0 +1,28 @@
+#!/bin/busybox sh
+# Bootbox Android (ARM64) boot: no container runtime - prepare what Docker gives redroid, then become Android init.
+/bin/busybox --install -s /bin
+mount -t proc proc /proc; mount -t sysfs sysfs /sys; mount -t devtmpfs devtmpfs /dev
+# Binder/uinput nodes come from devtmpfs as 0600; servicemanager and the HALs are not root.
+chmod 0666 /dev/binder /dev/hwbinder /dev/vndbinder /dev/uinput 2>/dev/null
+# Bootbox GPU bridge: with a direct kernel boot no firmware turns on PCI memory decoding (SeaBIOS does on x86),
+# and no kernel driver claims the device - enable it, or every BAR read returns all-ones and Mesa falls back to
+# software rendering on the emulated CPU.
+for d in /sys/bus/pci/devices/*; do [ "$(cat $d/vendor 2>/dev/null)" = 0xbb0b ] && echo 1 > $d/enable; done
+# Host info share (wasi1 = the pack dir): t:<unix time> sets the clock before Android starts.
+mkdir -p /host; if mount -t 9p -o trans=virtio,version=9p2000.L,msize=131072 wasi1 /host 2>/dev/null; then
+  t=$(sed -n 's/^t://p' /host/info 2>/dev/null); [ -n "$t" ] && date -s "@$t" >/dev/null; umount /host; fi
+ip link set lo up; ip link set eth0 up
+printf '#!/bin/sh\n[ "$1" = bound ] || exit 0\nip addr add $ip/${mask:-24} dev $interface\n[ -n "$router" ] && ip route add default via ${router%%%% *}\nexit 0\n' > /bin/dhcp.sh; chmod +x /bin/dhcp.sh
+udhcpc -i eth0 -n -q -t 4 -T 2 -s /bin/dhcp.sh >/dev/null 2>&1 || { ip addr add 192.168.127.3/24 dev eth0; ip route add default via 192.168.127.1; }
+# / = read-only SquashFS + tmpfs upper (Docker's overlay root); /data = the userdata disk.
+mkdir -p /lower /upper /newroot
+mount -t squashfs -o ro /dev/vda /lower || { echo "bootbox: no rootfs"; exec sh; }
+mount -t tmpfs -o mode=0755 tmpfs /upper; mkdir -p /upper/u /upper/w
+mount -t overlay overlay -o lowerdir=/lower,upperdir=/upper/u,workdir=/upper/w /newroot
+mount -t ext4 -o noatime,nodiratime,data=writeback,commit=30 /dev/vdb /newroot/data || echo "bootbox: no userdata"
+echo "bootbox: starting Android ($(uname -m), $(date))"
+for d in dev proc sys; do mount --move /$d /newroot/$d; done
+exec switch_root /newroot /init qemu=1 androidboot.hardware=redroid androidboot.use_memfd=true \
+  androidboot.redroid_gpu_mode=guest androidboot.redroid_width=800 androidboot.redroid_height=600 \
+  androidboot.redroid_dpi=125 androidboot.redroid_fps=15 androidboot.use_redroid_stream=1 androidboot.use_redroid_vnc=1 \
+  androidboot.redroid_net_ndns=1 androidboot.redroid_net_dns1=8.8.8.8 androidboot.hw_timeout_multiplier=50

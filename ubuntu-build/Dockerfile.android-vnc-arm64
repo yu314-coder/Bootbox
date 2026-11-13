@@ -1,0 +1,18 @@
+# The Bootbox Android display/input bridge (android-vnc/bootbox_android_vnc.c) for the ARM64 Android guest.
+# docker buildx build --platform linux/amd64 -f Dockerfile.android-vnc-arm64 --output type=local,dest=OUT .
+FROM --platform=linux/arm64 redroid/redroid:12.0.0_64only-latest AS redroid
+FROM debian:bookworm-slim AS vnc-build
+ARG NDK_VERSION=r27d
+ARG LIBVNCSERVER_REF=LibVNCServer-0.9.13
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip && rm -rf /var/lib/apt/lists/*
+RUN curl -fL --retry 3 -o /ndk.zip https://dl.google.com/android/repository/android-ndk-${NDK_VERSION}-linux.zip && unzip -q /ndk.zip -d /opt && rm /ndk.zip
+RUN curl -fL --retry 3 https://github.com/LibVNC/libvncserver/archive/refs/tags/${LIBVNCSERVER_REF}.tar.gz | tar -xz -C /opt && mv /opt/libvncserver-* /opt/libvncserver
+COPY android-vnc/ /src/
+COPY --from=redroid /vendor/lib64/libvncserver.so /src/lib/libvncserver.so
+RUN /opt/android-ndk-${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android31-clang \
+      -std=c11 -D_GNU_SOURCE -O3 -fPIE -pie -Wall -Wextra -Werror \
+      -I/src/include -I/opt/libvncserver /src/bootbox_android_vnc.c \
+      -L/src/lib -Wl,-rpath,/vendor/lib64 -lvncserver -lz -lm -ldl -o /src/vncserver && \
+    /opt/android-ndk-${NDK_VERSION}/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip /src/vncserver
+FROM scratch
+COPY --from=vnc-build /src/vncserver /vncserver

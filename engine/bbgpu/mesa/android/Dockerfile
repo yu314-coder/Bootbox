@@ -1,15 +1,16 @@
-# Mesa 24.0.9 for Android x86-64 (the Bootbox Android guest = redroid 12, which ships Mesa 24.0.8) with the Bootbox
+# Mesa 24.0.9 for Android (ARG ABI=x86_64 or aarch64) (the Bootbox Android guest = redroid 12, which ships Mesa 24.0.8) with the Bootbox
 # GPU bridge driver (bbgpu) behind kms_swrast + softpipe, built with the Android NDK like redroid's own Mesa
 # (android-stub: libcutils/liblog/libsync/libhardware/libnativewindow are the system's at run time).
-# Build from engine/bbgpu:  docker build --platform linux/amd64 -f mesa/android/Dockerfile -t bbgpu-mesa-android:24.0.9 .
+# Build from engine/bbgpu:  docker build --platform linux/amd64 [--build-arg ABI=aarch64] -f mesa/android/Dockerfile -t bbgpu-mesa-android:24.0.9 .
 FROM debian:bookworm AS build
+ARG ABI=x86_64
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl unzip xz-utils python3 \
       python3-mako python3-yaml python3-packaging meson ninja-build bison flex pkg-config git file binutils && rm -rf /var/lib/apt/lists/*
 RUN curl -fsSL -o /ndk.zip https://dl.google.com/android/repository/android-ndk-r27d-linux.zip && \
     unzip -q /ndk.zip -d / && rm /ndk.zip && mv /android-ndk-r27d /ndk
 RUN curl -fsSL -o /mesa.tar.xz https://archive.mesa3d.org/mesa-24.0.9.tar.xz && \
     echo "51aa686ca4060e38711a9e8f60c8f1efaa516baf411946ed7f2c265cd582ca4c  /mesa.tar.xz" | sha256sum -c - && tar -xf /mesa.tar.xz -C / && rm /mesa.tar.xz
-COPY mesa/android/android-x86_64.cross /cross
+COPY mesa/android/android-${ABI}.cross /cross
 # libdrm for Android (Mesa needs it to build; at run time the system's libdrm.so.2 is used)
 RUN printf '#!/bin/sh\nexport PKG_CONFIG_LIBDIR=/deps/lib/pkgconfig PKG_CONFIG_SYSROOT_DIR=\nexec pkg-config "$@"\n' > /usr/local/bin/android-pkg-config && \
     chmod +x /usr/local/bin/android-pkg-config && \

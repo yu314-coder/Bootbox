@@ -417,12 +417,17 @@ static void *watch_present(void *arg) {
         sleep_ms(300);
         int now = gpu_presents();
         if (now && !was) {
-            pid_t pid = fork();
-            if (pid == 0) {
-                execl("/system/bin/service", "service", "call", "SurfaceFlinger", "1004", (char *)NULL);
-                _exit(127);
+            /* several repaints: the driver presents a display buffer from its second frame on, and the
+               compositor alternates between two of them (one repaint left the viewer black after a resume) */
+            for (int i = 0; i < 4; i++) {
+                pid_t pid = fork();
+                if (pid == 0) {
+                    execl("/system/bin/service", "service", "call", "SurfaceFlinger", "1004", (char *)NULL);
+                    _exit(127);
+                }
+                if (pid > 0) waitpid(pid, NULL, 0);
+                sleep_ms(150);
             }
-            if (pid > 0) waitpid(pid, NULL, 0);
         }
         was = now;
     }

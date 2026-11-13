@@ -25,7 +25,6 @@ build/
 Bootbox/web/live*.html
 Bootbox/web/vendor/qemu-aload/qemu-system-x86_64.data
 Bootbox/web/vendor/qemu-aload/qemu-system-x86_64.data.gz
-Bootbox/web/vendor/qemu-aarch64/qemu-system-aarch64.wasm
 Bootbox/web/vendor/qemu-aarch64/qemu-system-aarch64.data.gz
 Bootbox/web/vendor/qemu-desktop/qemu-system-x86_64.data.gz
 Bootbox/web/vendor/qemu-dbg/

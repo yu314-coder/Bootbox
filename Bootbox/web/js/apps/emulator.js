@@ -54,7 +54,8 @@
     // scores didn't change (WebKit, 4 vCPUs, ~11 / ~21 either way). hotshare=1 exists in the engine but
     // measured no gain, so it stays off.
     { id: "android64", name: "Android", boot: "q64",
-      base: "vendor/qemu-android/", engineBase: "vendor/qemu-aload/", wasm: "qemu-system-x86_64.wasm",   // shared x86_64 engine
+      // v10 (Nov 2026): ARM64 Android (arm64-v8a, so ARM-only apps run) on the aarch64 build of the same engine.
+      base: "vendor/qemu-android/", engineBase: "vendor/qemu-aarch64/", wasm: "qemu-system-aarch64.wasm",
       url: "", ram: 1280, minRam: 1280, maxRam: 1280, cores: 4, minCores: 4, maxCores: 4, gui: true, android: true,   // RAM + cores fixed by the warm snapshot
       // Android's code footprint overflows the engine's default 15000 live compiled blocks (shared by
       // all 4 vCPUs) → constant evict/recompile churn. Mac-measured cold Settings launch: v3 1-core 605s,
@@ -128,8 +129,12 @@
       // copy): drawer open/close median frame 300 -> 200 ms, guest CPU -52%; working quick-settings tiles.
       // v9 (build 19): GPU driver thread-safety - a window-buffer import on a helper thread no longer races
       // the RenderThread on the bridge's ring/heap (it could spin forever: ~half a CPU lost at idle).
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v9/qemu-android64-v9.data.gz",
-        name: "qemu-android64-warm9-2538335184.data.gz", mb: 1043, size: 1093325667 },
+      // v10 (Nov 2026): ARM64 Android (arm64-v8a) on the aarch64 engine, so apps with ARM-only native code run.
+      // No container runtime (an initramfs prepares the devices and starts Android's init); every UI process on
+      // the GPU bridge (Mesa bbgpu for arm64; the bridge's PCI decoding is enabled at boot - without it every
+      // process silently fell back to CPU rendering). Mac harness: app-drawer frames 53 ms median / 97 ms p90.
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v10/qemu-android64-v10.data.gz",
+        name: "qemu-android64-arm10-2195540803.data.gz", mb: 879, size: 922055881 },
     ] },
   };
   // The boot menu (biosmenu.js) shows whether each system is downloaded and how big it is.
@@ -1226,7 +1231,7 @@
             if (!window.QEMU_WASM) {
               await new Promise((res, rej) => {
                 const s = document.createElement("script");
-                s.src = "vendor/qemu/run.js?v=6";
+                s.src = "vendor/qemu/run.js?v=7";
                 s.onload = res; s.onerror = () => rej(new Error("missing QEMU-Wasm pack"));
                 document.head.appendChild(s);
               });
@@ -1398,7 +1403,7 @@
                   try { panel64.showGui(); } catch (e) {}   // the desktop IS the GUI → connect immediately
                   if (g.android) { try { installAndroidShell(panel64); } catch (e) { console.log("[shell] " + e); } }
                   status.textContent = g.android
-                    ? "Running — full Android 12 AOSP (64-bit x86_64) in QEMU. This is a warm-boot image: it resumes to the home screen in a few seconds (no cold boot). Touch the screen directly and use ⌨ Type for text."
+                    ? "Running — Android 12 for ARM64 (arm64-v8a) in QEMU, drawn on the GPU. This is a warm-boot image: it resumes to the home screen in a few seconds (no cold boot). Touch the screen directly and use ⌨ Type for text."
                     : "Running — x86_64 Linux desktop. The panel appears ~1–2 min after the first boot. Tap Apps (bottom-left) or right-click/long-press the desktop for apps; the Benchmarks icon runs CPU-Z, 7-Zip, sysbench, GPU and web benchmarks; ⌨ Type or the Magic Keyboard types into the focused window.";
                 } else {        // [ terminal | GUI ]: blank GUI until you launch an X program from the terminal
                   // LAZY DISPLAY (power/heat): do NOT connect noVNC on boot — a connected viewer renders
