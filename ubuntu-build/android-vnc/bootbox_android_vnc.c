@@ -21,6 +21,7 @@
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
 #include <sys/un.h>
+#include <sys/wait.h>
 #include <sys/system_properties.h>
 #include <time.h>
 #include <unistd.h>
@@ -374,6 +375,78 @@ static int connect_hwc(void) {
     return fd;
 }
 
+/* The Bootbox GPU bridge's registers (BAR0 of PCI vendor 0xbb0b): while its REG_PRESENT (0x30) reads 1 the
+   viewer shows SurfaceFlinger's output straight from the host GPU (the driver presents it), so the frames
+   handed to us here are stale guest memory - skip the copy and the VNC encode entirely. */
+static volatile uint32_t *bbgpu_regs;
+
+static void open_bbgpu(void) {
+    DIR *dir = opendir("/sys/bus/pci/devices");
+    if (!dir) return;
+    struct dirent *e;
+    while ((e = readdir(dir))) {
+        char path[300], buf[16] = {0};
+        snprintf(path, sizeof path, "/sys/bus/pci/devices/%s/vendor", e->d_name);
+        int fd = open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) continue;
+        ssize_t n = read(fd, buf, sizeof buf - 1);
+        close(fd);
+        if (n <= 0 || strtoul(buf, NULL, 16) != 0xbb0b) continue;
+        snprintf(path, sizeof path, "/sys/bus/pci/devices/%s/resource0", e->d_name);
+        fd = open(path, O_RDONLY | O_CLOEXEC);
+        if (fd < 0) break;
+        void *m = mmap(NULL, 4096, PROT_READ, MAP_SHARED, fd, 0);
+        close(fd);
+        if (m != MAP_FAILED) {
+            bbgpu_regs = m;
+            fprintf(stderr, "bootbox-vnc: GPU bridge found - frames skipped while the viewer presents\n");
+        }
+        break;
+    }
+    closedir(dir);
+}
+
+static int gpu_presents(void) { return bbgpu_regs && bbgpu_regs[0x30 / 4] == 1; }
+
+/* SurfaceFlinger only composes when something changes: when the viewer starts presenting (a resumed snapshot,
+   a viewer that came back) nothing would reach it until the next change - ask for one repaint */
+static void *watch_present(void *arg) {
+    (void)arg;
+    int was = gpu_presents();
+    for (;;) {
+        sleep_ms(300);
+        int now = gpu_presents();
+        if (now && !was) {
+            pid_t pid = fork();
+            if (pid == 0) {
+                execl("/system/bin/service", "service", "call", "SurfaceFlinger", "1004", (char *)NULL);
+                _exit(127);
+            }
+            if (pid > 0) waitpid(pid, NULL, 0);
+        }
+        was = now;
+    }
+    return NULL;
+}
+
+/* copy a frame in, marking only the bands that changed (the encoder then compresses just those) */
+static void take_frame(const uint8_t *pixels, size_t stride) {
+    const int band = 16;
+    size_t row = (size_t)display_width * 4;
+    for (int y0 = 0; y0 < display_height; y0 += band) {
+        int y1 = y0 + band < display_height ? y0 + band : display_height, changed = 0;
+        for (int y = y0; y < y1; y++) {
+            uint8_t *dst = (uint8_t *)screen->frameBuffer + (size_t)y * row;
+            const uint8_t *src = pixels + (size_t)y * stride;
+            if (changed || memcmp(dst, src, row)) { memcpy(dst, src, row); changed = 1; }
+        }
+        if (changed) {
+            /* rows above the first change in this band were equal: marking the whole band is fine */
+            rfbMarkRectAsModified(screen, 0, y0, display_width, y1);
+        }
+    }
+}
+
 static void relay_frames(void) {
     const size_t frame_bytes = (size_t)display_width * display_height * 4;
     uint32_t metadata[HWC_MESSAGE_BYTES / sizeof(uint32_t)];
@@ -406,22 +479,20 @@ static void relay_frames(void) {
                 stride = ((size_t)end / display_height) & ~(size_t)3;
                 if (stride < (size_t)display_width * 4) stride = (size_t)display_width * 4;
             }
+            if (gpu_presents()) {
+                close(shared_fd);
+                if (send(socket_fd, "ok", 2, MSG_NOSIGNAL) != 2) break;
+                continue;
+            }
             void *pixels = mmap(NULL, map_bytes, PROT_READ, MAP_SHARED, shared_fd, 0);
             if (pixels == MAP_FAILED) {
                 fprintf(stderr, "bootbox-vnc: mmap failed: %s\n", strerror(errno));
                 close(shared_fd);
                 break;
             }
-            if (stride == (size_t)display_width * 4) {
-                memcpy(screen->frameBuffer, pixels, frame_bytes);
-            } else {
-                for (int y = 0; y < display_height; y++)
-                    memcpy(screen->frameBuffer + (size_t)y * display_width * 4, (uint8_t *)pixels + y * stride,
-                           (size_t)display_width * 4);
-            }
+            take_frame(pixels, stride);
             munmap(pixels, map_bytes);
             close(shared_fd);
-            rfbMarkRectAsModified(screen, 0, 0, display_width, display_height);
             if (send(socket_fd, "ok", 2, MSG_NOSIGNAL) != 2) break;
         }
 
@@ -476,6 +547,12 @@ int main(int argc, char **argv) {
     screen->kbdAddEvent = keyboard_event;
     screen->ptrAddEvent = pointer_event;
 
+    open_bbgpu();
+    if (bbgpu_regs) {
+        pthread_t watcher;
+        pthread_create(&watcher, NULL, watch_present, NULL);
+        pthread_detach(watcher);
+    }
     rfbInitServer(screen);
     rfbRunEventLoop(screen, -1, TRUE);
     fprintf(stderr, "bootbox-vnc: serving %dx%d on port %d\n",

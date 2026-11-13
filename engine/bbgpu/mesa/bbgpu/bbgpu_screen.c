@@ -311,6 +311,8 @@ static void bbgpu_resource_destroy(struct pipe_screen *screen, struct pipe_resou
    struct bbgpu_screen *bs = bbgpu_screen(screen);
    struct bbgpu_resource *r = bbgpu_resource(pres);
    BBGPU_CMD(bs->dev, BBGPU_OP_RES_DESTROY, r->id);
+   if (r->map)
+      bs->winsys->displaytarget_unmap(bs->winsys, r->dt);
    if (r->dt)
       bs->winsys->displaytarget_destroy(bs->winsys, r->dt);
    FREE(r->shadow);
@@ -387,7 +389,9 @@ static void bbgpu_flush_frontbuffer(struct pipe_screen *screen, struct pipe_cont
 void bbgpu_readback_dt(struct bbgpu_screen *bs, struct bbgpu_resource *r, unsigned level, unsigned y0, unsigned rows)
 {
    unsigned w = r->base.width0;
-   uint8_t *map = bs->winsys->displaytarget_map(bs->winsys, r->dt, PIPE_MAP_WRITE);
+   if (!r->map)            /* mapped once: an mmap + page faults per frame cost more than the copy */
+      r->map = bs->winsys->displaytarget_map(bs->winsys, r->dt, PIPE_MAP_WRITE);
+   uint8_t *map = r->map;
    if (!map)
       return;
    /* in slices that fit the heap */
@@ -401,7 +405,6 @@ void bbgpu_readback_dt(struct bbgpu_screen *bs, struct bbgpu_resource *r, unsign
          memcpy(map + (size_t)(y + i) * r->dt_stride, bs->dev->heap + off + (size_t)i * row_bytes, row_bytes);
       bs->dev->stat_bytes_down += n * row_bytes;
    }
-   bs->winsys->displaytarget_unmap(bs->winsys, r->dt);
 }
 
 /* ---- buffers shared between processes (dma-bufs): the GPU texture is shared on the host by key ---- */
@@ -411,6 +414,26 @@ static uint32_t handle_key(const struct winsys_handle *wh)
    if (wh->type != WINSYS_HANDLE_TYPE_FD || fstat((int)wh->handle, &st))
       return 0;
    return (uint32_t)st.st_ino ? (uint32_t)st.st_ino : 1;
+}
+
+/* keys this process has imported or exported before: their texture is already on the host (another client
+   or an earlier import holds it), so a re-import (Android EGL re-imports the back buffer EVERY frame) needs no
+   map + full-buffer upload. Returns true if seen; remembers it either way. */
+static bool key_seen(struct bbgpu_screen *bs, uint32_t key)
+{
+   if (!key)
+      return false;
+   unsigned n = sizeof bs->seen / sizeof bs->seen[0];
+   for (unsigned i = 0, h = (key * 2654435761u) >> 24; i < 8; i++, h = (h + 1) % n) {
+      if (bs->seen[h] == key)
+         return true;
+      if (!bs->seen[h]) {
+         bs->seen[h] = key;
+         return false;
+      }
+   }
+   bs->seen[(key * 2654435761u) >> 24] = key;   /* full neighbourhood: replace */
+   return false;
 }
 
 static struct pipe_resource *bbgpu_resource_from_handle(struct pipe_screen *screen, const struct pipe_resource *templ,
@@ -439,7 +462,7 @@ static struct pipe_resource *bbgpu_resource_from_handle(struct pipe_screen *scre
    /* first sight of a buffer no GPU client has drawn: its pixels come from guest memory (one upload) */
    unsigned w = templ->width0, h = templ->height0, row = w * util_format_get_blocksize(templ->format);
    uint32_t off = 0, stride = 0;
-   if ((size_t)row * h <= bs->dev->heap_size / 2) {
+   if (!key_seen(bs, r->key) && (size_t)row * h <= bs->dev->heap_size / 2) {
       uint8_t *map = bs->winsys->displaytarget_map(bs->winsys, r->dt, PIPE_MAP_READ);
       if (map) {
          off = bbgpu_heap_alloc(bs->dev, row * h);
@@ -462,8 +485,10 @@ static bool bbgpu_resource_get_handle(struct pipe_screen *screen, struct pipe_co
       return false;
    if (!r->key && wh->type == WINSYS_HANDLE_TYPE_FD) {
       r->key = handle_key(wh);
-      if (r->key)
+      if (r->key) {
          BBGPU_CMD(bs->dev, BBGPU_OP_RES_EXPORT, r->id, r->key);
+         key_seen(bs, r->key);
+      }
    }
    return true;
 }

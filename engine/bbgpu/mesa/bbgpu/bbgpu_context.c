@@ -633,14 +633,36 @@ static void flush(struct pipe_context *c, struct pipe_fence_handle **fence, unsi
    if (ctx->wrote_shared && ((flags & PIPE_FLUSH_END_OF_FRAME) || ctx->bs->readback_shared)) {
       /* the frame goes to another process (Android: queued to SurfaceFlinger) which samples the same GPU
          texture on its own ring: it must be complete first. The compositor's own output is read by the CPU. */
-      bbgpu_fence_wait(ctx->dev, id);
-      if (ctx->bs->readback_shared)
+      struct bbgpu_screen *bs = ctx->bs;
+      bool host = bs->readback_shared && bs->dev->regs[BBGPU_REG_PRESENT / 4] == 1;
+      bool presented = false;
+      if (bs->readback_shared)
          for (unsigned i = 0; i < ctx->fb.nr_cbufs; i++) {
             struct pipe_surface *sf = ctx->fb.cbufs[i];
             struct bbgpu_resource *r = sf ? bbgpu_resource(sf->texture) : NULL;
-            if (r && r->key && r->dt)
-               bbgpu_readback_dt(ctx->bs, r, 0, 0, r->base.height0);
+            if (!r || !r->key || !r->dt)
+               continue;
+            /* direct present: the display's output buffers (the compositor draws each of them again and again)
+               go to the viewer straight from the GPU - no read-back, no copy in the VNC bridge, no VNC encode.
+               One-off targets (screenshots, task snapshots) are read back as before: their reader is the CPU. */
+            if (host && ++r->frames >= 2 && r->base.width0 >= 320) {
+               BBGPU_CMD(ctx->dev, BBGPU_OP_PRESENT, BBGPU_WIN_OPAQUE | 1, r->id, 0, 0, r->base.width0,
+                         r->base.height0, 0, 0);
+               presented = bs->presenting_screen = true;
+               continue;
+            }
+            bbgpu_fence_wait(ctx->dev, id);
+            bbgpu_readback_dt(bs, r, 0, 0, r->base.height0);
          }
+      else
+         bbgpu_fence_wait(ctx->dev, id);
+      if (presented)
+         bbgpu_dev_flush(ctx->dev);
+      else if (bs->presenting_screen && !host) {     /* the viewer went away: frames go through the VNC bridge */
+         BBGPU_CMD(ctx->dev, BBGPU_OP_PRESENT, BBGPU_WIN_OPAQUE | 1, 0, 0, 0, 0, 0, 0, 0);
+         bbgpu_dev_flush(ctx->dev);
+         bs->presenting_screen = false;
+      }
       ctx->wrote_shared = false;
       /* the current framebuffer stays bound: the next frame marks it again */
       for (unsigned i = 0; i < ctx->fb.nr_cbufs; i++)

@@ -276,8 +276,12 @@ void bbgpu_cmd(struct bbgpu_dev *d, uint32_t op, const uint32_t *payload, uint32
    uint32_t dw = 2 + n, at = d->head % d->ring_size;
    ring_wait(d, dw * 4 + 8);
    if (at + dw * 4 > d->ring_size) {
-      uint32_t pad[2] = { BBGPU_OP_WRAP, (d->ring_size - at) / 4 };
-      memcpy(d->shm + at, pad, 8);
+      /* a WRAP marker where it fits; with only 4 bytes left the reader wraps by itself (writing 8 bytes
+         there would run into the heap) */
+      if (at + 8 <= d->ring_size) {
+         uint32_t pad[2] = { BBGPU_OP_WRAP, (d->ring_size - at) / 4 };
+         memcpy(d->shm + at, pad, 8);
+      }
       d->head += d->ring_size - at;
       at = 0;
       ring_wait(d, dw * 4 + 8);

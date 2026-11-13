@@ -124,8 +124,10 @@
       // v7 (Nov 2026): Android renders on the iPad's GPU (Bootbox GPU bridge: Mesa on WebGL2 instead of
       // SwiftShader on the emulated CPU), the snapshot carries the GPU state; Lawnchair (Pixel-style home),
       // gesture navigation, Material You colours from an original wallpaper; apps AOT-compiled and warmed.
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v7/qemu-android64-v7.data.gz",
-        name: "qemu-android64-warm7-2542215631.data.gz", mb: 1028, size: 1078091619 },
+      // v8 (build 18): SurfaceFlinger's screen is presented straight on the GPU (no per-frame readback + VNC
+      // copy): drawer open/close median frame 300 -> 200 ms, guest CPU -52%; working quick-settings tiles.
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v8/qemu-android64-v8.data.gz",
+        name: "qemu-android64-warm8-2535969139.data.gz", mb: 1039, size: 1089819916 },
     ] },
   };
   // The boot menu (biosmenu.js) shows whether each system is downloaded and how big it is.

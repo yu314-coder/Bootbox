@@ -181,11 +181,12 @@ static int xfer(BBGPUState *s, int op, QEMUFile *f)
     if (qatomic_read(&s->status) != BBGPU_STATUS_READY) return -ENODEV;
     qemu_mutex_lock(&s->lock);
     /* finish what the rings hold before saving */
-    for (;;) {
+    for (int waited = 0;; waited++) {
         bool busy = false;
         for (uint32_t i = 0; i < s->nslots; i++)
             busy |= s->slot[i].head_dirty || s->slot[i].reset || s->slot[i].ring_tail != s->slot[i].head;
-        if (!busy || op == 2) break;
+        /* a client whose ring cannot advance (a bad command stream) must not hang the snapshot: 5 s */
+        if (!busy || op == 2 || waited >= 5000) break;
         qemu_mutex_unlock(&s->lock); g_usleep(1000); qemu_mutex_lock(&s->lock);
     }
     s->xfer_file = f; s->xfer_op = op;

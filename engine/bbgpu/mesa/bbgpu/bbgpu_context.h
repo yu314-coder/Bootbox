@@ -21,6 +21,8 @@ struct bbgpu_screen {
    struct disk_cache *disk_cache;    /* Mesa's shader cache: GLSL is compiled on the emulated CPU only once */
    bool readback_shared;             /* this process's shared render targets are read by the CPU (the Android
                                         compositor's output goes to the VNC bridge): read them back per frame */
+   bool presenting_screen;           /* Android: the viewer shows the compositor's output (no read-back) */
+   uint32_t seen[256];               /* dma-buf keys this process imported or exported (open addressing) */
 };
 static inline struct bbgpu_screen *bbgpu_screen(struct pipe_screen *s) { return (struct bbgpu_screen *)s; }
 
@@ -32,6 +34,8 @@ struct bbgpu_resource {
    struct sw_displaytarget *dt;      /* window-system image for present */
    unsigned dt_stride;
    uint32_t key;                     /* shared with other clients under this key (dma-buf inode), 0 = private */
+   uint8_t *map;                     /* dt mapped once for read-backs (kept until destroy: no mmap per frame) */
+   unsigned frames;                  /* flushes that published this shared target (compositor output vs one-off) */
 };
 static inline struct bbgpu_resource *bbgpu_resource(struct pipe_resource *r) { return (struct bbgpu_resource *)r; }
 

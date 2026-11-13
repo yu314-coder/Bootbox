@@ -8,6 +8,17 @@ on early-init
     export EGL_LOG_LEVEL warning
     mkdir /dev/bbgpu 0777 root root
 
+on init
+    # the navigation handle's tint samples the screen under it: in Android 12 every sample is a full
+    # screen capture (render + read-back) after each frame, up to 10/s - once a second is plenty
+    setprop debug.sf.region_sampling_period_ns 1000000000
+    setprop debug.sf.region_sampling_timer_timeout_ns 2000000000
+
+# the live-lock daemon walks every /proc entry every few seconds: real CPU time under emulation
+on property:sys.boot_completed=1
+    stop llkd-0
+    stop llkd-1
+
 service bootbox-sfgpu /vendor/bin/bootbox-sf-gpu.sh
     oneshot
     disabled

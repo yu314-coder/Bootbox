@@ -1,0 +1,7 @@
+#!/bin/bash
+# capture-all.sh: start AFTER cold-booting /acap.sh (cp userdata-lawn -> userdata, restart capnet): wait boot -> aprep -> migrate -> pack
+export PATH="/Volumes/D/homebrew/bin:/opt/homebrew/bin:$PATH" COLIMA_HOME=/Volumes/D/colima
+docker exec qemub sh -c 'A="adb -s 127.0.0.1:6555"; for i in $(seq 1 150); do adb connect 127.0.0.1:6555 >/dev/null 2>&1; b=$(timeout 8 $A shell getprop sys.boot_completed 2>/dev/null | tr -d "\r"); [ "$b" = 1 ] && break; sleep 8; done; echo boot=$b after $i; sh /aprep.sh 2>&1 | tail -12'
+docker exec qemub sh -c 'A="adb -s 127.0.0.1:6555"; for i in $(seq 1 40); do l=$($A shell cat /proc/loadavg | cut -d" " -f1); case "$l" in 0.*) break;; esac; sleep 10; done; echo "load $l"; adb disconnect >/dev/null 2>&1; adb kill-server >/dev/null 2>&1; sleep 3; T=$(date +%s); echo "migrate -d file:/tmp/vm.state" | socat - unix:/tmp/mon.sock >/dev/null; for i in $(seq 1 200); do s=$(echo "info migrate" | timeout 10 socat - unix:/tmp/mon.sock | grep -a "Migration status"); case "$s" in *completed*|*failed*) break;; esac; sleep 3; done; echo "$s in $(( $(date +%s) - T ))s"; echo quit | timeout 10 socat - unix:/tmp/mon.sock >/dev/null; sleep 3; ls -la /tmp/vm.state'
+docker exec qemub sh -c 'grep -i bbgpu /tmp/aboot.log | tail -3'
+docker cp qemub:/tmp/vm.state /Volumes/D/ai_cache/agpu/snap/vm.state && docker cp qemub:/apack/userdata.qcow2 /Volumes/D/ai_cache/agpu/snap/userdata.qcow2 && cd /Volumes/D/ai_cache/agpu && python3 mkpack-snap.py && ls -la /Volumes/D/ai_cache/raw-packs/android-gpu.data && echo CAPTURE-DONE

@@ -104,5 +104,7 @@ enum VMStorage {
         "qemu-android64-warm5-2161126625.data",
         "qemu-android64-warm6-2141954248.data.gz",  // Android v6 → v7 (GPU bridge, Pixel-style launcher)
         "qemu-android64-warm6-2141954248.data",
+        "qemu-android64-warm7-2542215631.data.gz",  // Android v7 → v8 (GPU direct present, quicker UI)
+        "qemu-android64-warm7-2542215631.data",
     ]
 }

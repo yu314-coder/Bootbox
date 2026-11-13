@@ -725,7 +725,9 @@ uint32_t bbr_execute(BBRenderer *r, uint32_t *tail, uint32_t head, uint32_t *fen
 {
     while (*tail != head) {
         uint32_t at = *tail % r->ring_size;
-        if (at + 8 > r->ring_size) return BBGPU_ERR_RING;
+        /* fewer than 8 bytes before the end: no command fits there, the writer wrapped (older guest
+           drivers wrote a WRAP marker into those 4 bytes and 4 past the ring; skip them either way) */
+        if (at + 8 > r->ring_size) { *tail += r->ring_size - at; continue; }
         const uint32_t *c = (const uint32_t *)(r->shm + at);
         uint32_t op = c[0], dw = c[1];
         if (dw < 2 || at + dw * 4 > r->ring_size) return BBGPU_ERR_RING;

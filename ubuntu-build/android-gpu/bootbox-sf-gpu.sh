@@ -7,5 +7,9 @@ for i in $(seq 1 120); do
     service check SurfaceFlinger | grep -q "found" && break
     sleep 0.5
 done
-service call SurfaceFlinger 1008 i32 1 >/dev/null
-service call SurfaceFlinger 1004 >/dev/null 2>&1   # repaint
+# a call during SurfaceFlinger's start-up can be lost: repeat it a few times as it settles
+for d in 0 5 20; do
+    sleep $d
+    service call SurfaceFlinger 1008 i32 1 >/dev/null
+    service call SurfaceFlinger 1004 >/dev/null 2>&1   # repaint
+done

@@ -8,6 +8,7 @@
  * Direct present (Bootbox GPU bridge): GL windows of the guest arrive as ImageBitmaps from the engine's
  * GPU thread (see bbgpu_webgl.c) and are drawn over the desktop wherever the guest screen shows the colour
  * key (pure magenta), so whatever X draws on top of them (menus, other windows) stays visible.
+ * Opaque windows (id bit 31: the Android compositor's output) cover their rectangle without the key.
  * Licensed under MPL 2.0 like noVNC.
  */
 import Display from "./display.js";
@@ -34,7 +35,7 @@ out vec4 o;
 void main() {
   vec4 b = texture(u_fbt, v_fb);
   if (u_mode == 0) { o = vec4(b.rgb, 1.0); return; }
-  if (any(greaterThan(abs(b.rgb - vec3(1.0, 0.0, 1.0)), vec3(0.03)))) discard;
+  if (u_mode == 1 && any(greaterThan(abs(b.rgb - vec3(1.0, 0.0, 1.0)), vec3(0.03)))) discard;
   o = vec4(texture(u_ovt, v_ov).rgb, 1.0);
 }`;
 
@@ -303,7 +304,8 @@ export default class GLDisplay extends Display {
     setOverlay(win, bitmap, x, y, w, h) {
         if (this._lost) { try { bitmap.close(); } catch (e) { /* ignore */ } bbgpuHost().ack(1); return; }
         let o = this._overlays.get(win);
-        if (!o) { o = { tex: null, w: 0, h: 0, x, y, bm: null, unacked: 0 }; this._overlays.set(win, o); }
+        // ids with the top bit set (BBGPU_WIN_OPAQUE) cover their rectangle: the Android compositor's screen
+        if (!o) { o = { tex: null, w: 0, h: 0, x, y, bm: null, unacked: 0, opaque: win >= 0x80000000 }; this._overlays.set(win, o); }
         if (o.bm) { try { o.bm.close(); } catch (e) { /* ignore */ } }
         o.bm = bitmap; o.bx = x; o.by = y; o.bw = w; o.bh = h;
         o.unacked++;
@@ -389,6 +391,7 @@ export default class GLDisplay extends Display {
             for (const o of this._overlays.values()) {
                 if (!o.tex) continue;
                 gl.bindTexture(gl.TEXTURE_2D, o.tex);
+                gl.uniform1i(this._u.u_mode, o.opaque ? 2 : 1);
                 gl.uniform4f(this._u.u_rect, o.x, o.y, o.w, o.h);
                 gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
             }

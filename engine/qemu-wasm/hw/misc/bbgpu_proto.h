@@ -107,6 +107,8 @@ enum {
        (pure red + pure blue, i.e. the visual's red_mask | blue_mask: the guest sets it as the window background) */
     BBGPU_OP_PRESENT,          /* window id (any nonzero u32), res (0 = remove the window), sx, sy, w, h (source rect,
                                   y-down), dx, dy (screen position of the window's top-left corner) */
+#define BBGPU_WIN_OPAQUE 0x80000000u  /* window ids with this bit cover their rectangle without the colour key
+                                         (Android: SurfaceFlinger's composited screen is the whole display) */
 
     /* sharing between clients (Android: app buffers composited by SurfaceFlinger). key = any 32-bit name
        both sides derive from the buffer (the guest uses the dma-buf's inode number) */
