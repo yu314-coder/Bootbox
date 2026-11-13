@@ -24,5 +24,5 @@ echo "bootbox: starting Android ($(uname -m), $(date))"
 for d in dev proc sys; do mount --move /$d /newroot/$d; done
 exec switch_root /newroot /init qemu=1 androidboot.hardware=redroid androidboot.use_memfd=true \
   androidboot.redroid_gpu_mode=guest androidboot.redroid_width=800 androidboot.redroid_height=600 \
-  androidboot.redroid_dpi=125 androidboot.redroid_fps=15 androidboot.use_redroid_stream=1 androidboot.use_redroid_vnc=1 \
+  androidboot.redroid_dpi=125 androidboot.redroid_fps=60 androidboot.use_redroid_stream=1 androidboot.use_redroid_vnc=1 \
   androidboot.redroid_net_ndns=1 androidboot.redroid_net_dns1=8.8.8.8 androidboot.hw_timeout_multiplier=50

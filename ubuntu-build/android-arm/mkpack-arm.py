@@ -2,7 +2,7 @@
 import re, json
 src = open('/Volumes/D/ai_cache/bootbox-harness/android-gpu/load.js').read()
 A = '/Volumes/D/ai_cache/agpu-arm/'
-order = [('/pack/Image', '../armcmp/and/kout/Image-arm64-fast'), ('/pack/efi-virtio.rom', 'agpu-arm/snap/efi-virtio.rom'),
+order = [('/pack/Image', 'agpu-arm/build/out/Image'), ('/pack/efi-virtio.rom', 'agpu-arm/snap/efi-virtio.rom'),
          ('/pack/initrd.gz', 'agpu-arm/build/out/initrd.gz'), ('/pack/rootfs.bin', 'agpu-arm/build/out/rootfs.bin'),
          ('/pack/userdata.qcow2', 'agpu-arm/snap/userdata.qcow2'), ('/pack/vm.state', 'agpu-arm/snap/vm.state')]
 off = 0; files = []

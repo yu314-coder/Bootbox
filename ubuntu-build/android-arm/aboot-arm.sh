@@ -8,7 +8,7 @@ exec /qemu/build/qemu-system-aarch64 -nographic -L /apack-arm -M virt -cpu corte
   -drive if=virtio,format=raw,readonly=on,file=/apack-arm/rootfs.bin \
   -drive if=virtio,format=qcow2,file=/apack-arm/userdata.qcow2,cache=writeback,discard=unmap \
   -kernel /apack-arm/Image -initrd /apack-arm/initrd.gz \
-  -append "console=ttyAMA0 loglevel=4 mitigations=off nowatchdog nosoftlockup audit=0 cryptomgr.notests random.trust_cpu=on androidboot.hardware=redroid androidboot.redroid_width=800 androidboot.redroid_height=600 androidboot.redroid_dpi=125 androidboot.redroid_fps=15 androidboot.use_redroid_vnc=1 androidboot.use_redroid_stream=1 androidboot.use_memfd=true androidboot.redroid_gpu_mode=guest androidboot.hw_timeout_multiplier=50 rdinit=/init" \
+  -append "console=ttyAMA0 loglevel=4 mitigations=off nowatchdog nosoftlockup audit=0 cryptomgr.notests random.trust_cpu=on androidboot.hardware=redroid androidboot.redroid_width=800 androidboot.redroid_height=600 androidboot.redroid_dpi=125 androidboot.redroid_fps=60 androidboot.use_redroid_vnc=1 androidboot.use_redroid_stream=1 androidboot.use_memfd=true androidboot.redroid_gpu_mode=guest androidboot.hw_timeout_multiplier=50 rdinit=/init" \
   -virtfs local,path=/awasi,mount_tag=wasi0,security_model=passthrough,id=wasi0 \
   -virtfs local,path=/apack-arm,mount_tag=wasi1,security_model=passthrough,id=wasi1 \
   -device bbgpu,slots=16,shm-mb=128 \

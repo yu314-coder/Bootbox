@@ -110,5 +110,7 @@ enum VMStorage {
         "qemu-android64-warm8-2535969139.data",
         "qemu-android64-warm9-2538335184.data.gz",  // Android v9 (x86-64) → v10 (ARM64: runs ARM apps)
         "qemu-android64-warm9-2538335184.data",
+        "qemu-android64-arm10-2195540803.data.gz",  // Android v10 → v11 (zygote recovers, 60 Hz display)
+        "qemu-android64-arm10-2195540803.data",
     ]
 }

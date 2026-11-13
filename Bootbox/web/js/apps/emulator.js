@@ -133,8 +133,11 @@
       // No container runtime (an initramfs prepares the devices and starts Android's init); every UI process on
       // the GPU bridge (Mesa bbgpu for arm64; the bridge's PCI decoding is enabled at boot - without it every
       // process silently fell back to CPU rendering). Mac harness: app-drawer frames 53 ms median / 97 ms p90.
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v10/qemu-android64-v10.data.gz",
-        name: "qemu-android64-arm10-2195540803.data.gz", mb: 879, size: 922055881 },
+      // v11 (Nov 2026): the display runs at 60 Hz (was 15: touch input was handled and frames shown only every
+      // 66 ms); background compilation done before the snapshot. OPEN: a zygote restarted after system_server
+      // dies aborts in ICU on the aarch64 engine (not on native QEMU) - Android then stays down until restart.
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v11/qemu-android64-v11.data.gz",
+        name: "qemu-android64-arm11-2201066306.data.gz", mb: 881, size: 923423278 },
     ] },
   };
   // The boot menu (biosmenu.js) shows whether each system is downloaded and how big it is.

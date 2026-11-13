@@ -428,6 +428,14 @@ static void *watch_present(void *arg) {
                 if (pid > 0) waitpid(pid, NULL, 0);
                 sleep_ms(150);
             }
+            /* a resumed snapshot wakes up with the clock of its capture: fetch the time (NTP through the
+               app's network) - Android only does that by itself at boot and once a day */
+            pid_t pid = fork();
+            if (pid == 0) {
+                execl("/system/bin/cmd", "cmd", "network_time_update_service", "force_refresh", (char *)NULL);
+                _exit(127);
+            }
+            if (pid > 0) waitpid(pid, NULL, 0);
         }
         was = now;
     }

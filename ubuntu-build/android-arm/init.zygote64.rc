@@ -1,0 +1,35 @@
+service zygote /system/bin/app_process64 -Xzygote /system/bin --zygote --start-system-server --enable-lazy-preload
+    class main
+    priority -20
+    user root
+    group root readproc reserved_disk
+    socket zygote stream 660 root system
+    socket usap_pool_primary stream 660 root system
+    # Bootbox ARM: Android's environment, pinned. A zygote restarted by init (after system_server died) came
+    # up WITHOUT ANDROID_DATA / ANDROID_I18N_ROOT / BOOTCLASSPATH... -> ICU aborted -> Android never came back.
+    setenv ANDROID_BOOTLOGO 1
+    setenv ANDROID_ROOT /system
+    setenv ANDROID_ASSETS /system/app
+    setenv ANDROID_DATA /data
+    setenv ANDROID_STORAGE /storage
+    setenv ANDROID_ART_ROOT /apex/com.android.art
+    setenv ANDROID_I18N_ROOT /apex/com.android.i18n
+    setenv ANDROID_TZDATA_ROOT /apex/com.android.tzdata
+    setenv EXTERNAL_STORAGE /sdcard
+    setenv ASEC_MOUNTPOINT /mnt/asec
+    setenv LIBGL_ALWAYS_SOFTWARE 1
+    setenv LIBGL_DRIVERS_PATH /vendor/lib64/dri
+    setenv EGL_LOG_LEVEL warning
+    setenv DOWNLOAD_CACHE /data/cache
+    setenv BOOTCLASSPATH /apex/com.android.art/javalib/core-oj.jar:/apex/com.android.art/javalib/core-libart.jar:/apex/com.android.art/javalib/okhttp.jar:/apex/com.android.art/javalib/bouncycastle.jar:/apex/com.android.art/javalib/apache-xml.jar:/system/framework/framework.jar:/system/framework/framework-graphics.jar:/system/framework/ext.jar:/system/framework/telephony-common.jar:/system/framework/voip-common.jar:/system/framework/ims-common.jar:/apex/com.android.i18n/javalib/core-icu4j.jar:/apex/com.android.appsearch/javalib/framework-appsearch.jar:/apex/com.android.conscrypt/javalib/conscrypt.jar:/apex/com.android.ipsec/javalib/android.net.ipsec.ike.jar:/apex/com.android.media/javalib/updatable-media.jar:/apex/com.android.mediaprovider/javalib/framework-mediaprovider.jar:/apex/com.android.os.statsd/javalib/framework-statsd.jar:/apex/com.android.permission/javalib/framework-permission.jar:/apex/com.android.permission/javalib/framework-permission-s.jar:/apex/com.android.scheduling/javalib/framework-scheduling.jar:/apex/com.android.sdkext/javalib/framework-sdkextensions.jar:/apex/com.android.tethering/javalib/framework-connectivity.jar:/apex/com.android.tethering/javalib/framework-tethering.jar:/apex/com.android.wifi/javalib/framework-wifi.jar
+    setenv DEX2OATBOOTCLASSPATH /apex/com.android.art/javalib/core-oj.jar:/apex/com.android.art/javalib/core-libart.jar:/apex/com.android.art/javalib/okhttp.jar:/apex/com.android.art/javalib/bouncycastle.jar:/apex/com.android.art/javalib/apache-xml.jar:/system/framework/framework.jar:/system/framework/framework-graphics.jar:/system/framework/ext.jar:/system/framework/telephony-common.jar:/system/framework/voip-common.jar:/system/framework/ims-common.jar:/apex/com.android.i18n/javalib/core-icu4j.jar
+    setenv SYSTEMSERVERCLASSPATH /system/framework/com.android.location.provider.jar:/system/framework/services.jar:/system/framework/ethernet-service.jar:/apex/com.android.appsearch/javalib/service-appsearch.jar:/apex/com.android.media/javalib/service-media-s.jar:/apex/com.android.permission/javalib/service-permission.jar
+    onrestart exec_background - system system -- /system/bin/vdc volume abort_fuse
+    onrestart write /sys/power/state on
+    onrestart restart audioserver
+    onrestart restart cameraserver
+    onrestart restart media
+    onrestart restart netd
+    onrestart restart wificond
+    writepid /dev/cpuset/foreground/tasks
+    critical window=${zygote.critical_window.minute:-off} target=zygote-fatal

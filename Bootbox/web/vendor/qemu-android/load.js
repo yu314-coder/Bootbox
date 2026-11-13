@@ -261,6 +261,6 @@ Module['FS_createPath']("/", "pack", true, true);
     }
 
     }
-    loadPackage({"files": [{"filename": "/pack/Image", "start": 0, "end": 38724096}, {"filename": "/pack/efi-virtio.rom", "start": 38724096, "end": 38884864}, {"filename": "/pack/initrd.gz", "start": 38884864, "end": 39543381}, {"filename": "/pack/rootfs.bin", "start": 39543381, "end": 691343957}, {"filename": "/pack/userdata.qcow2", "start": 691343957, "end": 907678293}, {"filename": "/pack/vm.state", "start": 907678293, "end": 2195540803}], "remote_package_size": 2195540803});
+    loadPackage({"files": [{"filename": "/pack/Image", "start": 0, "end": 38724096}, {"filename": "/pack/efi-virtio.rom", "start": 38724096, "end": 38884864}, {"filename": "/pack/initrd.gz", "start": 38884864, "end": 39543757}, {"filename": "/pack/rootfs.bin", "start": 39543757, "end": 691344333}, {"filename": "/pack/userdata.qcow2", "start": 691344333, "end": 916657101}, {"filename": "/pack/vm.state", "start": 916657101, "end": 2201066306}], "remote_package_size": 2201066306});
 
   })();

@@ -9,6 +9,8 @@ $A shell "settings put secure immersive_mode_confirmations confirmed; settings p
   pm disable-user com.android.printspooler >/dev/null 2>&1; setprop ctl.stop vendor.bluetooth-1-1; \
   setprop dalvik.vm.dex2oat64.enabled true; \
   pm disable com.android.keychain; dumpsys battery set ac 1; dumpsys battery set level 100"
+# (Not done: disabling the Bluetooth app - `pm disable com.android.bluetooth` restarts system_server and
+#  made every app launch 2x slower in the snapshot, Nov 14.)
 # (KeyChain crashes here: no AndroidKeyStore provider -> SystemUI's SysUiBg waited on its bind forever
 #  and every quick-settings tile stayed blank. Disabled, the bind fails at once. Battery: the VM has none,
 #  healthd says 0% -> Lawnchair's At a Glance showed "Battery low".)
@@ -33,6 +35,8 @@ sleep 10; $A shell "input tap 160 222"; sleep 6; $A shell "input tap 352 328"; s
 $A shell "input tap 754 461"; sleep 3; $A shell "input tap 754 506"; sleep 3
 $A shell "service call SurfaceFlinger 1008 i32 1 >/dev/null; input keyevent KEYCODE_HOME"
 sleep 20
+# finish the background compilation now (otherwise dex2oat runs "post-boot" right after every resume)
+$A shell "cmd package bg-dexopt-job" | tail -1
 # warm the everyday UI paths (their Skia programs and caches go into the snapshot): app drawer, shade, recents
 for i in 1 2; do
   $A shell "input swipe 400 450 400 120 250"; sleep 8; $A shell "input swipe 400 150 400 560 250"; sleep 8
