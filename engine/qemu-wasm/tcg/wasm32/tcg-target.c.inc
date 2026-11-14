@@ -1616,17 +1616,15 @@ static void tcg_wasm_out_deposit_i64(TCGContext *s, TCGReg dest, TCGReg arg1, TC
 
 static void tcg_wasm_out_extract(TCGContext *s, TCGReg dest, TCGReg arg1, int pos, int len, TCGType type, bool sign)
 {
-    int rs;
-    switch (type) {
-    case TCG_TYPE_I32:
-        rs = 32 - len;
-        break;
-    case TCG_TYPE_I64:
-        rs = 64 - len;
-        break;
-    default:
-        g_assert_not_reached();
-    }
+    /*
+     * The registers are i64 for both types, so move the field to the top of the
+     * 64-bit value and shift it back down: exact for i32 too (pos + len <= 32),
+     * zero/sign-extended like TCI's extract32/sextract32. (The i32 case used
+     * "32 - len", which kept the bits above the field: extract(x, 30, 1) could
+     * be 2 or 3 -> AArch64 SRSHR/URSHR .4s and every other i32 extract wrong.)
+     */
+    int rs = 64 - len;
+    (void)type;
     int sl = rs - pos;
     tcg_wasm_out_op_global_get_r(s, arg1);
     if (sl > 0) {
@@ -4355,17 +4353,72 @@ static void tcg_out_ctpop_i64(TCGContext *s, TCGOpcode opc, TCGReg dest, TCGReg 
     tcg_tci_out_op_rr(s, opc, dest, src);
     tcg_wasm_out_ctpop_i64(s, dest, src);
 }
+/*
+ * add2_i32/sub2_i32: the low words are 32-bit values, so the carry/borrow
+ * comes out of bit 32 of a zero-extended 64-bit add/sub. (The generic i64
+ * sequence compares the 64-bit sum against an input and NEVER sees a 32-bit
+ * carry: 0xffffffff + 1 gave C=0. AArch64 uses add2_i32 for every 32-bit
+ * ADDS/CMN/ADCS, so zlib's build_tree loop ran off its heap -> AOSP crashes.)
+ * Everything is computed on the wasm stack / a local before any output
+ * register is written, so any aliasing of outputs and inputs is safe.
+ */
+static void tcg_wasm_out_zext32_r(TCGContext *s, TCGReg r)
+{
+    tcg_wasm_out_op_global_get_r(s, r);
+    tcg_wasm_out_op_i64_const(s, 0xffffffffLL);
+    tcg_wasm_out_op_i64_and(s);
+}
+static void tcg_wasm_out_addsub2_i32(TCGContext *s, bool is_sub, TCGReg retl, TCGReg reth,
+                                     TCGReg al, TCGReg ah, TCGReg bl, TCGReg bh)
+{
+    /* low = zext(al) +/- zext(bl) -> TMP64_0 */
+    tcg_wasm_out_zext32_r(s, al);
+    tcg_wasm_out_zext32_r(s, bl);
+    if (is_sub) {
+        tcg_wasm_out_op_i64_sub(s);
+    } else {
+        tcg_wasm_out_op_i64_add(s);
+    }
+    tcg_wasm_out_op_local_set(s, TMP64_0_IDX);
+    /* high = ah +/- bh +/- carry, carry = bit 32 of low (add) / bit 63 (sub: negative) */
+    tcg_wasm_out_op_global_get_r(s, ah);
+    tcg_wasm_out_op_global_get_r(s, bh);
+    if (is_sub) {
+        tcg_wasm_out_op_i64_sub(s);
+    } else {
+        tcg_wasm_out_op_i64_add(s);
+    }
+    tcg_wasm_out_op_local_get(s, TMP64_0_IDX);
+    tcg_wasm_out_op_i64_const(s, is_sub ? 63 : 32);
+    tcg_wasm_out_op_i64_shr_u(s);
+    if (is_sub) {
+        tcg_wasm_out_op_i64_sub(s);
+    } else {
+        tcg_wasm_out_op_i64_add(s);
+    }
+    tcg_wasm_out_op_global_set_r(s, reth);
+    tcg_wasm_out_op_local_get(s, TMP64_0_IDX);
+    tcg_wasm_out_op_global_set_r(s, retl);
+}
 static void tcg_out_add2(TCGContext *s, TCGOpcode opc, TCGReg retl, TCGReg reth,
                          TCGReg al, TCGReg ah, TCGReg bl, TCGReg bh)
 {
     tcg_tci_out_op_rrrrrr(s, opc, retl, reth, al, ah, bl, bh);
-    tcg_wasm_out_add2(s, retl, reth, al, ah, bl, bh);
+    if (opc == INDEX_op_add2_i32) {
+        tcg_wasm_out_addsub2_i32(s, false, retl, reth, al, ah, bl, bh);
+    } else {
+        tcg_wasm_out_add2(s, retl, reth, al, ah, bl, bh);
+    }
 }
 static void tcg_out_sub2(TCGContext *s, TCGOpcode opc, TCGReg retl, TCGReg reth,
                          TCGReg al, TCGReg ah, TCGReg bl, TCGReg bh)
 {
     tcg_tci_out_op_rrrrrr(s, opc, retl, reth, al, ah, bl, bh);
-    tcg_wasm_out_sub2(s, retl, reth, al, ah, bl, bh);
+    if (opc == INDEX_op_sub2_i32) {
+        tcg_wasm_out_addsub2_i32(s, true, retl, reth, al, ah, bl, bh);
+    } else {
+        tcg_wasm_out_sub2(s, retl, reth, al, ah, bl, bh);
+    }
 }
 static void tcg_out_mulu2_i32(TCGContext *s, TCGOpcode opc, TCGReg retl, TCGReg reth, TCGReg arg1, TCGReg arg2)
 {
