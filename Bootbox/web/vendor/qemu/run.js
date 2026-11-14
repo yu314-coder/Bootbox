@@ -399,9 +399,12 @@
     // the multi-hundred-MB rootfs is resident can fail ("Failed to fetch dynamically imported module")
     // on a memory-tight device, which used to stick the GUI at "Connecting…". Best-effort; connectGui
     // falls back to a fresh import + retry if this didn't finish or failed.
-    let __RFB = null;
+    let __RFB = null, __Direct = null;
     const __rfbWarm = import(new URL("vendor/novnc/core/rfb.js", location.href).href)
       .then((m) => { __RFB = m.default; return m.default; }).catch(() => null);
+    // Direct display (desktop v21+): the guest's virtio-gpu screen read straight from engine memory
+    if (opts.directDisplay && self.__bbDirect !== false)
+      import(new URL("vendor/novnc/core/bbdirect.js?v=1", location.href).href).then((m) => { __Direct = m; }).catch(() => {});
     toTerm("[boot] serving=" + location.protocol + " isolated=" + self.crossOriginIsolated + " ram=" + (opts.ram || "?") + "M");
     say("64-bit: loading engine module…");
     const engineJs = new URL(engineModuleBase + "out.js", location.href).href;
@@ -881,7 +884,16 @@
         }
       }
       try {
-        rfb = new RFB(guiHost, opts.vnc, { shared: true });
+        // Direct display when the guest drives the virtio-gpu screen (Xorg on the GPU) and the engine
+        // has the tablet + keyboard; otherwise the VNC server in the guest (older images, Xorg failed).
+        let direct = null;
+        try { if (__Direct && __Direct.directReady()) direct = new __Direct.DirectChannel(); } catch (e) { direct = null; }
+        rfb = new RFB(guiHost, direct || opts.vnc, { shared: true });
+        if (direct) {
+          direct.attachRFB(rfb);
+          try { self.__bbDirectCh = direct; } catch (e) {}
+          console.log("[gui] direct display (no VNC): " + direct._w + "x" + direct._h);
+        }
         // ReDroid's LibVNCServer handles Tight/ZRLE correctly and benefits
         // enormously from compressed frames. The Linux Xvnc guest still uses
         // Bootbox's conservative Hextile-only compatibility list.
@@ -935,7 +947,9 @@
           // Android (touchGuest): the display IS the whole UI, so never give up - after the first
           // ~4 min keep trying every 15 s (a busy or briefly unreachable guest comes back on its own;
           // before 1.1 the pane froze on the last frame until the user tapped the display bar).
-          if (guiRetries++ < 60 || opts.touchGuest) {
+          // Direct display (desktop v21): the screen appears once the guest's Xorg drives the virtio GPU -
+          // keep trying too, slowly, so a slow first start never ends at "didn't start".
+          if (guiRetries++ < 60 || opts.touchGuest || opts.directDisplay) {
             var wait = guiRetries <= 8 ? 1200 : guiRetries <= 60 ? 4000 : 15000;
             guiStatus(statusCb, "Connecting to " + (opts.vncLabel || "the Linux desktop") + "…", true);
             setTimeout(function () { if (!rfb) connectGui(guiHost, statusCb); }, wait);

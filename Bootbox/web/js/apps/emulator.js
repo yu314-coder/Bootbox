@@ -44,7 +44,11 @@
     { id: "x64pwd",    name: "Linux (Desktop)",  boot: "q64",
       base: "vendor/qemu-desktop/", wasm: "../qemu-aload/qemu-system-x86_64.wasm", url: "", ram: 1536, gui: true,
       tune: { max: 40000, tsc: 1, lazywasm: 1 }, fastTci: true, cpuModelId: "Bootbox x86-64 (emulated in WebAssembly)",
-      gpu: true },   // same reason as x64pw
+      gpu: true, directDisplay: true },   // same reason as x64pw
+    // directDisplay (desktop v21 + build 24 engine): the guest's Xorg draws on a virtio GPU and the viewer reads
+    // that screen straight from the engine's memory; pointer and keys go to a virtio tablet + keyboard through the
+    // engine's input mailbox (bbdirect.js). No VNC server, no encoding, no network hop. Needs the GPU bridge (its
+    // worker hands the page the shared memory); with GPU Acceleration off the desktop keeps Xvnc.
     // gpu (desktop v19 + build 15 engine): the Bootbox GPU bridge device (engine/bbgpu). Guest OpenGL draws on
     // the iPad's GPU through WebGL2 in the device's own worker; when WebGL2 is not available there the device
     // reports it and Mesa in the guest stays on llvmpipe, so it is safe to leave on.
@@ -1388,7 +1392,11 @@
               cpuModelId: g.cpuModelId,
               cpuFlags: !g.android ? biosCpuFlags() : undefined,
               kernelArgs: !g.android ? biosKernelArgs() : undefined,
-              extraArgs: g.gpu && cfg().gpu !== "off" ? ["-device", "bbgpu"] : undefined,
+              extraArgs: g.gpu && cfg().gpu !== "off"
+                ? ["-device", "bbgpu"].concat(g.directDisplay ? ["-vga", "none", "-device", "virtio-gpu-pci,xres=1024,yres=768",
+                    "-device", "virtio-tablet-pci", "-device", "virtio-keyboard-pci"] : [])
+                : undefined,
+              directDisplay: !!(g.directDisplay && g.gpu && cfg().gpu !== "off"),
               safeNote: safe.level ? level.name : undefined,   // shown on the "Connecting…" line
               vncLabel: g.android ? "Android" : undefined,
               bootTitle: g.name,   // the start-up card on the screen of a full-screen guest (run.js bootInfo)

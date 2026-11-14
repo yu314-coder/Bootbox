@@ -23,6 +23,7 @@ void bbgpu_present_frame(uint32_t win, uint32_t sx, uint32_t sy, uint32_t w, uin
 void bbgpu_present_remove(uint32_t win);       /* win 0 = all (client reset) */
 extern volatile uint32_t bbgpu_host[4];        /* [0] viewer composites presents, [1] frames it took, [2] frames sent */
 extern volatile uint32_t bbtouch_ring[];       /* direct touch mailbox (see bbgpu.c) */
+extern volatile uint32_t bbdisp[];             /* direct display block (see bbgpu.c) */
 /* snapshots: the stream is written/read through these (the device maps them to QEMUFile) */
 typedef void (*bbr_put_fn)(void *f, const void *p, size_t n);
 typedef int (*bbr_get_fn)(void *f, void *p, size_t n);   /* 1 = got n bytes */

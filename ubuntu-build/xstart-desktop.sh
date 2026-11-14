@@ -17,9 +17,22 @@ export WEBKIT_DISABLE_COMPOSITING_MODE=1 WEBKIT_DISABLE_DMABUF_RENDERER=1 NO_AT_
 if [ ! -e /tmp/.xstarted ]; then
   : > /tmp/.xstarted
   (
-    Xvnc :0 -geometry 1024x768 -depth 16 -SecurityTypes None -rfbport 5900 -localhost no \
-         -desktop bootbox -AlwaysShared >/tmp/xvnc.log 2>&1 &
-    n=0; while [ "$n" -lt 80 ] && [ ! -e /tmp/.X11-unix/X0 ]; do sleep 0.25; n=$((n+1)); done
+    # v21: Xorg on the emulator's virtio GPU when the engine provides one (the app then shows the screen
+    # straight from the engine's memory and feeds the virtio tablet + keyboard: no VNC encoding, no
+    # network hop); otherwise - older app, or Xorg failed - Xvnc as before.
+    xok=
+    if bb-xorg; then
+      n=0; while [ "$n" -lt 120 ] && [ ! -e /tmp/.X11-unix/X0 ]; do
+        kill -0 "$(cat /tmp/.bb-xorg.pid 2>/dev/null)" 2>/dev/null || break
+        sleep 0.25; n=$((n+1)); done
+      [ -e /tmp/.X11-unix/X0 ] && xok=1
+    fi
+    if [ -z "$xok" ]; then
+      rm -f /tmp/.X0-lock /tmp/.X11-unix/X0
+      Xvnc :0 -geometry 1024x768 -depth 16 -SecurityTypes None -rfbport 5900 -localhost no \
+           -desktop bootbox -AlwaysShared >/tmp/xvnc.log 2>&1 &
+      n=0; while [ "$n" -lt 80 ] && [ ! -e /tmp/.X11-unix/X0 ]; do sleep 0.25; n=$((n+1)); done
+    fi
     export DISPLAY=:0
     export HOME=/root
     xsetroot -solid '#0b111c' -cursor_name left_ptr 2>/dev/null

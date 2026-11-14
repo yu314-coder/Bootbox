@@ -29,11 +29,12 @@ void main() {
 const FS = `#version 300 es
 precision mediump float;
 uniform sampler2D u_fbt, u_ovt;
-uniform int u_mode;
+uniform int u_mode, u_swz;
 in vec2 v_fb, v_ov;
 out vec4 o;
 void main() {
   vec4 b = texture(u_fbt, v_fb);
+  if (u_swz == 1) b = b.bgra;   // direct display: the texture holds the guest's BGRX bytes
   if (u_mode == 0) { o = vec4(b.rgb, 1.0); return; }
   if (u_mode == 1 && any(greaterThan(abs(b.rgb - vec3(1.0, 0.0, 1.0)), vec3(0.03)))) discard;
   o = vec4(texture(u_ovt, v_ov).rgb, 1.0);
@@ -126,7 +127,7 @@ export default class GLDisplay extends Display {
         gl.linkProgram(p);
         if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p));
         this._u = {};
-        for (const n of ['u_vp', 'u_fb', 'u_rect', 'u_fbt', 'u_ovt', 'u_mode']) this._u[n] = gl.getUniformLocation(p, n);
+        for (const n of ['u_vp', 'u_fb', 'u_rect', 'u_fbt', 'u_ovt', 'u_mode', 'u_swz']) this._u[n] = gl.getUniformLocation(p, n);
         gl.useProgram(p);
         gl.uniform1i(this._u.u_fbt, 0);
         gl.uniform1i(this._u.u_ovt, 1);
@@ -198,7 +199,10 @@ export default class GLDisplay extends Display {
         gl.bindFramebuffer(gl.READ_FRAMEBUFFER, this._fbo);
         gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, px);
         gl.bindFramebuffer(gl.READ_FRAMEBUFFER, null);
-        for (let i = 3; i < px.length; i += 4) px[i] = 255;
+        for (let i = 3; i < px.length; i += 4) {
+            px[i] = 255;
+            if (this._swz) { const t = px[i - 3]; px[i - 3] = px[i - 1]; px[i - 1] = t; }
+        }
         return new ImageData(px, w, h);
     }
 
@@ -282,6 +286,21 @@ export default class GLDisplay extends Display {
         gl.bindTexture(gl.TEXTURE_2D, this._tex);
         gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, width, height, gl.RGBA, gl.UNSIGNED_BYTE,
                          new Uint8Array(arr.buffer, arr.byteOffset + offset, width * height * 4));
+        this._damage(x, y, width, height);
+    }
+
+    // Direct display (bbdirect.js): a rectangle of the guest's scanout, read in place from the engine's
+    // shared memory (BGRX bytes, `stride` bytes per row). The shader swaps the channels back.
+    blitBGRX(x, y, width, height, u8, offset, stride) {
+        const gl = this._gl;
+        if (this._lost || width <= 0 || height <= 0) return;
+        this._endFill();
+        this._swz = 1;
+        gl.bindTexture(gl.TEXTURE_2D, this._tex);
+        gl.pixelStorei(gl.UNPACK_ROW_LENGTH, stride >> 2);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, x, y, width, height, gl.RGBA, gl.UNSIGNED_BYTE,
+                         new Uint8Array(u8.buffer, u8.byteOffset + offset, (height - 1) * stride + width * 4));
+        gl.pixelStorei(gl.UNPACK_ROW_LENGTH, 0);
         this._damage(x, y, width, height);
     }
 
@@ -382,6 +401,7 @@ export default class GLDisplay extends Display {
         gl.activeTexture(gl.TEXTURE0);
         gl.bindTexture(gl.TEXTURE_2D, this._tex);
         gl.uniform1i(this._u.u_mode, 0);
+        gl.uniform1i(this._u.u_swz, this._swz ? 1 : 0);
         gl.uniform4f(this._u.u_rect, vp.x, vp.y, vp.w, vp.h);
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
         if (this._overlays.size) {

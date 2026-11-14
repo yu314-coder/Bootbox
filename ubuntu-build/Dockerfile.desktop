@@ -92,7 +92,8 @@ RUN set -eux; \
     python3 -m compileall -j 0 -q /usr/lib/python3.12/site-packages || true; \
     echo "PIP-PRELOAD [$(echo $KEEP | wc -w) pkgs] cache=$(du -sh /root/.cache/uv 2>/dev/null | cut -f1)"
 
-# 3) Desktop: Xvnc (X+VNC in one) + openbox (v8; twm kept as the fallback WM) + tint2 (panel) + xterm
+# 3) Desktop: Xorg on the emulator's virtio GPU (v21 direct display: the app reads the screen straight
+#    from the engine; bb-xorg) with Xvnc (X+VNC in one) as the fallback + openbox (v8; twm kept as the fallback WM) + tint2 (panel) + xterm
 #    + browsers + mc. xdotool lets the panel's Apps button open openbox's menu.
 RUN set -eux; \
     apk add --no-cache tigervnc twm tint2 xsetroot xterm font-misc-misc ttf-dejavu mc links openbox xdotool; \
@@ -145,7 +146,8 @@ COPY desktop/apps/ /usr/share/bootbox-apps/
 COPY desktop/openbox-theme/ /usr/share/themes/Bootbox/openbox-3/
 COPY desktop/rc.xml desktop/menu.xml /root/.config/openbox/
 COPY desktop/tint2rc /root/.config/tint2/tint2rc
-COPY desktop/bxterm desktop/bootbox-menu /usr/local/bin/
+COPY desktop/bxterm desktop/bootbox-menu desktop/bb-xorg /usr/local/bin/
+COPY desktop/xorg-bootbox.conf /etc/X11/xorg-bootbox.conf
 COPY --from=tools /src/bbweb /src/bbkey /usr/local/bin/
 COPY --from=tools /src/bbweb-engine /usr/libexec/bbweb-engine
 COPY desktop/start.html desktop/hub.html desktop/webbench.html /usr/share/bootbox/
@@ -334,6 +336,17 @@ RUN set -eux; \
     mv /tmp/lang/*.rng $L/ 2>/dev/null || true; rm -rf /tmp/lang; \
     n=$(ls $L/*.lang | wc -l); [ "$n" -ge 20 ] && [ -f $L/def.lang ] && [ -f $L/python.lang ] && echo "EDITOR-LANGS-OK $n"; \
     echo "SLIM usr=$(du -sm /usr | cut -f1)MB total=$(du -sm / 2>/dev/null | cut -f1)MB"
+
+# v21 direct display: Xorg (modesetting on the virtio GPU, evdev for the virtio tablet + keyboard), started
+# by bb-xorg from xstart; Xvnc stays as the fallback. Late layer (keeps the cache above); the Bootbox
+# GPU-bridge Mesa driver installed earlier must survive it unchanged.
+RUN set -eux; \
+    g=/usr/lib/xorg/modules/dri/libgallium_dri.so; before=$(md5sum $g | cut -d' ' -f1); \
+    apk add --no-cache xorg-server xf86-input-evdev 2>&1 | tail -1; \
+    test "$(md5sum $g | cut -d' ' -f1)" = "$before"; \
+    test -f /usr/lib/xorg/modules/drivers/modesetting_drv.so; test -f /usr/lib/xorg/modules/input/evdev_drv.so; \
+    Xorg -version 2>&1 | head -2; chmod +x /usr/local/bin/bb-xorg; \
+    echo "XORG-DIRECT-OK"
 
 # Boots straight into the full desktop (launcher menu + browser + file manager).
 COPY xstart-desktop.sh /usr/local/bin/xstart

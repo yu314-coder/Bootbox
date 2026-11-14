@@ -1,0 +1,25 @@
+#!/bin/sh
+# bb-xorg: start the desktop's X server on the emulator's virtio GPU (desktop v21).
+# Exit 1 (caller falls back to Xvnc) when the engine has no virtio GPU / tablet / keyboard.
+[ -e /sys/class/drm/card0 ] || exit 1
+mkdir -p /dev/dri /dev/input
+[ -e /dev/dri/card0 ] || mknod -m 666 /dev/dri/card0 c 226 0
+kbd= tab=
+for d in /sys/class/input/event*; do
+  [ -e "$d" ] || continue
+  n=${d##*/}; i=${n#event}
+  [ -e /dev/input/$n ] || mknod -m 666 /dev/input/$n c 13 $((64 + i))
+  read -r name < "$d/device/name" 2>/dev/null
+  case "$name" in
+    *Keyboard*) kbd=$n ;;
+    *Tablet*)   tab=$n ;;
+  esac
+done
+[ -n "$kbd" ] && [ -n "$tab" ] || exit 1
+ln -sf /dev/input/$kbd /dev/input/bb-kbd
+ln -sf /dev/input/$tab /dev/input/bb-tablet
+# -seat seat1: no virtual consoles (the guest container may not open them; Xorg skips VT handling off seat0)
+Xorg :0 -seat seat1 -nolisten tcp -noreset -keeptty -config /etc/X11/xorg-bootbox.conf \
+     -logfile /tmp/Xorg.0.log >/tmp/xorg.out 2>&1 &
+echo $! > /tmp/.bb-xorg.pid
+exit 0

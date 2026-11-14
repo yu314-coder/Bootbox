@@ -72,15 +72,34 @@ volatile uint32_t bbgpu_host[4];
  * memory and wakes the injector thread, which feeds them to the guest's virtio-multitouch device under the
  * BQL - no network hop, no guest process in the input path (the VNC bridge stays the fallback).
  * [0] events written (page), [1] events consumed (engine), [2] multitouch device present (engine),
- * then BBTOUCH_N entries of 4 words: kind (0 down, 1 move, 2 up) | slot << 8, x, y (0..32767), unused. */
+ * then BBTOUCH_N entries of 4 words: kind | slot << 8, then by kind:
+ *   0 down, 1 move, 2 up (touch):  x, y (0..32767)
+ *   3 pointer (tablet):            x, y (0..32767), buttons (1 left, 2 middle, 4 right)
+ *   4 key:                         Linux key code, down (0/1)
+ *   5 wheel:                       vertical steps (signed, + = down), horizontal steps (+ = right) */
 #define BBTOUCH_N 64
 volatile uint32_t bbtouch_ring[4 + BBTOUCH_N * 4] __attribute__((aligned(16)));
+
+/* Direct display (wasm): the guest's virtio-gpu scanout, published for the page. The viewer reads the
+ * pixels straight out of the engine's memory on its own animation frames - no VNC server in the guest,
+ * no encoding, no network hop. Words (written under the BQL by the engine; lock = [BBD_LOCK]):
+ *   [0] change counter  [1] surface generation  [2] pixels (address)  [3] width  [4] height  [5] stride
+ *   [6] pixman format   [7..10] damage x0 y0 x1 y1 (union since the page last took it; x1 <= x0 = none)
+ *   [11] lock (0/1)     [12] cursor generation  [13] cursor w  [14] h  [15] hot x  [16] hot y
+ *   [17] pointer x      [18] pointer y          [19] cursor visible   [20] input devices (1 tablet, 2 keyboard)
+ *   [21] listener registered   [22] guest scanout live (not QEMU's placeholder)   [32..] cursor pixels, BBD_CUR x BBD_CUR ARGB */
+#define BBD_CUR 64
+#define BBD_LOCK 11
+volatile uint32_t bbdisp[32 + BBD_CUR * BBD_CUR] __attribute__((aligned(16)));
 
 #if defined(BBGPU_RENDER) && defined(__EMSCRIPTEN__)
 #include <emscripten/threading.h>
 #include "qemu/main-loop.h"
 #include "ui/input.h"
 #include "hw/virtio/virtio-input.h"
+#include "ui/console.h"
+#include "ui/surface.h"
+#include "sysemu/sysemu.h"
 
 static bool bbtouch_has_device(void)
 {
@@ -88,6 +107,139 @@ static bool bbtouch_has_device(void)
     /* the multitouch backend lives under its PCI proxy: look for any object of the type */
     Object *o = object_resolve_path_type("", TYPE_VIRTIO_MULTITOUCH, &found);
     return o != NULL || found;      /* found = ambiguous (several): still present */
+}
+
+/* pointer / keyboard / wheel from the page (kinds 3-5) -> the guest's virtio tablet and keyboard */
+static void bbinput_event(uint32_t kind, const volatile uint32_t *e)
+{
+    static uint32_t buttons;
+    static const InputButton map[3] = { INPUT_BUTTON_LEFT, INPUT_BUTTON_MIDDLE, INPUT_BUTTON_RIGHT };
+    if (kind == 3) {
+        uint32_t b = e[3] & 7;
+        qemu_input_queue_abs(NULL, INPUT_AXIS_X, (int)(e[1] & 0x7fff), 0, 32767);
+        qemu_input_queue_abs(NULL, INPUT_AXIS_Y, (int)(e[2] & 0x7fff), 0, 32767);
+        for (int i = 0; i < 3; i++) {
+            if ((b ^ buttons) & (1u << i)) qemu_input_queue_btn(NULL, map[i], (b >> i) & 1);
+        }
+        buttons = b;
+        qemu_input_event_sync();
+    } else if (kind == 4) {
+        int q = qemu_input_linux_to_qcode(e[1] & 0x3ff);
+        if (q > 0) qemu_input_event_send_key_qcode(NULL, q, e[2] != 0);
+    } else if (kind == 5) {
+        int dy = (int32_t)e[1], dx = (int32_t)e[2];
+        for (int n = 0; n < 16 && (dy || dx); n++) {
+            InputButton w = dy > 0 ? INPUT_BUTTON_WHEEL_DOWN : dy < 0 ? INPUT_BUTTON_WHEEL_UP
+                          : dx > 0 ? INPUT_BUTTON_WHEEL_RIGHT : INPUT_BUTTON_WHEEL_LEFT;
+            if (dy) dy += dy > 0 ? -1 : 1; else dx += dx > 0 ? -1 : 1;
+            qemu_input_queue_btn(NULL, w, true);
+            qemu_input_event_sync();
+            qemu_input_queue_btn(NULL, w, false);
+            qemu_input_event_sync();
+        }
+    }
+}
+
+/* ---- the display listener ---- */
+static void bbd_lock(void)
+{
+    while (qatomic_cmpxchg(&bbdisp[BBD_LOCK], 0, 1) != 0) { /* the page holds it for a few loads */ }
+}
+static void bbd_unlock(void) { qatomic_store_release(&bbdisp[BBD_LOCK], 0); }
+
+static void bbd_damage(int x, int y, int w, int h)
+{
+    if (w <= 0 || h <= 0) return;
+    bbd_lock();
+    uint32_t x0 = bbdisp[7], y0 = bbdisp[8], x1 = bbdisp[9], y1 = bbdisp[10];
+    if (x1 <= x0 || y1 <= y0) { x0 = x; y0 = y; x1 = x + w; y1 = y + h; }
+    else {
+        if ((uint32_t)x < x0) x0 = x;
+        if ((uint32_t)y < y0) y0 = y;
+        if ((uint32_t)(x + w) > x1) x1 = x + w;
+        if ((uint32_t)(y + h) > y1) y1 = y + h;
+    }
+    bbdisp[7] = x0; bbdisp[8] = y0; bbdisp[9] = x1; bbdisp[10] = y1;
+    bbd_unlock();
+    qatomic_inc(&bbdisp[0]);
+}
+
+static void bbd_update(DisplayChangeListener *dcl, int x, int y, int w, int h) { bbd_damage(x, y, w, h); }
+
+static void bbd_switch(DisplayChangeListener *dcl, DisplaySurface *sf)
+{
+    bbd_lock();
+    if (sf) {
+        bbdisp[2] = (uint32_t)(uintptr_t)surface_data(sf);
+        bbdisp[3] = surface_width(sf); bbdisp[4] = surface_height(sf);
+        bbdisp[5] = surface_stride(sf); bbdisp[6] = surface_format(sf);
+        bbdisp[22] = is_placeholder(sf) ? 0 : 1;     /* 1 = the guest really drives the scanout */
+    } else {
+        bbdisp[2] = 0; bbdisp[3] = bbdisp[4] = 0; bbdisp[22] = 0;
+    }
+    bbdisp[7] = bbdisp[8] = 0; bbdisp[9] = bbdisp[3]; bbdisp[10] = bbdisp[4];   /* everything is new */
+    bbd_unlock();
+    qatomic_inc(&bbdisp[1]);
+    qatomic_inc(&bbdisp[0]);
+}
+
+static bool bbd_check_format(DisplayChangeListener *dcl, pixman_format_code_t f)
+{
+    return f == PIXMAN_x8r8g8b8 || f == PIXMAN_a8r8g8b8;    /* what the viewer uploads (BGRA bytes) */
+}
+
+static void bbd_mouse(DisplayChangeListener *dcl, int x, int y, int on)
+{
+    bbdisp[17] = x; bbdisp[18] = y; bbdisp[19] = on ? 1 : 0;
+    qatomic_inc(&bbdisp[12]);
+}
+
+static void bbd_cursor(DisplayChangeListener *dcl, QEMUCursor *c)
+{
+    int w = c->width < BBD_CUR ? c->width : BBD_CUR, h = c->height < BBD_CUR ? c->height : BBD_CUR;
+    for (int y = 0; y < h; y++) {
+        for (int x = 0; x < w; x++) bbdisp[32 + y * BBD_CUR + x] = c->data[y * c->width + x];
+    }
+    bbdisp[13] = w; bbdisp[14] = h; bbdisp[15] = c->hot_x; bbdisp[16] = c->hot_y;
+    qatomic_inc(&bbdisp[12]);
+}
+
+static const DisplayChangeListenerOps bbd_ops = {
+    .dpy_name = "bbdisplay",
+    .dpy_gfx_update = bbd_update,
+    .dpy_gfx_switch = bbd_switch,
+    .dpy_gfx_check_format = bbd_check_format,
+    .dpy_mouse_set = bbd_mouse,
+    .dpy_cursor_define = bbd_cursor,
+};
+
+static bool bbd_has(const char *type)
+{
+    bool found = false;
+    Object *o = object_resolve_path_type("", type, &found);
+    return o != NULL || found;
+}
+
+/* machine ready: attach to the first graphic console (the virtio-gpu scanout) if there is one */
+static void bbd_machine_ready(Notifier *n, void *data)
+{
+    static DisplayChangeListener dcl;
+    QemuConsole *con = NULL;
+    /* the virtio GPU's console if there is one (a PC also has its VGA console), else the first graphic one */
+    for (int i = 0; ; i++) {
+        QemuConsole *c = qemu_console_lookup_by_index(i);
+        if (!c) break;
+        if (!qemu_console_is_graphic(c)) continue;
+        Object *dev = object_property_get_link(OBJECT(c), "device", NULL);
+        if (dev && object_dynamic_cast(dev, "virtio-gpu-base")) { con = c; break; }
+        if (!con) con = c;
+    }
+    bbdisp[20] = (bbd_has(TYPE_VIRTIO_TABLET) ? 1 : 0) | (bbd_has(TYPE_VIRTIO_KEYBOARD) ? 2 : 0);
+    if (!con) return;
+    dcl.ops = &bbd_ops;
+    dcl.con = con;
+    register_displaychangelistener(&dcl);
+    bbdisp[21] = 1;
 }
 
 static void *bbtouch_thread(void *opaque)
@@ -113,6 +265,7 @@ static void *bbtouch_thread(void *opaque)
             uint32_t kind = e[0] & 0xff, slot = (e[0] >> 8) & 0xff;
             int x = (int)(e[1] & 0x7fff), y = (int)(e[2] & 0x7fff);
             done++;
+            if (kind >= 3) { bbinput_event(kind, e); continue; }
             if (slot >= INPUT_EVENT_SLOTS_MAX) continue;
             if (kind == 2) {
                 if (track[slot] < 0) continue;
@@ -503,8 +656,10 @@ static void bbgpu_realize(PCIDevice *pdev, Error **errp)
         static bool touch_started;
         if (!touch_started) {
             QemuThread t;
+            static Notifier ready = { .notify = bbd_machine_ready };
             touch_started = true;
             qemu_thread_create(&t, "bbtouch", bbtouch_thread, NULL, QEMU_THREAD_DETACHED);
+            qemu_add_machine_init_done_notifier(&ready);
         }
     }
 #endif
