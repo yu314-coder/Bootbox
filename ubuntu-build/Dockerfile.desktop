@@ -339,13 +339,16 @@ RUN set -eux; \
 
 # v21 direct display: Xorg (modesetting on the virtio GPU, evdev for the virtio tablet + keyboard), started
 # by bb-xorg from xstart; Xvnc stays as the fallback. Late layer (keeps the cache above); the Bootbox
-# GPU-bridge Mesa driver installed earlier must survive it unchanged.
+# GPU-bridge Mesa driver installed earlier must survive it unchanged. No fixed mode: Xorg takes the virtio GPU's
+# preferred mode, which the app sets to the screen's shape (768 high, 1024-1440 wide).
 RUN set -eux; \
     g=/usr/lib/xorg/modules/dri/libgallium_dri.so; before=$(md5sum $g | cut -d' ' -f1); \
     apk add --no-cache xorg-server xf86-input-evdev 2>&1 | tail -1; \
     test "$(md5sum $g | cut -d' ' -f1)" = "$before"; \
     test -f /usr/lib/xorg/modules/drivers/modesetting_drv.so; test -f /usr/lib/xorg/modules/input/evdev_drv.so; \
     Xorg -version 2>&1 | head -2; chmod +x /usr/local/bin/bb-xorg; \
+    sed -i '/Modes "1024x768"/d' /etc/X11/xorg-bootbox.conf; \
+    ! grep -q Modes /etc/X11/xorg-bootbox.conf; \
     echo "XORG-DIRECT-OK"
 
 # Boots straight into the full desktop (launcher menu + browser + file manager).

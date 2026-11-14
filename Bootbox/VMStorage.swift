@@ -98,6 +98,8 @@ enum VMStorage {
         "qemu-desktop17-rootfs-1277919982.data",
         "qemu-desktop19-rootfs-1257421745.data.gz", // desktop v19 → v20 (direct present)
         "qemu-desktop19-rootfs-1257421745.data",
+        "qemu-desktop20-rootfs-1259031413.data.gz", // desktop v20 → v21 (direct display)
+        "qemu-desktop20-rootfs-1259031413.data",
         "qemu-android64-warm4-2038076444.data.gz",  // Android v4 → v5 (build 93)
         "qemu-android64-warm4-2038076444.data",
         "qemu-android64-warm5-2161126625.data.gz",  // Android v5 → v6 (build 95)

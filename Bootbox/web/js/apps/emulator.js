@@ -116,8 +116,10 @@
       // v13-v14 (builds 102-103): faster Linux browser (one web process, mimalloc, ad blocker); Web opens
       // in the app's native browser. v15 (build 106): hub "Run all", glmark2 from the hub, the boot
       // terminal waits for its real width before the first prompt.
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v20/qemu-desktop20-rootfs.data.gz",
-        name: "qemu-desktop20-rootfs-1259031413.data.gz", mb: 412, size: 432091716 },
+      // v21 (build 24): direct display - Xorg on a virtio GPU, the screen read straight from the engine's
+      // memory and the pointer/keys on a virtio tablet + keyboard (no VNC server in the guest); 24-bit colour.
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v21/qemu-desktop21-rootfs.data.gz",
+        name: "qemu-desktop21-rootfs-1216733120.data.gz", mb: 397, size: 416759099 },
     ] },
     // Android is a full AOSP x86_64 userspace on Bootbox's QEMU guest kernel.
     // The rootfs is download-on-demand; the x86_64 engine is shared with Linux.
@@ -214,6 +216,16 @@
         catch (e) { console.warn("pack expand failed; using the compressed pack:", e); }
       }
     }
+  }
+
+  // Direct-display desktop width: 768 high and as wide as the screen's shape (landscape iPads are wider than
+  // 4:3), so the desktop fills the screen instead of sitting between black bars. 1024..1440, multiple of 8.
+  function directWidth() {
+    try {
+      const w = window.innerWidth, h = window.innerHeight;
+      if (!(w > 0 && h > 0) || w <= h) return 1024;
+      return Math.max(1024, Math.min(1440, Math.round(768 * w / h / 8) * 8));
+    } catch (e) { return 1024; }
   }
 
   // Fetch + gunzip a bundled .gz into an ArrayBuffer (for instant-boot snapshots).
@@ -1243,7 +1255,7 @@
             if (!window.QEMU_WASM) {
               await new Promise((res, rej) => {
                 const s = document.createElement("script");
-                s.src = "vendor/qemu/run.js?v=8";
+                s.src = "vendor/qemu/run.js?v=9";
                 s.onload = res; s.onerror = () => rej(new Error("missing QEMU-Wasm pack"));
                 document.head.appendChild(s);
               });
@@ -1393,7 +1405,7 @@
               cpuFlags: !g.android ? biosCpuFlags() : undefined,
               kernelArgs: !g.android ? biosKernelArgs() : undefined,
               extraArgs: g.gpu && cfg().gpu !== "off"
-                ? ["-device", "bbgpu"].concat(g.directDisplay ? ["-vga", "none", "-device", "virtio-gpu-pci,xres=1024,yres=768",
+                ? ["-device", "bbgpu"].concat(g.directDisplay ? ["-vga", "none", "-device", "virtio-gpu-pci,xres=" + directWidth() + ",yres=768",
                     "-device", "virtio-tablet-pci", "-device", "virtio-keyboard-pci"] : [])
                 : undefined,
               directDisplay: !!(g.directDisplay && g.gpu && cfg().gpu !== "off"),
