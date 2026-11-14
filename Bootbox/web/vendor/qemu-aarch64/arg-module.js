@@ -10,7 +10,10 @@ Module['arguments'] =
     "-L", "/pack/",
     "-drive", "if=virtio,format=raw,file=/pack/rootfs.bin",
     "-kernel", "/pack/bzImage",
-    "-append", "nohz=on earlyprintk=ttyS0 console=ttyS0 root=/dev/vda rootwait no_console_suspend ro loglevel=0 QEMU_MODE=1 init=/sbin/tini -- /sbin/init",
+    // nokaslr kpti=0 (build 25): with KASLR the kernel forces page-table isolation on (even under
+    // mitigations=off), so every syscall/interrupt switched page tables and the emulator flushed its
+    // whole TLB twice: getppid 21 us -> 4.7 us without it. The emulated CPU isn't Meltdown-affected.
+    "-append", "nohz=on earlyprintk=ttyS0 console=ttyS0 root=/dev/vda rootwait no_console_suspend ro loglevel=0 QEMU_MODE=1 nokaslr kpti=0 init=/sbin/tini -- /sbin/init",
     "-virtfs", "local,path=/,mount_tag=wasi0,security_model=passthrough,id=wasi0",
     "-virtfs", "local,path=/pack,mount_tag=wasi1,security_model=passthrough,id=wasi1",
     "-netdev", "socket,id=vmnic,connect=127.0.0.1:8888", "-device", "virtio-net-pci,netdev=vmnic",

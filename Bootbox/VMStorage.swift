@@ -116,5 +116,7 @@ enum VMStorage {
         "qemu-android64-arm10-2195540803.data",
         "qemu-android64-arm11-2201066306.data.gz",  // Android v11 → v12 (direct touch, button navigation)
         "qemu-android64-arm11-2201066306.data",
+        "qemu-android64-arm12-2239371889.data.gz",  // Android v12 → v13 (zram, no KPTI)
+        "qemu-android64-arm12-2239371889.data",
     ]
 }

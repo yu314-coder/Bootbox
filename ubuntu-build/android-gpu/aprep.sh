@@ -6,6 +6,16 @@ $A root >/dev/null 2>&1; sleep 4; adb connect 127.0.0.1:6555 >/dev/null; sleep 2
 $A shell 'for e in /sys/class/input/event*; do n=${e##*/}; case "$(cat $e/device/name)" in *Virtio*) ;; *) continue;; esac; \
   [ -e /dev/input/$n ] && continue; IFS=: read ma mi < $e/dev; mknod -m 666 /dev/input/$n c $ma $mi; \
   chown root:input /dev/input/$n; chmod 660 /dev/input/$n; done; sleep 2; dumpsys input | grep -c "QEMU Virtio MultiTouch"'
+# v13 memory (Nov 15): 1.25 GB guest, ~760 MB of it app/system heaps -> the page cache (code of the apps being
+# launched) was squeezed to ~280 MB and every launch re-read + LZ4-decompressed ~230 MB of system files.
+# zram (kernel v13 has it): idle heaps are compressed in RAM instead, as on every Android phone; Android's
+# own values for zram (swappiness 100, page-cluster 0). Plus four packages nothing here needs.
+$A shell 'if [ -e /sys/block/zram0 ]; then IFS=: read ma mi < /sys/block/zram0/dev; mkdir -p /dev/block; \
+  [ -e /dev/block/zram0 ] || mknod -m 600 /dev/block/zram0 b $ma $mi; echo lz4 > /sys/block/zram0/comp_algorithm; \
+  echo 768M > /sys/block/zram0/disksize; mkswap /dev/block/zram0 >/dev/null && swapon /dev/block/zram0; \
+  echo 100 > /proc/sys/vm/swappiness; echo 0 > /proc/sys/vm/page-cluster; fi; grep zram /proc/swaps'
+$A shell "for p in com.android.dynsystem com.android.onetimeinitializer com.android.statementservice com.android.smspush; do \
+  pm disable-user --user 0 \$p >/dev/null 2>&1; done"
 $A shell "settings put secure immersive_mode_confirmations confirmed; settings put global stay_on_while_plugged_in 7; \
   settings put system screen_off_timeout 2147483647; locksettings set-disabled true; settings put global hide_error_dialogs 1; \
   settings put global window_animation_scale 0.5; settings put global transition_animation_scale 0.5; \

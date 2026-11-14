@@ -147,8 +147,12 @@
       // gestures (the gesture monitors woke SystemUI + the launcher on every finger move); the jank monitor no
       // longer forks a tracer per dropped frame. Mac harness Settings drags: frames during a drag 2.5 -> 5,
       // frame gap p90 200 -> 124 ms, first frame after touch 334 -> 272 ms median.
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v12/qemu-android64-v12.data.gz",
-        name: "qemu-android64-arm12-2239371889.data.gz", mb: 900, size: 943689025 },
+      // v13 (Nov 2026): zram in the kernel - idle app memory is compressed in RAM (~4x) instead of squeezing the
+      // page cache, so apps stay alive and launches stop re-reading ~230 MB of system files (switching back to
+      // Settings after other apps 15 -> 2.8 s, cold launches ~2x faster); nokaslr/kpti=0 (the kernel forced
+      // page-table isolation on and the emulator flushed its TLB on every syscall: 21 -> 4.5 us).
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v13/qemu-android64-v13.data.gz",
+        name: "qemu-android64-arm13-2301600864.data.gz", mb: 986, size: 1033922513 },
     ] },
   };
   // The boot menu (biosmenu.js) shows whether each system is downloaded and how big it is.
