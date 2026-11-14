@@ -344,7 +344,9 @@ static bool bbgpu_fence_finish(struct pipe_screen *screen, struct pipe_context *
    struct bbgpu_fence *f = (struct bbgpu_fence *)fence;
    if (!timeout)
       return bbgpu_fence_done(bs->dev, f->id);
+   bbgpu_wait_reason = 7;
    bbgpu_fence_wait(bs->dev, f->id);
+   bbgpu_wait_reason = 0;
    return true;
 }
 
@@ -362,8 +364,11 @@ static void bbgpu_flush_frontbuffer(struct pipe_screen *screen, struct pipe_cont
    uint32_t win; int x, y;
    if (host && bbgpu_present_where(context_private, w, h, &win, &x, &y)) {
       bs->presenting = true;
-      if (bs->present_fence)
+      if (bs->present_fence) {
+         bbgpu_wait_reason = 5;
          bbgpu_fence_wait(bs->dev, bs->present_fence);
+         bbgpu_wait_reason = 0;
+      }
       BBGPU_CMD(bs->dev, BBGPU_OP_PRESENT, win, r->id, 0, 0, w, h, (uint32_t)x, (uint32_t)y);
       bs->present_fence = bbgpu_dev_flush(bs->dev);
       return;
@@ -401,7 +406,9 @@ void bbgpu_readback_dt(struct bbgpu_screen *bs, struct bbgpu_resource *r, unsign
       bbgpu_dev_lock(bs->dev);
       uint32_t off = bbgpu_heap_alloc(bs->dev, n * row_bytes);
       BBGPU_CMD(bs->dev, BBGPU_OP_RES_READ, r->id, level, 0, y, w, n, off, row_bytes);
+      bbgpu_wait_reason = 4;
       bbgpu_fence_wait(bs->dev, bbgpu_dev_flush(bs->dev));
+      bbgpu_wait_reason = 0;
       for (unsigned i = 0; i < n; i++)
          memcpy(map + (size_t)(y + i) * r->dt_stride, bs->dev->heap + off + (size_t)i * row_bytes, row_bytes);
       bbgpu_dev_unlock(bs->dev);

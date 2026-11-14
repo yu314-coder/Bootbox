@@ -22,9 +22,9 @@
     { id: "x64pw", name: "Linux (Terminal)", sub: "64-bit Linux console · Python 3.12 + pip · Wine for .exe · internet", icon: "🐍", svg: "terminal", tag: "TERMINAL", dlMB: 310,
       guest: "x64pw", ram: 1536,
       note: "64-bit (x86_64) Alpine Linux in a terminal — cores 1–8 in UEFI Setup. Python 3.12 + pip, Wine (32 & 64-bit .exe) and real internet. Terminal on the LEFT; the panel on the RIGHT has quick buttons and shows graphical output when you start an X app or a Wine .exe. Downloaded once (~310 MB), then the guest disk is read straight from this device's storage as needed." },
-    { id: "android64", name: "Android", sub: "Android 12 ARM64 · runs ARM apps · GPU-accelerated · Pixel-style launcher · quad-core", icon: "🤖", svg: "android", tag: "ANDROID", dlMB: 881,
+    { id: "android64", name: "Android", sub: "Android 12 ARM64 · runs ARM apps · GPU-accelerated · Pixel-style launcher · quad-core", icon: "🤖", svg: "android", tag: "ANDROID", dlMB: 900,
       guest: "android64", ram: 1280,
-      note: "Android 12 for ARM64 (arm64-v8a), so apps with ARM-only native code run. 4 emulated cores; every screen is drawn on the iPad's GPU (Bootbox GPU bridge). It resumes from a snapshot taken at the home screen (Lawnchair launcher, gesture navigation), so it opens in seconds instead of a multi-minute cold boot. Touch the screen directly; ⌨ Type for text. Downloaded once (~881 MB). No Google Play." },
+      note: "Android 12 for ARM64 (arm64-v8a), so apps with ARM-only native code run. 4 emulated cores; every screen is drawn on the iPad's GPU (Bootbox GPU bridge). It resumes from a snapshot taken at the home screen (Lawnchair launcher, Back / Home / Recents buttons), so it opens in seconds instead of a multi-minute cold boot. Touch the screen directly — touches go straight to Android's touchscreen and a dot shows each finger at once; ⌨ Type for text. Downloaded once (~900 MB). No Google Play." },
   ];
 
   // Every x86 feature the 64-bit Linux guests get with "All instructions" (QEMU 8.2's TCG emulates all of them,

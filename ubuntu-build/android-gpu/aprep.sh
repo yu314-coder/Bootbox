@@ -2,13 +2,27 @@
 # aprep.sh : make the booted Android snapshot-ready (run inside qemub after boot_completed)
 A="adb -s 127.0.0.1:6555"
 $A root >/dev/null 2>&1; sleep 4; adb connect 127.0.0.1:6555 >/dev/null; sleep 2
+# direct touch (v12): the virtio-multitouch event node (same as gpu_config.sh does at boot in newer images)
+$A shell 'for e in /sys/class/input/event*; do n=${e##*/}; case "$(cat $e/device/name)" in *Virtio*) ;; *) continue;; esac; \
+  [ -e /dev/input/$n ] && continue; IFS=: read ma mi < $e/dev; mknod -m 666 /dev/input/$n c $ma $mi; \
+  chown root:input /dev/input/$n; chmod 660 /dev/input/$n; done; sleep 2; dumpsys input | grep -c "QEMU Virtio MultiTouch"'
 $A shell "settings put secure immersive_mode_confirmations confirmed; settings put global stay_on_while_plugged_in 7; \
   settings put system screen_off_timeout 2147483647; locksettings set-disabled true; settings put global hide_error_dialogs 1; \
   settings put global window_animation_scale 0.5; settings put global transition_animation_scale 0.5; \
   settings put global animator_duration_scale 0.5; pm disable-user com.android.traceur >/dev/null 2>&1; \
   pm disable-user com.android.printspooler >/dev/null 2>&1; setprop ctl.stop vendor.bluetooth-1-1; \
   setprop dalvik.vm.dex2oat64.enabled true; \
-  pm disable com.android.keychain; dumpsys battery set ac 1; dumpsys battery set level 100"
+  pm disable com.android.keychain; dumpsys battery set ac 1; dumpsys battery set level 100; \
+  device_config put interaction_jank_monitor enabled false; \
+  device_config put interaction_jank_monitor trace_threshold_missed_frames 1000000; \
+  device_config put interaction_jank_monitor trace_threshold_frame_time_millis 1000000; \
+  cmd overlay enable-exclusive --category com.android.internal.systemui.navbar.threebutton"
+# Responsiveness (Nov 14, v12):
+# - the jank monitor (SystemUI, Launcher3, Settings) forks /system/bin/trigger_perfetto whenever a frame misses its
+#   deadline - every frame does here: 21% of the profiled CPU during a Settings drag.
+# - 3-button navigation: with gestures, SystemUI's edge-back and Launcher3's swipe-up input monitors woke up for
+#   EVERY finger move in every app (two more processes per touch event); the iPad's own bottom-edge home gesture
+#   also fights Android's swipe-up. Back / Home / Recents are buttons now.
 # (Not done: disabling the Bluetooth app - `pm disable com.android.bluetooth` restarts system_server and
 #  made every app launch 2x slower in the snapshot, Nov 14.)
 # (KeyChain crashes here: no AndroidKeyStore provider -> SystemUI's SysUiBg waited on its bind forever
@@ -45,6 +59,8 @@ for i in 1 2; do
   $A shell "input keyevent KEYCODE_APP_SWITCH"; sleep 10; $A shell "input keyevent KEYCODE_HOME"; sleep 8
 done
 $A shell "cmd statusbar collapse; input keyevent KEYCODE_HOME; stop llkd-0; stop llkd-1"
+# the VNC bridge (keys; touch fallback when the engine has no direct touch) must not queue behind app work
+$A shell 'for p in $(pidof vncserver); do renice -n -10 -p $p; for t in /proc/$p/task/*; do renice -n -10 -p ${t##*/}; done; done' >/dev/null 2>&1
 sleep 10
 echo "composition: $($A shell dumpsys SurfaceFlinger | grep -o 'usesClientComposition=[a-z]*' | head -1)"
 echo "wallpaper: $($A shell ls -la /data/system/users/0/wallpaper 2>&1 | cut -c1-60)"

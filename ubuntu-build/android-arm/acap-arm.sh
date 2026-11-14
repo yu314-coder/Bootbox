@@ -12,6 +12,7 @@ exec /qemu/build/qemu-system-aarch64 -nographic -L /apack-arm -M virt -cpu corte
   -virtfs local,path=/awasi,mount_tag=wasi0,security_model=passthrough,id=wasi0 \
   -virtfs local,path=/apack-arm,mount_tag=wasi1,security_model=passthrough,id=wasi1 \
   -device bbgpu,slots=16,shm-mb=128 \
+  -device virtio-multitouch-pci \
   -netdev socket,id=n0,connect=127.0.0.1:8899 \
   -device virtio-net-pci,netdev=n0,mac=02:00:00:00:00:01 \
   -monitor unix:/tmp/mon-arm.sock,server,nowait

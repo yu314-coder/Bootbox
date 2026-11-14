@@ -12,7 +12,34 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <time.h>
 #include "bbgpu_dev.h"
+
+/* BBGPU wait profile (diagnostic): touch /dev/bbgpu/prof -> every GL process logs where it waited, every 2 s */
+static int prof_on = -1;
+static uint64_t prof_ns[8], prof_n[8], prof_t0, prof_kicks;
+__thread int bbgpu_wait_reason;
+static uint64_t now_ns(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return (uint64_t)t.tv_sec * 1000000000ull + t.tv_nsec; }
+static bool prof_enabled(void)
+{
+   if (prof_on < 0) prof_on = access("/dev/bbgpu/prof", F_OK) == 0;
+   return prof_on > 0;
+}
+static void prof_add(int why, uint64_t ns)
+{
+   if (!prof_enabled()) return;
+   __atomic_add_fetch(&prof_ns[why & 7], ns, __ATOMIC_RELAXED);
+   __atomic_add_fetch(&prof_n[why & 7], 1, __ATOMIC_RELAXED);
+   uint64_t t = now_ns();
+   if (!prof_t0) prof_t0 = t;
+   if (t - prof_t0 > 2000000000ull) {
+      static const char *nm[8] = { "other", "ring", "heap", "eof", "readback", "present", "finish", "sync" };
+      char b[512]; int o = 0;
+      for (int i = 0; i < 8; i++) if (prof_n[i]) { o += snprintf(b + o, sizeof b - o, " %s %llux %.1fms", nm[i], (unsigned long long)prof_n[i], prof_ns[i] / 1e6); prof_ns[i] = prof_n[i] = 0; }
+      bbgpu_log("bbgpu-prof %.0fms:%s kicks %llu\n", (t - prof_t0) / 1e6, b, (unsigned long long)prof_kicks);
+      prof_t0 = t; prof_kicks = 0;
+   }
+}
 
 /* where the per-slot lock files live: a directory every GL process can write */
 static const char *lock_dir(void)
@@ -251,6 +278,8 @@ bool bbgpu_fence_done(struct bbgpu_dev *d, uint32_t fence)
 void bbgpu_fence_wait(struct bbgpu_dev *d, uint32_t fence)
 {
    unsigned spins = 0;
+   if (bbgpu_fence_done(d, fence)) return;
+   uint64_t t0 = prof_enabled() ? now_ns() : 0;
    while (!bbgpu_fence_done(d, fence)) {
       if ((*d->r_error) == BBGPU_ERR_GL || (*d->r_error) == BBGPU_ERR_RING)
          return;                       /* the renderer stopped: do not hang the app */
@@ -260,10 +289,12 @@ void bbgpu_fence_wait(struct bbgpu_dev *d, uint32_t fence)
       else if (spins > 64)
          sched_yield();
    }
+   if (t0) prof_add(bbgpu_wait_reason, now_ns() - t0);
 }
 
 static void kick(struct bbgpu_dev *d)
 {
+   prof_kicks++;
    __sync_synchronize();
    (*d->r_kick) = d->head;
    d->kicked = d->head;
@@ -277,13 +308,16 @@ static void kick(struct bbgpu_dev *d)
 static void ring_wait(struct bbgpu_dev *d, uint32_t bytes)
 {
    unsigned spins = 0;
+   uint64_t t0 = prof_enabled() ? now_ns() : 0; bool waited = false;
    while (d->head + bytes - (*d->r_tail) > d->ring_size - 64) {
       if (d->kicked != d->head)
          kick(d);
       if ((*d->r_error) == BBGPU_ERR_GL || (*d->r_error) == BBGPU_ERR_RING)
          return;
+      waited = true;
       if (++spins > 2000) usleep(200); else sched_yield();
    }
+   if (t0 && waited) prof_add(1, now_ns() - t0);
 }
 
 void bbgpu_cmd(struct bbgpu_dev *d, uint32_t op, const uint32_t *payload, uint32_t n)
@@ -362,7 +396,9 @@ uint32_t bbgpu_heap_alloc(struct bbgpu_dev *d, uint32_t size)
       }
       /* full: everything outstanding must finish first */
       uint32_t f = d->chunks[d->nchunks - 1].fence ? d->last_submitted_fence : bbgpu_dev_flush(d);
+      int why = bbgpu_wait_reason; bbgpu_wait_reason = 2;
       bbgpu_fence_wait(d, f);
+      bbgpu_wait_reason = why;
       if ((*d->r_error) == BBGPU_ERR_GL || (*d->r_error) == BBGPU_ERR_RING) {
          bbgpu_dev_unlock(d);
          return 0;

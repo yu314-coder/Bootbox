@@ -68,6 +68,79 @@ struct BBGPUState {
 /* shared with the host viewer (wasm: the page writes [0] and [1] straight into this memory) */
 volatile uint32_t bbgpu_host[4];
 
+/* Direct touch (wasm): the page's touch mailbox. The viewer writes finger events straight into this shared
+ * memory and wakes the injector thread, which feeds them to the guest's virtio-multitouch device under the
+ * BQL - no network hop, no guest process in the input path (the VNC bridge stays the fallback).
+ * [0] events written (page), [1] events consumed (engine), [2] multitouch device present (engine),
+ * then BBTOUCH_N entries of 4 words: kind (0 down, 1 move, 2 up) | slot << 8, x, y (0..32767), unused. */
+#define BBTOUCH_N 64
+volatile uint32_t bbtouch_ring[4 + BBTOUCH_N * 4] __attribute__((aligned(16)));
+
+#if defined(BBGPU_RENDER) && defined(__EMSCRIPTEN__)
+#include <emscripten/threading.h>
+#include "qemu/main-loop.h"
+#include "ui/input.h"
+#include "hw/virtio/virtio-input.h"
+
+static bool bbtouch_has_device(void)
+{
+    bool found = false;
+    /* the multitouch backend lives under its PCI proxy: look for any object of the type */
+    Object *o = object_resolve_path_type("", TYPE_VIRTIO_MULTITOUCH, &found);
+    return o != NULL || found;      /* found = ambiguous (several): still present */
+}
+
+static void *bbtouch_thread(void *opaque)
+{
+    static int track[INPUT_EVENT_SLOTS_MAX], next_id = 1;
+    uint32_t done = qatomic_read(&bbtouch_ring[1]);
+    for (int i = 0; i < INPUT_EVENT_SLOTS_MAX; i++) track[i] = -1;
+    for (;;) {
+        uint32_t seq = qatomic_load_acquire(&bbtouch_ring[0]);
+        if (seq == done) {
+            if (!qatomic_read(&bbtouch_ring[2])) {      /* devices are realized by now; publish once */
+                qemu_mutex_lock_iothread();
+                qatomic_set(&bbtouch_ring[2], bbtouch_has_device() ? 1 : 2);
+                qemu_mutex_unlock_iothread();
+            }
+            emscripten_futex_wait((void *)&bbtouch_ring[0], seq, 1000.0);
+            continue;
+        }
+        if (seq - done > BBTOUCH_N) done = seq - BBTOUCH_N;   /* overrun: drop the oldest */
+        qemu_mutex_lock_iothread();
+        while (done != seq) {
+            const volatile uint32_t *e = &bbtouch_ring[4 + (done % BBTOUCH_N) * 4];
+            uint32_t kind = e[0] & 0xff, slot = (e[0] >> 8) & 0xff;
+            int x = (int)(e[1] & 0x7fff), y = (int)(e[2] & 0x7fff);
+            done++;
+            if (slot >= INPUT_EVENT_SLOTS_MAX) continue;
+            if (kind == 2) {
+                if (track[slot] < 0) continue;
+                track[slot] = -1;
+                qemu_input_queue_mtt(NULL, INPUT_MULTI_TOUCH_TYPE_END, slot, -1);
+                bool any = false;
+                for (int i = 0; i < INPUT_EVENT_SLOTS_MAX; i++) any |= track[i] >= 0;
+                if (!any) qemu_input_queue_btn(NULL, INPUT_BUTTON_TOUCH, false);
+            } else {
+                InputMultiTouchType t = INPUT_MULTI_TOUCH_TYPE_UPDATE;
+                if (kind == 0 || track[slot] < 0) {
+                    t = INPUT_MULTI_TOUCH_TYPE_BEGIN;
+                    track[slot] = next_id; next_id = next_id >= 0xffff ? 1 : next_id + 1;
+                }
+                qemu_input_queue_mtt(NULL, t, slot, track[slot]);
+                qemu_input_queue_btn(NULL, INPUT_BUTTON_TOUCH, true);
+                qemu_input_queue_mtt_abs(NULL, INPUT_AXIS_X, x, 0, 32767, slot, track[slot]);
+                qemu_input_queue_mtt_abs(NULL, INPUT_AXIS_Y, y, 0, 32767, slot, track[slot]);
+            }
+            qemu_input_event_sync();
+        }
+        qemu_mutex_unlock_iothread();
+        qatomic_store_release(&bbtouch_ring[1], done);
+    }
+    return NULL;
+}
+#endif
+
 static inline uint32_t rd32(BBGPUState *s, uint32_t off) { uint32_t v; memcpy(&v, s->mem + off, 4); return le32_to_cpu(v); }
 
 #ifndef BBGPU_RENDER
@@ -425,6 +498,16 @@ static void bbgpu_realize(PCIDevice *pdev, Error **errp)
     qemu_cond_init(&s->xfer_done);
     register_savevm_live("bbgpu", 0, 1, &bbgpu_savevm, s);
     qemu_thread_create(&s->thread, "bbgpu", bbgpu_gpu_thread, s, QEMU_THREAD_DETACHED);
+#ifdef __EMSCRIPTEN__
+    {
+        static bool touch_started;
+        if (!touch_started) {
+            QemuThread t;
+            touch_started = true;
+            qemu_thread_create(&t, "bbtouch", bbtouch_thread, NULL, QEMU_THREAD_DETACHED);
+        }
+    }
+#endif
 #endif
 }
 

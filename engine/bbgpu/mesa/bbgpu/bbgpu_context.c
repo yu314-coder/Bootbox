@@ -406,7 +406,9 @@ static void *texture_map(struct pipe_context *c, struct pipe_resource *res, unsi
          bbgpu_dev_lock(ctx->dev);   /* held until the copy: the chunk must not be reused meanwhile */
          uint32_t off = bbgpu_heap_alloc(ctx->dev, n * row);
          BBGPU_CMD(ctx->dev, BBGPU_OP_RES_READ, r->id, level, box->x, box->y + y, box->width, n, off, row);
+         bbgpu_wait_reason = 6;
          bbgpu_fence_wait(ctx->dev, bbgpu_dev_flush(ctx->dev));
+         bbgpu_wait_reason = 0;
          memcpy(t->staging + (size_t)y * row, ctx->dev->heap + off, (size_t)n * row);
          bbgpu_dev_unlock(ctx->dev);
          ctx->dev->stat_bytes_down += n * row;
@@ -659,11 +661,16 @@ static void flush(struct pipe_context *c, struct pipe_fence_handle **fence, unsi
                presented = bs->presenting_screen = true;
                continue;
             }
+            bbgpu_wait_reason = 4;
             bbgpu_fence_wait(ctx->dev, id);
             bbgpu_readback_dt(bs, r, 0, 0, r->base.height0);
+            bbgpu_wait_reason = 0;
          }
-      else
+      else {
+         bbgpu_wait_reason = 3;
          bbgpu_fence_wait(ctx->dev, id);
+         bbgpu_wait_reason = 0;
+      }
       if (presented)
          bbgpu_dev_flush(ctx->dev);
       else if (bs->presenting_screen && !host) {     /* the viewer went away: frames go through the VNC bridge */

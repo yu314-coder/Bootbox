@@ -623,22 +623,78 @@
     function sendPointer(r, p, mask) {
       try { if (r && r._rfbConnectionState === "connected") r.constructor.messages.pointerEvent(r._sock, p.x, p.y, mask); } catch (e) {}
     }
+    // The finger, drawn by the host: a soft dot that follows the touch at the display's own rate (a
+    // compositor-only transform), the way the Linux desktop's viewer-drawn cursor moves instantly while the
+    // emulated Android catches up underneath. Positioned in the viewer's own coordinates, over the canvas.
+    function makeTouchDot(r) {
+      const cv = r._canvas, host = cv && cv.parentElement;
+      if (!host) return null;
+      const dot = document.createElement("div");
+      dot.setAttribute("aria-hidden", "true");
+      dot.style.cssText = "position:absolute;left:0;top:0;width:44px;height:44px;margin:-22px 0 0 -22px;" +
+        "border-radius:50%;pointer-events:none;z-index:5;opacity:0;will-change:transform,opacity;" +
+        "background:radial-gradient(circle,rgba(255,255,255,.55) 0,rgba(255,255,255,.28) 45%,rgba(255,255,255,0) 70%);" +
+        "box-shadow:0 0 0 1.5px rgba(255,255,255,.5),0 0 10px rgba(0,0,0,.35);transition:opacity .18s ease-out;";
+      if (getComputedStyle(host).position === "static") host.style.position = "relative";
+      host.appendChild(dot);
+      const at = (p) => {   // framebuffer point -> position inside the canvas' container
+        const b = cv.getBoundingClientRect(), hb = host.getBoundingClientRect();
+        const w = r._fbWidth || cv.width, h = r._fbHeight || cv.height;
+        dot.style.transform = "translate(" + (b.left - hb.left + (p.x + 0.5) * b.width / w).toFixed(1) + "px," +
+          (b.top - hb.top + (p.y + 0.5) * b.height / h).toFixed(1) + "px)";
+      };
+      return {
+        show(p) { if (self.__bbTouchDot === false) return; at(p); dot.style.transition = "none"; dot.style.opacity = "1"; },
+        move(p) { if (dot.style.opacity === "1") at(p); },
+        hide() { dot.style.transition = "opacity .18s ease-out"; dot.style.opacity = "0"; },
+      };
+    }
+    // Direct touch: when the engine has a virtio-multitouch device (Android v12+), finger events go into the
+    // engine's touch mailbox in the shared wasm memory and straight to the guest kernel's touchscreen - no
+    // network hop, no guest VNC process in the way (engine/bbgpu/bbgpu.c bbtouch_ring). [2] is set by the
+    // engine: 1 = device present, 2 = absent (older guest: the VNC path below is used).
+    function touchRing() {
+      const h = self.__bbgpuHello;
+      if (!h || !h.touch || self.__bbDirectTouch === false) return null;
+      if (!h.__ring) { try { h.__ring = new Int32Array(h.buffer, h.touch, 4 + 64 * 4); } catch (e) { h.touch = 0; return null; } }
+      return Atomics.load(h.__ring, 2) === 1 ? h.__ring : null;
+    }
+    function sendTouch(r, kind, p) {   // kind 0 down, 1 move, 2 up
+      const t = touchRing();
+      if (!t) return false;
+      const w = Math.max(2, r._fbWidth || 2), h = Math.max(2, r._fbHeight || 2);
+      const seq = Atomics.load(t, 0) >>> 0, i = 4 + (seq % 64) * 4;
+      t[i] = kind; t[i + 1] = Math.round(p.x * 32767 / (w - 1)); t[i + 2] = Math.round(p.y * 32767 / (h - 1));
+      Atomics.store(t, 0, (seq + 1) | 0);
+      Atomics.notify(t, 0);
+      return true;
+    }
     function makeFinger(r) {   // one guest finger; moves are coalesced to ~40 Hz (each one costs guest CPU)
-      let pos = null, sent = null, timer = 0;
+      let pos = null, sent = null, timer = 0, dot = null, direct = false;
+      try { dot = makeTouchDot(r); } catch (e) { dot = null; }
+      const send = (p, kind) => {   // a touch keeps the path it started on
+        if (!(direct && sendTouch(r, kind, p))) sendPointer(r, p, kind === 2 ? 0 : 1);
+      };
       const flush = () => {
         timer = 0;
-        if (pos && (!sent || sent.x !== pos.x || sent.y !== pos.y)) { sendPointer(r, pos, 1); sent = pos; }
+        if (pos && (!sent || sent.x !== pos.x || sent.y !== pos.y)) { send(pos, 1); sent = pos; }
       };
       return {
         get down() { return !!pos; },
         get pos() { return pos; },
-        press(p) { pos = sent = p; sendPointer(r, p, 1); },
-        move(p) { if (!pos) return; pos = p; if (!timer) timer = setTimeout(flush, 25); },
+        press(p) {
+          pos = sent = p;
+          direct = sendTouch(r, 0, p);
+          if (!direct) sendPointer(r, p, 1);
+          if (dot) dot.show(p);
+        },
+        move(p) { if (!pos) return; pos = p; if (dot) dot.move(p); if (!timer) timer = setTimeout(flush, 25); },
         release(p) {
           if (!pos) return;
           if (p) pos = p;
           clearTimeout(timer); flush();
-          sendPointer(r, pos, 0); pos = sent = null;
+          send(pos, 2); pos = sent = null;
+          if (dot) dot.hide();
         },
       };
     }

@@ -50,6 +50,7 @@ void bbgpu_dev_put(struct bbgpu_dev *d);
 void bbgpu_cmd(struct bbgpu_dev *d, uint32_t op, const uint32_t *payload, uint32_t n);
 /* emit a fence and kick; returns the fence id */
 uint32_t bbgpu_dev_flush(struct bbgpu_dev *d);
+extern __thread int bbgpu_wait_reason;
 bool bbgpu_fence_done(struct bbgpu_dev *d, uint32_t fence);
 void bbgpu_fence_wait(struct bbgpu_dev *d, uint32_t fence);
 /* heap space for an upload / read-back, valid until the next flush's fence completes */

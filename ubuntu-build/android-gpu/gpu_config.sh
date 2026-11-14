@@ -21,3 +21,15 @@ else
     setprop ro.hardware.gralloc redroid
     setprop ro.hardware.vulkan pastel
 fi
+
+# Bootbox direct touch: the engine's virtio-multitouch device (input from the viewer, no VNC hop). Android's
+# init has no ueventd here, so the kernel's event node never appears in /dev/input: create it - world-open at
+# creation, because EventHub opens a new node at once and never retries (then tightened to the input group).
+for e in /sys/class/input/event*; do
+    n=${e##*/}
+    case "$(cat $e/device/name 2>/dev/null)" in *Virtio*) ;; *) continue ;; esac
+    [ -e /dev/input/$n ] && continue
+    IFS=: read ma mi < $e/dev
+    mkdir -p /dev/input
+    mknod -m 666 /dev/input/$n c $ma $mi && chown root:input /dev/input/$n && chmod 660 /dev/input/$n
+done

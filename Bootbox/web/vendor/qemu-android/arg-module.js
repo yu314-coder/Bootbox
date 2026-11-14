@@ -19,6 +19,9 @@ Module['arguments'] =
     "-virtfs", "local,path=/,mount_tag=wasi0,security_model=passthrough,id=wasi0",
     "-virtfs", "local,path=/pack,mount_tag=wasi1,security_model=passthrough,id=wasi1",
     "-device", "bbgpu,slots=16,shm-mb=128",
+    // v12: direct touch - the viewer writes finger events into the engine's shared mailbox and they reach
+    // Android's touchscreen through this device (no VNC/network hop; run.js sendTouch, engine/bbgpu bbtouch)
+    "-device", "virtio-multitouch-pci",
     "-nic", "none"
 ]
 ;

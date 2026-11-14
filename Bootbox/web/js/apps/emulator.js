@@ -134,10 +134,15 @@
       // the GPU bridge (Mesa bbgpu for arm64; the bridge's PCI decoding is enabled at boot - without it every
       // process silently fell back to CPU rendering). Mac harness: app-drawer frames 53 ms median / 97 ms p90.
       // v11 (Nov 2026): the display runs at 60 Hz (was 15: touch input was handled and frames shown only every
-      // 66 ms); background compilation done before the snapshot. OPEN: a zygote restarted after system_server
-      // dies aborts in ICU on the aarch64 engine (not on native QEMU) - Android then stays down until restart.
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v11/qemu-android64-v11.data.gz",
-        name: "qemu-android64-arm11-2201066306.data.gz", mb: 881, size: 923423278 },
+      // 66 ms); background compilation done before the snapshot. (The zygote-restart ICU abort was an engine
+      // miscompile - 32-bit add-with-carry - fixed in the build-22 engine: Android now recovers by itself.)
+      // v12 (Nov 2026): direct touch - finger events reach Android's touchscreen (virtio-multitouch) straight from
+      // the viewer through the engine's shared mailbox, no VNC/network hop; Back/Home/Recents buttons instead of
+      // gestures (the gesture monitors woke SystemUI + the launcher on every finger move); the jank monitor no
+      // longer forks a tracer per dropped frame. Mac harness Settings drags: frames during a drag 2.5 -> 5,
+      // frame gap p90 200 -> 124 ms, first frame after touch 334 -> 272 ms median.
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v12/qemu-android64-v12.data.gz",
+        name: "qemu-android64-arm12-2239371889.data.gz", mb: 900, size: 943689025 },
     ] },
   };
   // The boot menu (biosmenu.js) shows whether each system is downloaded and how big it is.
@@ -1234,7 +1239,7 @@
             if (!window.QEMU_WASM) {
               await new Promise((res, rej) => {
                 const s = document.createElement("script");
-                s.src = "vendor/qemu/run.js?v=7";
+                s.src = "vendor/qemu/run.js?v=8";
                 s.onload = res; s.onerror = () => rej(new Error("missing QEMU-Wasm pack"));
                 document.head.appendChild(s);
               });
