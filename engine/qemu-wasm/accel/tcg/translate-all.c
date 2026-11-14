@@ -853,7 +853,10 @@ void tcg_flush_jmp_cache(CPUState *cpu)
         return;
     }
 
-    for (int i = 0; i < TB_JMP_CACHE_SIZE; i++) {
-        qatomic_set(&jc->array[i].tb, NULL);
-    }
+    /*
+     * Bootbox: one bulk memory.fill instead of 4096 seq-cst atomic stores (3.7% of a busy ARM
+     * vCPU: every context switch flushes the TLB and with it this cache). Only the owning vCPU
+     * stores non-NULL entries; other threads only ever store NULL, so the race is benign.
+     */
+    memset(jc->array, 0, sizeof(jc->array));
 }

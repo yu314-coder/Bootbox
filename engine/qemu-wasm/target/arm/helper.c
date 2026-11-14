@@ -3211,25 +3211,30 @@ static const ARMCPRegInfo generic_timer_cp_reginfo[] = {
       .accessfn = gt_vtimer_access, .resetfn = gt_virt_timer_reset,
       .readfn = gt_virt_redir_tval_read, .writefn = gt_virt_redir_tval_write,
     },
-    /* The counter itself */
+    /*
+     * The counter itself. Bootbox: no ARM_CP_IO (= no BQL per read): the read is
+     * qemu_clock_get_ns(QEMU_CLOCK_VIRTUAL) minus this vCPU's own offset, which is
+     * thread-safe; the guest kernel (sched_clock) and every vDSO clock_gettime read it,
+     * and taking the BQL for each read made the 4 vCPUs queue on the BQL.
+     */
     { .name = "CNTPCT", .cp = 15, .crm = 14, .opc1 = 0,
-      .access = PL0_R, .type = ARM_CP_64BIT | ARM_CP_NO_RAW | ARM_CP_IO,
+      .access = PL0_R, .type = ARM_CP_64BIT | ARM_CP_NO_RAW,
       .accessfn = gt_pct_access,
       .readfn = gt_cnt_read, .resetfn = arm_cp_reset_ignore,
     },
     { .name = "CNTPCT_EL0", .state = ARM_CP_STATE_AA64,
       .opc0 = 3, .opc1 = 3, .crn = 14, .crm = 0, .opc2 = 1,
-      .access = PL0_R, .type = ARM_CP_NO_RAW | ARM_CP_IO,
+      .access = PL0_R, .type = ARM_CP_NO_RAW,
       .accessfn = gt_pct_access, .readfn = gt_cnt_read,
     },
     { .name = "CNTVCT", .cp = 15, .crm = 14, .opc1 = 1,
-      .access = PL0_R, .type = ARM_CP_64BIT | ARM_CP_NO_RAW | ARM_CP_IO,
+      .access = PL0_R, .type = ARM_CP_64BIT | ARM_CP_NO_RAW,
       .accessfn = gt_vct_access,
       .readfn = gt_virt_cnt_read, .resetfn = arm_cp_reset_ignore,
     },
     { .name = "CNTVCT_EL0", .state = ARM_CP_STATE_AA64,
       .opc0 = 3, .opc1 = 3, .crn = 14, .crm = 0, .opc2 = 2,
-      .access = PL0_R, .type = ARM_CP_NO_RAW | ARM_CP_IO,
+      .access = PL0_R, .type = ARM_CP_NO_RAW,
       .accessfn = gt_vct_access, .readfn = gt_virt_cnt_read,
     },
     /* Comparison value, indicating when the timer goes off */
@@ -3342,7 +3347,7 @@ static const ARMCPRegInfo generic_timer_cp_reginfo[] = {
     },
     { .name = "CNTVCT_EL0", .state = ARM_CP_STATE_AA64,
       .opc0 = 3, .opc1 = 3, .crn = 14, .crm = 0, .opc2 = 2,
-      .access = PL0_R, .type = ARM_CP_NO_RAW | ARM_CP_IO,
+      .access = PL0_R, .type = ARM_CP_NO_RAW,
       .readfn = gt_virt_cnt_read,
     },
 };

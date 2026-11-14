@@ -1583,4 +1583,16 @@ bool check_watchpoint_in_range(int i, target_ulong addr);
 CPUWatchpoint *find_hw_watchpoint(CPUState *cpu, target_ulong addr);
 int insert_hw_watchpoint(target_ulong addr, target_ulong len, int type);
 int delete_hw_watchpoint(target_ulong addr, target_ulong len, int type);
+
+/*
+ * Bootbox: the only EL-change hooks are the PMU's (pmu_pre/post_el_change). With every
+ * counter disabled they just record this vCPU's own deltas; only an enabled counter can
+ * raise the PMU interrupt (qemu_set_irq -> GIC), which needs the BQL. Taking the BQL on
+ * every ERET (each syscall/IRQ return) made all vCPUs queue on it.
+ */
+static inline bool arm_el_change_hook_needs_bql(CPUARMState *env)
+{
+    return (env->cp15.c9_pmcr & PMCRE) || (env->cp15.mdcr_el2 & MDCR_HPME);
+}
+
 #endif

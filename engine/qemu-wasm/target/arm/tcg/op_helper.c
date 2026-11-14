@@ -427,9 +427,13 @@ void HELPER(cpsr_write_eret)(CPUARMState *env, uint32_t val)
 {
     uint32_t mask;
 
-    qemu_mutex_lock_iothread();
-    arm_call_pre_el_change_hook(env_archcpu(env));
-    qemu_mutex_unlock_iothread();
+    if (arm_el_change_hook_needs_bql(env)) {
+        qemu_mutex_lock_iothread();
+        arm_call_pre_el_change_hook(env_archcpu(env));
+        qemu_mutex_unlock_iothread();
+    } else {
+        arm_call_pre_el_change_hook(env_archcpu(env));
+    }
 
     mask = aarch32_cpsr_valid_mask(env->features, &env_archcpu(env)->isar);
     cpsr_write(env, val, mask, CPSRWriteExceptionReturn);
@@ -442,9 +446,13 @@ void HELPER(cpsr_write_eret)(CPUARMState *env, uint32_t val)
     env->regs[15] &= (env->thumb ? ~1 : ~3);
     arm_rebuild_hflags(env);
 
-    qemu_mutex_lock_iothread();
-    arm_call_el_change_hook(env_archcpu(env));
-    qemu_mutex_unlock_iothread();
+    if (arm_el_change_hook_needs_bql(env)) {
+        qemu_mutex_lock_iothread();
+        arm_call_el_change_hook(env_archcpu(env));
+        qemu_mutex_unlock_iothread();
+    } else {
+        arm_call_el_change_hook(env_archcpu(env));
+    }
 }
 
 /* Access to user mode registers from privileged modes.  */
