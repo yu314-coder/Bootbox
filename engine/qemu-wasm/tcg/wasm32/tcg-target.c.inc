@@ -648,9 +648,49 @@ static void tcg_wasm_out_op_return(TCGContext *s)
     tcg_wasm_out8(s, 0x0f);
 }
 
+/*
+ * Bootbox regions (see bb_region_* in tcg.c, /bootbox-tune region=K): a hot TB is compiled into
+ * ONE wasm function together with the TBs its direct jumps are linked to, so those hops become
+ * branches inside the function instead of calls into another instance. The body of each TB is
+ * generated as usual; the places that depend on where it ends up (helper import numbers, the
+ * in-region jump) are emitted with fixed-width operands and listed here, and patched when the
+ * region is assembled.
+ */
+#define BB_RPATCH_MAX 512
+#define BB_RPATCH_CALL 0      /* off: 2-byte LEB128 helper import index */
+#define BB_RPATCH_GOTO 1      /* off: 5-byte i32.const target; off2: 2-byte sel; off3: 2-byte br depth */
+struct bb_rpatch {
+    uint32_t off, off2, off3;
+    uint16_t val;
+    uint8_t kind, which;
+};
+__thread struct bb_rpatch bb_rpatch[BB_RPATCH_MAX];
+__thread int bb_rpatch_n;
+__thread bool bb_rpatch_overflow;
+extern int wasm_region_k;
+
+static struct bb_rpatch *bb_rpatch_new(int kind)
+{
+    if (bb_rpatch_n >= BB_RPATCH_MAX) {
+        bb_rpatch_overflow = true;
+        return &bb_rpatch[BB_RPATCH_MAX - 1];
+    }
+    struct bb_rpatch *r = &bb_rpatch[bb_rpatch_n++];
+    r->kind = kind;
+    return r;
+}
+
 static void tcg_wasm_out_op_call(TCGContext *s, uint32_t func_idx)
 {
     tcg_wasm_out8(s, 0x10);
+    if (wasm_region_k && func_idx < 16384) {
+        struct bb_rpatch *r = bb_rpatch_new(BB_RPATCH_CALL);
+        r->off = cur_sub_buf_off_rel();
+        r->val = func_idx;
+        tcg_wasm_out8(s, 0x80 | (func_idx & 0x7f));
+        tcg_wasm_out8(s, func_idx >> 7);
+        return;
+    }
     tcg_wasm_out_leb128_uint32_t(s, func_idx);
 }
 
@@ -1938,6 +1978,41 @@ static void tcg_wasm_out_chain(TCGContext *s)
     env_cached = false;
 }
 
+/*
+ * Bootbox regions: the successor (TMP32_LOCAL_0, already stored to ctx.tb_ptr with do_init = 1) is
+ * compared with the TB this jump was linked to when the region was assembled. On a match the next
+ * TB is the region member `sel`: pick it (TMP32_LOCAL_ENV carries the selector to the region's
+ * br_table), clear the block pointer and branch to the region loop. As emitted (constant 0, never
+ * equal to a non-zero successor; br 0) it does nothing, which is what a TB compiled alone keeps.
+ * The live jump slot is still what decides: an unlinked or re-linked jump no longer matches.
+ */
+static void tcg_wasm_out_region_hook(TCGContext *s, int which)
+{
+    if (!wasm_region_k || !wasm_reg_locals || !wasm_tail_chain) {
+        return;
+    }
+    struct bb_rpatch *r = bb_rpatch_new(BB_RPATCH_GOTO);
+    r->which = which;
+    tcg_wasm_out_op_local_get(s, TMP32_LOCAL_0_IDX);
+    tcg_wasm_out8(s, 0x41);                                    /* i32.const <target> */
+    r->off = cur_sub_buf_off_rel();
+    tcg_wasm_out8(s, 0x80); tcg_wasm_out8(s, 0x80); tcg_wasm_out8(s, 0x80); tcg_wasm_out8(s, 0x80);
+    tcg_wasm_out8(s, 0x00);
+    tcg_wasm_out_op_i32_eq(s);
+    tcg_wasm_out_op_if_noret(s);
+    tcg_wasm_out8(s, 0x41);                                    /* i32.const <sel> */
+    r->off2 = cur_sub_buf_off_rel();
+    tcg_wasm_out8(s, 0x80); tcg_wasm_out8(s, 0x00);
+    tcg_wasm_out_op_local_set(s, TMP32_LOCAL_ENV_IDX);
+    tcg_wasm_out_op_i64_const(s, 0);
+    tcg_wasm_out_bp_set(s);
+    tcg_wasm_out8(s, 0x0c);                                    /* br <region loop> */
+    r->off3 = cur_sub_buf_off_rel();
+    tcg_wasm_out8(s, 0x80); tcg_wasm_out8(s, 0x00);
+    tcg_wasm_out_op_end(s);
+    env_cached = false;
+}
+
 static void tcg_wasm_out_goto_ptr(TCGContext *s, TCGReg arg)
 {
     tcg_wasm_out_op_global_get_r(s, arg);
@@ -1990,6 +2065,7 @@ static void tcg_wasm_out_goto_tb(TCGContext *s, int which)
     tcg_wasm_out_op_local_get(s, TMP32_LOCAL_0_IDX);
     tcg_wasm_out_op_i32_store(s, 0, TB_PTR_OFF);
     tcg_wasm_out_ctx_i32_store_const(s, DO_INIT_OFF, 1);
+    tcg_wasm_out_region_hook(s, which);
     tcg_wasm_out_chain(s);
 
     tcg_wasm_out_op_i32_const(s, 0);
@@ -4909,6 +4985,8 @@ void tcg_out_init() {
     env_cached = false;
     regs_written = 0;
     wasm_fp_locals = false;
+    bb_rpatch_n = 0;
+    bb_rpatch_overflow = false;
 }
 
 /* Test if a constant matches the constraint. */

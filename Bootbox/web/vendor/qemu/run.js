@@ -382,6 +382,10 @@
       // gflush=0 (build 14 engine, on by default): a guest address-space switch (CR3 write) flushes the
       // whole TLB again, global kernel entries included (stock QEMU) - safety ladder.
       if (t.gflush === 0) tune += "gflush=0\n";
+      // region=K (build 26 engine): a hot block is compiled together with the blocks its direct jumps lead
+      // to, as ONE function, so those hops are branches instead of calls into another module instance
+      // (WebKit: a loop spanning 2 blocks 9.6 -> 3.9 ns per iteration, 4 blocks 20.9 -> 7.3). Older engines ignore it.
+      if (t.region) tune += "region=" + (t.region | 0) + "\n";
       if (t.extra) tune += String(t.extra).replace(/[^a-z0-9=\n]/g, "") + "\n";   // harness experiments: raw key=value lines
       if (tune) mod.FS.writeFile("/bootbox-tune", tune);
     });

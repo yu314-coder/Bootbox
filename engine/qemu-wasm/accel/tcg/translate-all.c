@@ -452,6 +452,112 @@ fail:
     qatomic_inc(&bb_regen_stats[why]);
     return NULL;
 }
+
+/*
+ * Bootbox regions: re-translate a TB that is NOT the one this vCPU is about to run (a linked
+ * successor of it), to take its module into the same region. The CPU is not at that TB, so there
+ * is no state to compare; the code page comes from the TB's own page address. A TB records
+ * everything its translation depends on (flags, cs_base, cflags, and with CF_PCREL only the page
+ * offset of its pc), and as for any re-translation the result is used only if its interpreter
+ * code is byte-identical to the live TB's.
+ */
+static uint8_t *bb_tb_regen_member(CPUState *cpu, const void *tc_ptr, vaddr cur_pc)
+{
+    CPUArchState *env = cpu_env(cpu);
+    TranslationBlock *tb = tcg_tb_lookup((uintptr_t)tc_ptr);
+    int why = 5;
+
+    if (!tb || tb->tc.ptr != tc_ptr || (tb->cflags & CF_INVALID) ||
+        tb_page_addr0(tb) == -1 || tb_page_addr1(tb) != -1 || !tb->icount || !bb_regen_scratch) {
+        return NULL;
+    }
+    vaddr pc = (tb->cflags & CF_PCREL)
+        ? ((cur_pc & TARGET_PAGE_MASK) | (tb_page_addr0(tb) & ~TARGET_PAGE_MASK)) : tb->pc;
+    void *host_pc = qemu_map_ram_ptr(NULL, tb_page_addr0(tb));
+    if (!host_pc) {
+        return NULL;
+    }
+    uint8_t *buf = bb_regen_scratch + ((uintptr_t)tc_ptr & 4095);
+    int max = tb->cflags & CF_COUNT_MASK ? tb->cflags & CF_COUNT_MASK : TCG_MAX_INSNS;
+    if (!(tb->cflags & CF_COUNT_MASK)) {
+        int h = bb_split_hint(tb_page_addr0(tb));
+        if (h > 0 && h < TCG_MAX_INSNS) {
+            max = h;
+        }
+    }
+    if (bb_regen_once(env, tb, tc_ptr, buf, pc, host_pc, max, &why) ||
+        (max != tb->icount && bb_regen_once(env, tb, tc_ptr, buf, pc, host_pc, tb->icount, &why))) {
+        return buf;
+    }
+    return NULL;
+}
+
+bool bb_region_begin(void);
+int bb_region_count(void);
+uint32_t bb_region_member_tb(int i);
+bool bb_region_has(uint32_t tb);
+bool bb_region_capture(uint32_t tb, uint32_t t0, uint32_t t1);
+uint8_t *bb_region_build(uint32_t *len, uint32_t **helpers, uint32_t *nh);
+/* [0] magic, [1] regions built, [2] members in them, [3] head not re-translatable,
+ * [4] successor not re-translatable, [5] build failed */
+uint32_t bb_region_stats[8] __attribute__((used)) = { 0x52474e31 };
+
+static uint32_t bb_tb_slot(const TranslationBlock *tb, int n)
+{
+    if (!tb || tb->jmp_reset_offset[n] == TB_JMP_OFFSET_INVALID) {
+        return 0;
+    }
+    return (uint32_t)qatomic_read(&tb->jmp_target_addr[n]);
+}
+
+/*
+ * Build the region module of the hot TB at tc_ptr (about to run on this vCPU): the TB itself and,
+ * breadth first, the TBs its direct jumps are linked to, up to kmax. NULL when the TB itself
+ * cannot be re-translated; a successor that cannot is simply left out.
+ */
+uint8_t *bb_region_compile(CPUState *cpu, const void *tc_ptr, int kmax,
+                           uint32_t *len, uint32_t **helpers, uint32_t *nh)
+{
+    CPUArchState *env = cpu_env(cpu);
+    vaddr pc;
+    uint64_t cs_base;
+    uint32_t flags;
+
+    if (!bb_region_begin() || !bb_tb_regen_wasm(cpu, tc_ptr)) {
+        qatomic_inc(&bb_region_stats[3]);
+        return NULL;
+    }
+    TranslationBlock *tb = tcg_tb_lookup((uintptr_t)tc_ptr);
+    if (!bb_region_capture((uint32_t)(uintptr_t)tc_ptr, bb_tb_slot(tb, 0), bb_tb_slot(tb, 1))) {
+        qatomic_inc(&bb_region_stats[5]);
+        return NULL;
+    }
+    cpu_get_tb_cpu_state(env, &pc, &cs_base, &flags);
+    for (int i = 0; i < bb_region_count() && bb_region_count() < kmax; i++) {
+        uint32_t self = bb_region_member_tb(i);
+        const TranslationBlock *mtb = tcg_tb_lookup(self);
+        for (int n = 0; n < 2 && bb_region_count() < kmax; n++) {
+            uint32_t t = bb_tb_slot(mtb, n);
+            if (!t || t == self || bb_region_has(t)) {
+                continue;
+            }
+            if (!bb_tb_regen_member(cpu, (const void *)(uintptr_t)t, pc)) {
+                qatomic_inc(&bb_region_stats[4]);
+                continue;
+            }
+            const TranslationBlock *ttb = tcg_tb_lookup(t);
+            bb_region_capture(t, bb_tb_slot(ttb, 0), bb_tb_slot(ttb, 1));
+        }
+    }
+    uint8_t *mod = bb_region_build(len, helpers, nh);
+    if (!mod) {
+        qatomic_inc(&bb_region_stats[5]);
+        return NULL;
+    }
+    qatomic_inc(&bb_region_stats[1]);
+    qatomic_add(&bb_region_stats[2], bb_region_count());
+    return mod;
+}
 #endif
 
 /* Called with mmap_lock held for user mode emulation.  */

@@ -6323,6 +6323,278 @@ uint8_t *tcg_out_import_entry(TCGContext *s, uint8_t* wasm_blob_ptr, int i, int 
     return wasm_blob_ptr;
 }
 
+/*
+ * Bootbox regions (/bootbox-tune region=K, K = TBs per region; see the note at bb_rpatch in
+ * tcg-target.c.inc). A hop between two compiled TBs is a call into another module instance:
+ * measured under JavaScriptCore, a 6-instruction loop that stays in one TB runs at 1.45 ns per
+ * iteration, every extra TB on the way adds ~4 ns. A region is one module with ONE function:
+ *
+ *   (if resuming after an unwind: sel = the member named by ctx.tb_ptr)
+ *   loop $R
+ *     block ... block  local.get sel  br_table 0 1 .. k-1  end
+ *     <member 0: its own prologue + body>   end
+ *     <member 1>                            end
+ *     ...
+ *   end  unreachable
+ *
+ * Each member is the unchanged code of that TB (bb_region_capture copies it right after the TB
+ * was re-translated: prologue, body without the function's final `end`), so everything a TB
+ * does alone it does here: the interrupt check at its start, unwinding (the spill globals belong
+ * to the one member that unwound; the entry check sends a resume back to it), chained calls to
+ * TBs outside the region. Only a direct jump whose live slot still holds the member it was
+ * linked to at assembly time turns into `sel = j; br $R`.
+ */
+#define BB_REGION_MAX 8
+#define BB_REGION_ARENA (768 * 1024)
+struct bb_region_member {
+    uint32_t tb;                 /* the live TB's code address */
+    uint32_t target[2];          /* what its two direct jumps were linked to (0 = nothing) */
+    uint32_t code_off, code_len; /* prologue + body in the arena */
+    uint32_t body_off;           /* the body (patch offsets are relative to it) */
+    uint32_t helper_base, patch_base, npatch;
+};
+static __thread struct {
+    int n;
+    bool fp;
+    struct bb_region_member m[BB_REGION_MAX];
+    uint8_t *arena;
+    uint32_t arena_len;
+    uint8_t *types;
+    uint32_t types_len;
+    uint32_t *helpers;
+    uint32_t nhelpers;
+    struct bb_rpatch *patch;
+    uint32_t npatch;
+    uint8_t *out;
+} bbr;
+#define BB_REGION_OUT (BB_REGION_ARENA + BB_REGION_MAX * (WASM_HELPER_ADDED_TYPES_SECTION_MAX + \
+                       WASM_NUM_HELPER_FUNCS_MAX * 16) + 4096)
+
+bool bb_region_begin(void)
+{
+    if (!bbr.arena) {
+        bbr.arena = g_try_malloc(BB_REGION_ARENA);
+        bbr.types = g_try_malloc(BB_REGION_MAX * WASM_HELPER_ADDED_TYPES_SECTION_MAX);
+        bbr.helpers = g_try_malloc(BB_REGION_MAX * WASM_NUM_HELPER_FUNCS_MAX * sizeof(uint32_t));
+        bbr.patch = g_try_malloc(BB_REGION_MAX * BB_RPATCH_MAX * sizeof(struct bb_rpatch));
+        bbr.out = g_try_malloc(BB_REGION_OUT);
+        if (!bbr.arena || !bbr.types || !bbr.helpers || !bbr.patch || !bbr.out) {
+            return false;
+        }
+    }
+    bbr.n = 0;
+    bbr.fp = false;
+    bbr.arena_len = bbr.types_len = bbr.nhelpers = bbr.npatch = 0;
+    return true;
+}
+
+int bb_region_count(void)
+{
+    return bbr.n;
+}
+
+uint32_t bb_region_member_tb(int i)
+{
+    return bbr.m[i].tb;
+}
+
+bool bb_region_has(uint32_t tb)
+{
+    for (int i = 0; i < bbr.n; i++) {
+        if (bbr.m[i].tb == tb) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Take the TB that was just generated on this thread (its body is still in sub_buf) as the next
+ * member. tb = the live TB's code address, t0/t1 = what its direct jumps are linked to. */
+bool bb_region_capture(uint32_t tb, uint32_t t0, uint32_t t1)
+{
+    uint8_t hdr[512];
+    size_t hd = wasm_header_d_size();
+    size_t skip = sizeof(mod_header_d_sizes) +
+                  (wasm_fp_locals ? sizeof(mod_header_d_locals_fp) : sizeof(mod_header_d_locals));
+    uint32_t body = sub_buf_ptr - sub_buf;
+
+    if (bbr.n >= BB_REGION_MAX || bb_rpatch_overflow || !wasm_reg_locals || !wasm_tail_chain ||
+        hd > sizeof(hdr) || body < 2 || sub_buf_ptr[-1] != 0x0b ||
+        bbr.arena_len + (hd - skip) + body > BB_REGION_ARENA) {
+        return false;
+    }
+    struct bb_region_member *m = &bbr.m[bbr.n];
+    m->tb = tb;
+    m->target[0] = t0;
+    m->target[1] = t1;
+    wasm_write_header_d(hdr, tb);
+    m->code_off = bbr.arena_len;
+    memcpy(bbr.arena + bbr.arena_len, hdr + skip, hd - skip);
+    bbr.arena_len += hd - skip;
+    m->body_off = bbr.arena_len;
+    memcpy(bbr.arena + bbr.arena_len, sub_buf, body - 1);       /* without the function's end */
+    bbr.arena_len += body - 1;
+    m->code_len = bbr.arena_len - m->code_off;
+    m->helper_base = bbr.nhelpers;
+    memcpy(bbr.types + bbr.types_len, target_helper_types, target_helper_types_pos);
+    bbr.types_len += target_helper_types_pos;
+    memcpy(bbr.helpers + bbr.nhelpers, target_helper_funcs, num_helper_funcs * sizeof(uint32_t));
+    bbr.nhelpers += num_helper_funcs;
+    m->patch_base = bbr.npatch;
+    m->npatch = bb_rpatch_n;
+    memcpy(bbr.patch + bbr.npatch, bb_rpatch, bb_rpatch_n * sizeof(struct bb_rpatch));
+    bbr.npatch += bb_rpatch_n;
+    bbr.fp |= wasm_fp_locals;
+    bbr.n++;
+    return true;
+}
+
+static uint8_t *bb_out_sleb5(uint8_t *p, int32_t v)
+{
+    for (int i = 0; i < 4; i++) {
+        *p++ = ((v >> (7 * i)) & 0x7f) | 0x80;
+    }
+    *p++ = (v >> 28) & 0x7f;
+    return p;
+}
+
+static uint8_t *bb_out_uleb5(uint8_t *p, uint32_t v)
+{
+    for (int i = 0; i < 4; i++) {
+        *p++ = ((v >> (7 * i)) & 0x7f) | 0x80;
+    }
+    *p++ = (v >> 28) & 0x0f;
+    return p;
+}
+
+/* Assemble the captured members into one module. Returns its bytes (valid until the next
+ * region on this thread) or NULL; the helper table indices to import go to *helpers / *nh. */
+uint8_t *bb_region_build(uint32_t *len, uint32_t **helpers, uint32_t *nh)
+{
+    int k = bbr.n;
+    if (k < 1 || bbr.nhelpers >= 16384) {
+        return NULL;
+    }
+    /* the places that depend on the region */
+    for (int i = 0; i < k; i++) {
+        struct bb_region_member *m = &bbr.m[i];
+        uint8_t *b = bbr.arena + m->body_off;
+        for (uint32_t n = 0; n < m->npatch; n++) {
+            struct bb_rpatch *r = &bbr.patch[m->patch_base + n];
+            if (r->kind == BB_RPATCH_CALL) {
+                uint32_t idx = m->helper_base + r->val;
+                b[r->off] = 0x80 | (idx & 0x7f);
+                b[r->off + 1] = idx >> 7;
+            } else {
+                uint32_t t = m->target[r->which & 1];
+                int j = -1;
+                for (int x = 0; t && x < k; x++) {
+                    if (bbr.m[x].tb == t) {
+                        j = x;
+                    }
+                }
+                if (j < 0 || j == i) {
+                    continue;       /* stays inert */
+                }
+                uint32_t depth = 4 + (k - 1 - i);
+                bb_out_sleb5(b + r->off, (int32_t)t);
+                b[r->off2] = 0x80 | j;
+                b[r->off2 + 1] = 0;
+                b[r->off3] = 0x80 | (depth & 0x7f);
+                b[r->off3 + 1] = depth >> 7;
+            }
+        }
+    }
+
+    uint8_t *p = bbr.out;
+    /* type section: (i32) -> i32, then one signature per helper import */
+    uint8_t *ha = p;
+    memcpy(p, mod_header_a, sizeof(mod_header_a));
+    p += sizeof(mod_header_a);
+    memcpy(p, bbr.types, bbr.types_len);
+    p += bbr.types_len;
+    fill_uint32_leb128((uintptr_t)ha + 9, bbr.types_len + 10);
+    fill_uint32_leb128((uintptr_t)ha + 14, bbr.nhelpers + 1);
+    /* imports: env.buffer, env.table, helper.<i> */
+    uint8_t *hb = p;
+    memcpy(p, mod_header_b, sizeof(mod_header_b));
+    p += sizeof(mod_header_b);
+    uint8_t *imp = p;
+    for (uint32_t i = 0; i < bbr.nhelpers; i++) {
+        char name[12];
+        int nl = snprintf(name, sizeof(name), "%u", i);
+        *p++ = 6;
+        memcpy(p, "helper", 6);
+        p += 6;
+        *p++ = nl;
+        memcpy(p, name, nl);
+        p += nl;
+        *p++ = 0x00;
+        p += write_uint32_leb128((uintptr_t)p, i + 1);
+    }
+    fill_uint32_leb128((uintptr_t)hb + 1, sizeof(mod_header_b) - 6 + (uint32_t)(p - imp));
+    fill_uint32_leb128((uintptr_t)hb + 6, bbr.nhelpers + WASM_HEADER_B_NONFUNC_IMPORTS);
+    fill_uint32_leb128((uintptr_t)hb + 25, (uint32_t)(~0) / 65536);
+    /* function, global, export sections */
+    uint8_t *hc = p;
+    memcpy(p, mod_header_c, sizeof(mod_header_c));
+    p += sizeof(mod_header_c);
+    fill_uint32_leb128((uintptr_t)hc + 142, bbr.nhelpers);
+    /* code section */
+    uint8_t *hd = p;
+    memcpy(p, mod_header_d_sizes, sizeof(mod_header_d_sizes));
+    p += sizeof(mod_header_d_sizes);
+    uint8_t *func = p;
+    if (bbr.fp) {
+        memcpy(p, mod_header_d_locals_fp, sizeof(mod_header_d_locals_fp));
+        p += sizeof(mod_header_d_locals_fp);
+    } else {
+        memcpy(p, mod_header_d_locals, sizeof(mod_header_d_locals));
+        p += sizeof(mod_header_d_locals);
+    }
+    if (k > 1) {
+        /* resuming after an unwind (do_init == 0): the member that unwound is ctx.tb_ptr */
+        *p++ = 0x20; *p++ = 0x00; *p++ = 0x28; *p++ = 0; *p++ = DO_INIT_OFF;
+        *p++ = 0x45; *p++ = 0x04; *p++ = 0x40;
+        for (int i = 1; i < k; i++) {
+            *p++ = 0x20; *p++ = 0x00; *p++ = 0x28; *p++ = 0; *p++ = TB_PTR_OFF;
+            *p++ = 0x41;
+            p = bb_out_sleb5(p, (int32_t)bbr.m[i].tb);
+            *p++ = 0x46; *p++ = 0x04; *p++ = 0x40;
+            *p++ = 0x41; *p++ = i;
+            *p++ = 0x21; *p++ = TMP32_LOCAL_ENV_IDX;
+            *p++ = 0x0b;
+        }
+        *p++ = 0x0b;
+    }
+    *p++ = 0x03; *p++ = 0x40;                       /* loop $R */
+    for (int i = 0; i < k; i++) {
+        *p++ = 0x02; *p++ = 0x40;                   /* block */
+    }
+    *p++ = 0x20; *p++ = TMP32_LOCAL_ENV_IDX;        /* local.get sel */
+    *p++ = 0x0e; *p++ = k;                          /* br_table 0 .. k-1, default 0 */
+    for (int i = 0; i < k; i++) {
+        *p++ = i;
+    }
+    *p++ = 0;
+    for (int i = 0; i < k; i++) {
+        *p++ = 0x0b;                                /* end of block i: member i starts here */
+        memcpy(p, bbr.arena + bbr.m[i].code_off, bbr.m[i].code_len);
+        p += bbr.m[i].code_len;
+    }
+    *p++ = 0x0b;                                    /* end loop */
+    *p++ = 0x00;                                    /* unreachable */
+    *p++ = 0x0b;                                    /* end func */
+    uint32_t func_len = p - func;
+    bb_out_uleb5(hd + 1, func_len + 10);            /* section: count field + size field + body */
+    bb_out_uleb5(hd + 6, 1);
+    bb_out_uleb5(hd + 11, func_len);
+    *len = p - bbr.out;
+    *helpers = bbr.helpers;
+    *nh = bbr.nhelpers;
+    return bbr.out;
+}
+
 #endif
 
 static void tcg_out_ld_helper_ret(TCGContext *s, const TCGLabelQemuLdst *ldst,

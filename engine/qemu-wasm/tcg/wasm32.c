@@ -141,6 +141,30 @@ EM_JS(int, instantiate_wasm, (uint32_t key_tb, uint32_t gen, int share), {
         return fidx;
 });
 
+/* Bootbox regions: instantiate a module assembled by bb_region_build() (bytes + the table indices
+ * of the helpers it imports). Same result convention as instantiate_wasm. */
+EM_JS(int, instantiate_region, (uint32_t ptr, uint32_t len, uint32_t hptr, uint32_t hn), {
+        const wasmBytes = HEAPU8.slice(ptr, ptr + len);
+        const memory_v = new DataView(HEAP8.buffer);
+        const helper = {};
+        for (var i = 0; i < hn; i++) {
+            helper[i] = wasmTable.get(memory_v.getInt32(hptr + i * 4, true));
+        }
+        let inst;
+        try {
+            const mod = new WebAssembly.Module(wasmBytes);
+            inst = new WebAssembly.Instance(mod, { "env": { "buffer": wasmMemory, "table": wasmTable }, "helper": helper });
+        } catch (e) {
+            if (!Module.__wasm32_tb.region_err_logged) {
+                Module.__wasm32_tb.region_err_logged = true;
+                err("[bootbox] region compile refused (" + e + ")");
+                if (Module.__bbRegionDump) { Module.__bbRegionDump(wasmBytes); }
+            }
+            return 0;
+        }
+        return addFunction(inst.exports.start, 'ii');
+});
+
 __thread bool initdone = false;
 __thread int cur_core_num = -1;
 __thread int export_vec_off = -1;
@@ -1808,6 +1832,9 @@ int wasm_tail_chain;
 int wasm_chain_nested;
 int wasm_chain_budget = WASM_CHAIN_BUDGET;
 int wasm_reg_locals = 1;
+int wasm_region_k;             /* /bootbox-tune region=K: TBs per region module (0 = off) */
+uint8_t *bb_region_compile(CPUState *cpu, const void *tc_ptr, int kmax,
+                           uint32_t *len, uint32_t **helpers, uint32_t *nh);
 
 /*
  * Bootbox: the common helper calls of the hot loop - helper_lookup_tb_ptr and the direct typed calls
@@ -2171,6 +2198,8 @@ void bootbox_tune_init(void)
                 qatomic_set(&bootbox_tsc_lockfree, v != 0);
             } else if (!strcmp(key, "fasttci")) {
                 wasm_fast_tci = v != 0;
+            } else if (!strcmp(key, "region") && v >= 0 && v <= 8) {
+                wasm_region_k = v;
             } else if (!strcmp(key, "lazywasm")) {
                 bb_lazy_wasm = v != 0;
             } else if (!strcmp(key, "sumcnt")) {
@@ -2205,11 +2234,11 @@ void bootbox_tune_init(void)
         }
         fclose(f);
         wasm_hot_num = (wasm_hot_share || wasm_sum_count) ? wasm_instantiate_num / 16 : wasm_instantiate_num;
-        fprintf(stderr, "[bootbox-tune] jit=%d max=%d fpinline=%d chain=%d/%s/%d regloc=%d hotshare=%d sumcnt=%d tsc=%d fasttci=%d lazywasm=%d hammock=%d repbulk=%d simdinline=%d gvecool=%d sseatom=%d gflush=%d\n",
+        fprintf(stderr, "[bootbox-tune] jit=%d max=%d fpinline=%d chain=%d/%s/%d regloc=%d hotshare=%d sumcnt=%d tsc=%d fasttci=%d lazywasm=%d hammock=%d repbulk=%d simdinline=%d gvecool=%d sseatom=%d gflush=%d region=%d\n",
                 wasm_instantiate_num, wasm_max_instance_alive, wasm_fp_inline_enabled,
                 wasm_tail_chain, wasm_chain_nested ? "nested" : "tail", wasm_chain_budget,
                 wasm_reg_locals, wasm_hot_share, wasm_sum_count, bootbox_tsc_lockfree, wasm_fast_tci, bb_lazy_wasm,
-                bb_hammock, bb_repbulk, wasm_simd_inline_enabled, wasm_gvec_ool_enabled, bb_sse_atom16, bb_gflush);
+                bb_hammock, bb_repbulk, wasm_simd_inline_enabled, wasm_gvec_ool_enabled, bb_sse_atom16, bb_gflush, wasm_region_k);
     }
     qatomic_set(&state, 2);
 }
@@ -2243,7 +2272,14 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
             const uint8_t *body = t + *(const uint32_t *)t;
             uint32_t gen = bb_tb_flush_gen();
             uint32_t key = (uint32_t)(uintptr_t)ctx.tb_ptr;
-            if (bb_share_on && bb_share_has(key, gen)) {
+            uint32_t rlen = 0, rnh = 0, *rh = NULL;
+            uint8_t *rmod = NULL;
+            if (wasm_region_k > 0 && wasm_reg_locals && wasm_tail_chain && !bb_share_on) {
+                rmod = bb_region_compile(env_cpu(env), ctx.tb_ptr, wasm_region_k, &rlen, &rh, &rnh);
+            }
+            if (rmod) {
+                fidx = instantiate_region((uint32_t)(uintptr_t)rmod, rlen, (uint32_t)(uintptr_t)rh, rnh);
+            } else if (bb_share_on && bb_share_has(key, gen)) {
                 fidx = instantiate_wasm(key, gen, 1);      /* compiled on another vCPU */
             } else if (*(const uint32_t *)(body + *(const uint32_t *)(body - 4)) == 0) {
                 uint32_t *live = ctx.tb_ptr;
