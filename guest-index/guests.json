@@ -1,0 +1,152 @@
+{
+ "format": 1,
+ "guests": {
+  "linux-desktop": [
+   {
+    "v": 21,
+    "api": 1,
+    "url": "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v21/qemu-desktop21-rootfs.data.gz",
+    "name": "qemu-desktop21-rootfs-1216733120.data.gz",
+    "size": 416759099,
+    "mb": 397,
+    "rawSize": 1216733120,
+    "files": [
+     {
+      "filename": "/pack/bios-256k.bin",
+      "start": 0,
+      "end": 262144
+     },
+     {
+      "filename": "/pack/bzImage",
+      "start": 262144,
+      "end": 4087744
+     },
+     {
+      "filename": "/pack/efi-virtio.rom",
+      "start": 4087744,
+      "end": 4248512
+     },
+     {
+      "filename": "/pack/kvmvapic.bin",
+      "start": 4248512,
+      "end": 4257728
+     },
+     {
+      "filename": "/pack/linuxboot_dma.bin",
+      "start": 4257728,
+      "end": 4259264
+     },
+     {
+      "filename": "/pack/rootfs.bin",
+      "start": 4259264,
+      "end": 1216693696
+     },
+     {
+      "filename": "/pack/vgabios-stdvga.bin",
+      "start": 1216693696,
+      "end": 1216733120
+     }
+    ],
+    "notes": "Direct display, 24-bit colour, screen-shaped desktop"
+   }
+  ],
+  "linux-terminal": [
+   {
+    "v": 5,
+    "api": 1,
+    "url": "https://github.com/yu314-coder/Bootbox/releases/download/linux64-v5/qemu64-v5-rootfs.data.gz",
+    "name": "qemu64-v5-rootfs-945742898.data.gz",
+    "size": 309846482,
+    "mb": 295,
+    "rawSize": 945742898,
+    "files": [
+     {
+      "filename": "/pack/bios-256k.bin",
+      "start": 0,
+      "end": 262144
+     },
+     {
+      "filename": "/pack/bzImage",
+      "start": 262144,
+      "end": 3883616
+     },
+     {
+      "filename": "/pack/efi-virtio.rom",
+      "start": 3883616,
+      "end": 4044384
+     },
+     {
+      "filename": "/pack/kvmvapic.bin",
+      "start": 4044384,
+      "end": 4053600
+     },
+     {
+      "filename": "/pack/linuxboot_dma.bin",
+      "start": 4053600,
+      "end": 4055136
+     },
+     {
+      "filename": "/pack/rootfs.bin",
+      "start": 4055136,
+      "end": 900546656
+     },
+     {
+      "filename": "/pack/vgabios-stdvga.bin",
+      "start": 900546656,
+      "end": 900586080
+     },
+     {
+      "filename": "/pack/vm.state",
+      "start": 900586080,
+      "end": 945742898
+     }
+    ],
+    "notes": "Alpine, Python, Wine"
+   }
+  ],
+  "android": [
+   {
+    "v": 13,
+    "api": 1,
+    "url": "https://github.com/yu314-coder/Bootbox/releases/download/android64-v13/qemu-android64-v13.data.gz",
+    "name": "qemu-android64-arm13-2301600864.data.gz",
+    "size": 1033922513,
+    "mb": 986,
+    "rawSize": 2301600864,
+    "files": [
+     {
+      "filename": "/pack/Image",
+      "start": 0,
+      "end": 38728192
+     },
+     {
+      "filename": "/pack/efi-virtio.rom",
+      "start": 38728192,
+      "end": 38888960
+     },
+     {
+      "filename": "/pack/initrd.gz",
+      "start": 38888960,
+      "end": 39547853
+     },
+     {
+      "filename": "/pack/rootfs.bin",
+      "start": 39547853,
+      "end": 691348429
+     },
+     {
+      "filename": "/pack/userdata.qcow2",
+      "start": 691348429,
+      "end": 917578701
+     },
+     {
+      "filename": "/pack/vm.state",
+      "start": 917578701,
+      "end": 2301600864
+     }
+    ],
+    "notes": "ARM64 Android 12, zram, no KPTI"
+   }
+  ]
+ }
+}

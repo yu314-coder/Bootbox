@@ -171,7 +171,8 @@ EM_JS(int, instantiate_region, (uint32_t ptr, uint32_t len, uint32_t hptr, uint3
         } catch (e) {
             if (!Module.__wasm32_tb.region_err_logged) {
                 Module.__wasm32_tb.region_err_logged = true;
-                err("[bootbox] region compile refused (" + e + ")");
+                err("[bootbox] region compile refused (" + e + ") len=" + len + " ptr=" + ptr + " helpers=" + hn +
+                    " head=" + Array.from(wasmBytes.slice(0, 16)).join(",") + "; compiling that block alone");
                 if (Module.__bbRegionDump) { Module.__bbRegionDump(wasmBytes); }
             }
             return 0;
@@ -2298,8 +2299,18 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
             if (wasm_region_k > 0 && wasm_reg_locals && wasm_tail_chain && !bb_share_on) {
                 rmod = bb_region_compile(env_cpu(env), ctx.tb_ptr, wasm_region_k, &rlen, &rh, &rnh);
             }
+            fidx = 0;
             if (rmod) {
                 fidx = instantiate_region((uint32_t)(uintptr_t)rmod, rlen, (uint32_t)(uintptr_t)rh, rnh);
+            }
+            /*
+             * A region the host would not take (seen once under WebKit on ARM64 Android: the bytes did not
+             * parse) is not "the browser is out of room for code": compile the block alone, as before
+             * regions. Falling into the refusal path below cut the live cap to 15000 for the whole run -
+             * for Android that is constant evict/recompile churn.
+             */
+            if (fidx > 0) {
+                /* the region is in */
             } else if (bb_share_on && bb_share_has(key, gen)) {
                 fidx = instantiate_wasm(key, gen, 1);      /* compiled on another vCPU */
             } else if (*(const uint32_t *)(body + *(const uint32_t *)(body - 4)) == 0) {

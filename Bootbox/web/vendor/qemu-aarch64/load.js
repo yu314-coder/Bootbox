@@ -198,7 +198,9 @@ Module['FS_createPath']("/", "pack", true, true);
     }
 
     }
-    loadPackage({"files": [{"filename": "/pack/bzImage", "start": 0, "end": 8268288}, {"filename": "/pack/edk2-aarch64-code.fd", "start": 8268288, "end": 75377152}, {"filename": "/pack/efi-virtio.rom", "start": 75377152, "end": 75537920}, {"filename": "/pack/rootfs.bin", "start": 75537920, "end": 173803008}, {"filename": "/pack/vm.state", "start": 173803008, "end": 265519785}], "remote_package_size": 265519785});
+    // Bootbox guest updates: a newer guest pack (run.js opts.pack, from the hosted version list) brings its own
+    // file table - plain data, same shape as the built-in one below.
+    loadPackage((typeof self !== "undefined" && self.BootboxPackIndex) || {"files": [{"filename": "/pack/bzImage", "start": 0, "end": 8268288}, {"filename": "/pack/edk2-aarch64-code.fd", "start": 8268288, "end": 75377152}, {"filename": "/pack/efi-virtio.rom", "start": 75377152, "end": 75537920}, {"filename": "/pack/rootfs.bin", "start": 75537920, "end": 173803008}, {"filename": "/pack/vm.state", "start": 173803008, "end": 265519785}], "remote_package_size": 265519785});
 
   })();
 

@@ -96,7 +96,13 @@
   function packFiles(sys) {
     if (sys.downloadName) return [sys.downloadName, sys.imgName].filter(Boolean);
     const files = (window.BootboxPacks || {})[sys.guest] || [];
-    return files.flatMap(f => [f.name, f.name.replace(/\.gz$/, "")]);
+    return files.concat(updateChoices(sys).filter(c => !c.builtin)).flatMap(f => [f.name, f.name.replace(/\.gz$/, "")]);
+  }
+  // Guest updates (emulator.js BootboxUpdates): the images this system can boot, newest first; the
+  // last one is the image the app was built with. Empty when there is nothing newer.
+  function updateChoices(sys) {
+    try { const c = window.BootboxUpdates && sys.guest ? window.BootboxUpdates.state(sys.guest).choices : []; return c.length > 1 ? c : []; }
+    catch (e) { return []; }
   }
   const isSystemFile = n => /\.(data|data\.gz|wasm\.gz)$/i.test(n) || /^win(98|2000)\.img(\.gz)?$/i.test(n);
   function systemStatus(sys, store) {
@@ -106,7 +112,11 @@
     const partial = files.some(f => names.some(n => f.name === n + ".part"));
     const ready = sys.downloadName ? have.some(f => f.name === sys.imgName || f.name === sys.downloadName)
                                    : ((window.BootboxPacks || {})[sys.guest] || []).every(p => have.some(f => f.name === p.name || f.name === p.name.replace(/\.gz$/, "")));
-    return { known: true, ready: ready && have.length > 0, partial, bytes: have.reduce((a, f) => a + (f.alloc || f.size || 0), 0) };
+    // A newer image than the built-in one: ready when ANY version is here; `update` = the newest isn't yet.
+    const ch = updateChoices(sys), on = c => have.some(f => f.name === c.name.replace(/\.gz$/, "") || (c.builtin && f.name === c.name));
+    const anyUpd = ch.some(c => !c.builtin && on(c));
+    const update = ch.length && !on(ch[0]) ? ch[0] : null;
+    return { known: true, ready: (ready || anyUpd) && have.length > 0, partial, update, bytes: have.reduce((a, f) => a + (f.alloc || f.size || 0), 0) };
   }
   // Friendly label for a stored system file.
   function systemFileLabel(name) {
@@ -358,7 +368,7 @@
         .bm-row .ic{font-size:23px;width:28px;text-align:center}
         .bm-row .nm{display:flex;flex-direction:column;font-weight:700;color:#eaf4ff;font-size:15px}
         .bm-row .nm .sub{font-weight:400;opacity:.62;font-size:12px;margin-top:2px}
-        .bm-row .tag{margin-left:auto;font-size:10px;font-weight:800;letter-spacing:.5px;padding:4px 9px;
+        .bm-row .tag{margin-left:auto;white-space:nowrap;flex:none;font-size:10px;font-weight:800;letter-spacing:.5px;padding:4px 9px;
           border-radius:5px;background:#13325a;color:#9fd0ff}
         .bm-row.setup{margin-top:4px;border-top:1px dashed #1d3a59;border-radius:0 0 9px 9px}
         .bm-row.setup .tag{background:#3a2c5a;color:#d8c2ff}
@@ -436,8 +446,9 @@
         const row = document.createElement("div");
         const st = status(e);
         const tag = !st ? `<span class="tag">${e.tag || "32-BIT"}</span>`
+          : st.ready && st.update ? `<span class="tag dl">UPDATE ↓ ${st.update.mb} MB</span>`
           : st.ready ? `<span class="tag ok">READY</span>`
-          : `<span class="tag dl">${st.partial ? "RESUME ↓" : "↓ " + (e.dlMB ? e.dlMB + " MB" : "DOWNLOAD")}</span>`;
+          : `<span class="tag dl">${st.partial ? "RESUME ↓" : "↓ " + (st.update ? st.update.mb + " MB" : e.dlMB ? e.dlMB + " MB" : "DOWNLOAD")}</span>`;
         row.className = "bm-row" + (i === sel ? " sel" : "") + (e.kind === "setup" ? " setup" : "");
         row.innerHTML = `<span class="ic">${e.icon || "💿"}</span>
           <span class="nm">${e.name}<span class="sub">${e.sub || ""}</span></span>${tag}`;
@@ -453,7 +464,7 @@
       if (!busy) {
         const st = status(e);
         bootBtn.disabled = false;
-        bootBtn.textContent = st && !st.ready ? "Download & Boot ▶" : "Boot " + (e.name || "") + " ▶";
+        bootBtn.textContent = st && !st.ready ? "Download & Boot ▶" : st && st.update ? "Update & Boot ▶" : "Boot " + (e.name || "") + " ▶";
       }
     }
 
@@ -520,14 +531,14 @@
       });
     }
 
-    async function bootEntry(e) {
+    async function bootEntry(e, unattended) {
       cancelAuto();
       writeCfg({ lastBoot: e.id });
       busy = true; bootBtn.disabled = true;
-      try { await bootEntry2(e); }
+      try { await bootEntry2(e, unattended); }
       finally { busy = false; if (alive()) { const msg = noteEl.innerHTML; paint(); noteEl.innerHTML = msg; } }   // keep an error on screen
     }
-    async function bootEntry2(e) {
+    async function bootEntry2(e, unattended) {
       // Windows (and other bring-your-own-image) entries: can't be bundled/hosted, so
       // require the user to import their own disk image first.
       if (e.requiresImport) {
@@ -556,7 +567,9 @@
         }
         noteEl.textContent = "Ready — starting " + e.name + " …";
       }
-      hooks.onBoot && hooks.onBoot(systemToArgs(e, readCfg()));
+      const a = systemToArgs(e, readCfg());
+      if (unattended) a.noUpdate = true;
+      hooks.onBoot && hooks.onBoot(a);
     }
 
     // Auto-boot (UEFI Setup › Boot › Auto-boot): boots the last system after a countdown, but only one
@@ -569,7 +582,7 @@
       const tick = () => {
         if (!alive()) return cancelAuto();
         countEl.textContent = "Auto-boot " + e.name + " in " + count + "s — press any key to stop";
-        if (count <= 0) { cancelAuto(); bootEntry(e); return; }
+        if (count <= 0) { cancelAuto(); bootEntry(e, true); return; }   // unattended: no image update download
         count--;
       };
       tick(); timer = setInterval(tick, 1000);
@@ -596,6 +609,8 @@
     sel = li >= 0 ? li : 0;
     paint();
     container.querySelector(".bm").addEventListener("pointerdown", () => cancelAuto(), true);
+    // The hosted list of newer guest images arrives a moment later: show "UPDATE" once it is known.
+    try { if (window.BootboxUpdates) window.BootboxUpdates.refresh().then(() => { if (alive() && !busy) paint(); }); } catch (e) {}
     Promise.all([listImported(), loadStore()]).then(([names, store]) => {
       if (!alive()) return;
       storeNow = store;

@@ -1,0 +1,17 @@
+[
+ {"guest": "linux-desktop", "v": 21, "api": 1,
+  "url": "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v21/qemu-desktop21-rootfs.data.gz",
+  "name": "qemu-desktop21-rootfs-1216733120.data.gz", "size": 416759099,
+  "loadjs": "Bootbox/web/vendor/qemu-desktop/load.js",
+  "notes": "Direct display, 24-bit colour, screen-shaped desktop"},
+ {"guest": "linux-terminal", "v": 5, "api": 1,
+  "url": "https://github.com/yu314-coder/Bootbox/releases/download/linux64-v5/qemu64-v5-rootfs.data.gz",
+  "name": "qemu64-v5-rootfs-945742898.data.gz", "size": 309846482,
+  "loadjs": "Bootbox/web/vendor/qemu-aload/load.js",
+  "notes": "Alpine, Python, Wine"},
+ {"guest": "android", "v": 13, "api": 1,
+  "url": "https://github.com/yu314-coder/Bootbox/releases/download/android64-v13/qemu-android64-v13.data.gz",
+  "name": "qemu-android64-arm13-2301600864.data.gz", "size": 1033922513,
+  "loadjs": "Bootbox/web/vendor/qemu-android/load.js",
+  "notes": "ARM64 Android 12, zram, no KPTI"}
+]

@@ -128,7 +128,12 @@
     const absEngineBase = new URL(engineBase, location.href).href;
     const absEngineModuleBase = new URL(engineModuleBase, location.href).href;
     self.Module = self.Module || {};
-    self.Module.locateFile = (p) => (/\.data(?:$|\?)/.test(p) ? absBase : absEngineModuleBase) + p;
+    // Guest updates (emulator.js, opts.pack): a newer guest pack than the one this app was built with. It is a
+    // file in the imports store (served with Range at pack.url) with its own file table and, optionally, its own
+    // QEMU arguments - all plain data from the hosted version list; the loader and the engine stay the app's.
+    const pack = (opts.pack && opts.pack.url && Array.isArray(opts.pack.files) && opts.pack.files.length) ? opts.pack : null;
+    self.BootboxPackIndex = pack ? { files: pack.files, remote_package_size: +pack.size || pack.files.reduce((m, f) => Math.max(m, f.end), 0) } : null;
+    self.Module.locateFile = (p) => /\.data(?:$|\?)/.test(p) ? (pack ? pack.url : absBase + p) : absEngineModuleBase + p;
     // load.js starts fetching before the terminal exists.  Preserve its progress
     // here and surface it through the Bootbox status UI immediately; otherwise a
     // WebKit allocation/fetch failure looks exactly like a frozen "Preparing…".
@@ -149,6 +154,7 @@
     await loadScript(new URL("lazypack.js", RUN_JS_URL).href).catch(() => {});
     await loadScript(base + "load.js");
     await loadScript(base + "arg-module.js");
+    if (pack && Array.isArray(pack.args) && pack.args.length && self.Module) self.Module.arguments = pack.args.map(String);
     // RAM control: the toolbar value (opts.ram) overrides the baked "-m" so it's no longer locked.
     if (opts.ram && self.Module && self.Module.arguments) {
       const a = self.Module.arguments, i = a.indexOf("-m");

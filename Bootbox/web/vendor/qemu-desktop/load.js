@@ -176,7 +176,9 @@ Module['FS_createPath']("/", "pack", true, true);
     }
 
     }
-    loadPackage({"files": [{"filename": "/pack/bios-256k.bin", "start": 0, "end": 262144}, {"filename": "/pack/bzImage", "start": 262144, "end": 4087744}, {"filename": "/pack/efi-virtio.rom", "start": 4087744, "end": 4248512}, {"filename": "/pack/kvmvapic.bin", "start": 4248512, "end": 4257728}, {"filename": "/pack/linuxboot_dma.bin", "start": 4257728, "end": 4259264}, {"filename": "/pack/rootfs.bin", "start": 4259264, "end": 1216693696}, {"filename": "/pack/vgabios-stdvga.bin", "start": 1216693696, "end": 1216733120}], "remote_package_size": 1216733120});
+    // Bootbox guest updates: a newer guest pack (run.js opts.pack, from the hosted version list) brings its own
+    // file table - plain data, same shape as the built-in one below.
+    loadPackage((typeof self !== "undefined" && self.BootboxPackIndex) || {"files": [{"filename": "/pack/bios-256k.bin", "start": 0, "end": 262144}, {"filename": "/pack/bzImage", "start": 262144, "end": 4087744}, {"filename": "/pack/efi-virtio.rom", "start": 4087744, "end": 4248512}, {"filename": "/pack/kvmvapic.bin", "start": 4248512, "end": 4257728}, {"filename": "/pack/linuxboot_dma.bin", "start": 4257728, "end": 4259264}, {"filename": "/pack/rootfs.bin", "start": 4259264, "end": 1216693696}, {"filename": "/pack/vgabios-stdvga.bin", "start": 1216693696, "end": 1216733120}], "remote_package_size": 1216733120});
 
   })();
 

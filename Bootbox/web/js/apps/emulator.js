@@ -37,14 +37,19 @@
     // least-recently-run blocks past it, and lowers the cap itself if the host refuses a compile.
     { id: "x64pw",     name: "Linux (Terminal)",  boot: "q64",
       base: "vendor/qemu-aload/", url: "", ram: 1536, tune: { max: 40000, tsc: 1, lazywasm: 1 }, fastTci: true,
+      pack: { key: "linux-terminal", v: 5, api: [1, 1] },   // guest updates: see PACK_INDEX_URL below
       cpuModelId: "Bootbox x86-64 (emulated in WebAssembly)" },   // CPU-Z "Specification" (run.js)
     // Lightweight graphical desktop: its OWN image. openbox/tint2 + a bash terminal, PCManFM, the bbweb
     // browser (WebKitGTK, v10) + Dillo, Python, mc, CPU-Z/glmark2 (v9). Reuses the x86_64 engine (wasm shared from
     // qemu-aload — no duplication). The image auto-starts the desktop, so boot64 sends no start-desktop.
     { id: "x64pwd",    name: "Linux (Desktop)",  boot: "q64",
-      base: "vendor/qemu-desktop/", wasm: "../qemu-aload/qemu-system-x86_64.wasm", url: "", ram: 1536, gui: true,
+      // The engine (out.js + wasm + terminal files) is the Terminal guest's, loaded from ITS folder: this guest
+      // used to keep its own copy of out.js beside a wasm path into qemu-aload, and that copy went stale when the
+      // engine was rebuilt (builds 22-27: "import function a:tc must be callable" - the desktop never started).
+      base: "vendor/qemu-desktop/", engineBase: "vendor/qemu-aload/", url: "", ram: 1536, gui: true,
       tune: { max: 40000, tsc: 1, lazywasm: 1 }, fastTci: true, cpuModelId: "Bootbox x86-64 (emulated in WebAssembly)",
-      gpu: true, directDisplay: true },   // same reason as x64pw
+      gpu: true, directDisplay: true,   // same reason as x64pw
+      pack: { key: "linux-desktop", v: 21, api: [1, 1] } },
     // directDisplay (desktop v21 + build 24 engine): the guest's Xorg draws on a virtio GPU and the viewer reads
     // that screen straight from the engine's memory; pointer and keys go to a virtio tablet + keyboard through the
     // engine's input mailbox (bbdirect.js). No VNC server, no encoding, no network hop. Needs the GPU bridge (its
@@ -68,7 +73,8 @@
       // 1.1: the Fast hot-loop interpreter and the lock-free guest TSC, like the Linux guests (Android was left
       // on the Classic interpreter, which WebKit runs bimodally). macOS WebKit, same engine, Settings / Contacts /
       // Settings again: 8.1 / 6.2 / 5.0 s -> 6.0 / 3.6 / 1.4 s (and 5.3 / 3.0 / 2.0 s in a repeat).
-      tune: { max: 45000, lazywasm: 1, tsc: 1 }, fastTci: true },
+      tune: { max: 45000, lazywasm: 1, tsc: 1 }, fastTci: true,
+      pack: { key: "android", v: 13, api: [1, 1] } },
     // (The ARM64 guest — vendor/qemu-aarch64/, its own engine — is no longer offered: the systems are
     // Linux Desktop, Linux Terminal, Android, and the Windows images through the ISO/disk path.)
   ];
@@ -183,41 +189,193 @@
     return true;
   }
 
-  async function ensureRootfs(g, status, setState) {
+  /* ---------------------------------------------------------------------------------------- *
+   *  Guest updates: newer Linux / Android images without an app update                        *
+   * ---------------------------------------------------------------------------------------- *
+   * ROOTFS_REMOTE above is the image this build was made with. A small version list hosted on
+   * GitHub (PACK_INDEX_URL - one release asset, replaced whenever an image is published) names
+   * newer ones. Each entry is plain data: where the image is, its size, the table of files
+   * inside it, optionally the QEMU arguments it needs, and `api` - the level of app/engine
+   * support it relies on. A guest here says which levels it can run (pack.api = [min, max]) and
+   * takes the newest entry inside that range, so every app version - this one or a later one -
+   * gets the newest image it can actually boot, and never one it cannot. Nothing executable is
+   * downloaded: the engine and the loader stay the ones in the app.
+   *
+   * Raise `api` in the list when an image needs something older apps lack (a new device, a new
+   * display path); raise a guest's pack.api when the app gains or drops that support.
+   * Testing: a file "bootbox-guests-test.json" in the imports folder replaces the hosted list.
+   */
+  const PACK_INDEX_URL = "https://github.com/yu314-coder/Bootbox/releases/download/guest-index/guests.json";
+  const PACK_URL_PREFIX = "https://github.com/yu314-coder/Bootbox/releases/download/";
+  const PACK_INDEX_FILE = ".bootbox-guests.json", PACK_TEST_FILE = "bootbox-guests-test.json";
+  const LS_PACK_INDEX = "bb.packIndex", LS_PACK_GOOD = "bb.packGood.";
+  let packIndex = null, packIndexTest = false, packIndexP = null;
+  try { packIndex = JSON.parse(localStorage.getItem(LS_PACK_INDEX) || "null"); } catch (e) {}
+
+  const onBridge = () => !!(window.Bridge && typeof Bridge.call === "function" && Bridge.onDevice !== false && location.protocol === "http:");
+  const rawName = (n) => n.replace(/\.gz$/, "");
+  function validPackEntry(e, anyUrl) {
+    if (!e || typeof e !== "object") return false;
+    if (!(Number.isFinite(e.v) && e.v > 0 && Number.isInteger(e.api) && e.api > 0)) return false;
+    if (typeof e.name !== "string" || !/^[A-Za-z0-9][A-Za-z0-9._-]{3,120}\.data\.gz$/.test(e.name)) return false;
+    if (typeof e.url !== "string" || !(anyUrl ? /^https?:\/\//.test(e.url) : e.url.indexOf(PACK_URL_PREFIX) === 0)) return false;
+    if (!(Number.isInteger(e.size) && e.size > 0 && Number.isInteger(e.rawSize) && e.rawSize > 0)) return false;
+    if (!Array.isArray(e.files) || !e.files.length || e.files.length > 64) return false;
+    let end = 0;
+    for (const f of e.files.slice().sort((a, b) => a.start - b.start)) {
+      if (!f || typeof f.filename !== "string" || !/^\/pack\/[A-Za-z0-9._-]+$/.test(f.filename)) return false;
+      if (!(Number.isInteger(f.start) && Number.isInteger(f.end) && f.start === end && f.end >= f.start)) return false;
+      end = f.end;
+    }
+    if (end !== e.rawSize) return false;
+    if (e.args != null && !(Array.isArray(e.args) && e.args.length < 200 && e.args.every((a) => typeof a === "string" && a.length < 4000))) return false;
+    return true;
+  }
+  function importNames() { return Bridge.call("binary", "list", {}).then((r) => (Array.isArray(r) ? r : (r && r.result) || [])).catch(() => []); }
+  // Download `url` into the imports store as `name` (BinaryBridge -> Downloader) and wait for it.
+  function nativeDownload(url, name, size, onProgress) {
+    return new Promise((resolve, reject) => {
+      const handler = (p) => {
+        if (!p || p.name !== name) return;
+        if (p.done) { if (Bridge.offEvent) Bridge.offEvent("downloadProgress", handler); p.ok ? resolve(false) : reject(new Error(p.error || "download failed")); return; }
+        if (onProgress) { try { onProgress(p); } catch (e) {} }
+      };
+      Bridge.onEvent("downloadProgress", handler);
+      Bridge.call("binary", "download", { url, name, size: size || 0 }).then((r) => {
+        if (r && r.cached) { if (Bridge.offEvent) Bridge.offEvent("downloadProgress", handler); resolve(true); }
+      }).catch((e) => { if (Bridge.offEvent) Bridge.offEvent("downloadProgress", handler); reject(new Error("couldn't start the download — " + ((e && e.message) || e))); });
+    });
+  }
+  async function readImportJson(name) {
+    const r = await fetch(location.origin + "/vmres/" + name + "?t=" + Date.now(), { cache: "no-store" });
+    if (!r.ok) throw new Error("HTTP " + r.status);
+    return JSON.parse(await r.text());
+  }
+  // Fetch the version list (once per app start; quietly keeps the last good copy when offline).
+  function refreshPackIndex() {
+    if (packIndexP) return packIndexP;
+    if (!onBridge()) return (packIndexP = Promise.resolve(packIndex));
+    packIndexP = (async () => {
+      try {
+        if ((await importNames()).includes(PACK_TEST_FILE)) {
+          const t = await readImportJson(PACK_TEST_FILE);
+          if (t && t.guests) { packIndex = t; packIndexTest = true; return packIndex; }
+        }
+      } catch (e) { console.warn("guest updates: test list unreadable:", e); }
+      try {
+        await Bridge.call("binary", "delete", { name: PACK_INDEX_FILE });
+        await nativeDownload(PACK_INDEX_URL, PACK_INDEX_FILE, 0);
+        const j = await readImportJson(PACK_INDEX_FILE);
+        if (j && j.format === 1 && j.guests && typeof j.guests === "object") {
+          packIndex = j;
+          try { localStorage.setItem(LS_PACK_INDEX, JSON.stringify(j)); } catch (e) {}
+        }
+      } catch (e) { console.warn("guest updates: version list not fetched (" + ((e && e.message) || e) + "); using the last known one"); }
+      return packIndex;
+    })();
+    return packIndexP;
+  }
+  // The images guest `g` can boot, newest first; the last one is always the built-in image.
+  function packChoices(g) {
     const cfg = ROOTFS_REMOTE[g && g.base];
+    if (!cfg || !g.pack) return [];
+    const f0 = cfg.files[0];
+    const builtin = { v: g.pack.v, name: f0.name, url: f0.url, size: f0.size, mb: f0.mb, builtin: true };
+    const fits = (e) => validPackEntry(e, packIndexTest) && e.api >= g.pack.api[0] && e.api <= g.pack.api[1] && e.v > g.pack.v && e.name !== f0.name;
+    const out = [];
+    const list = (packIndex && packIndex.guests && packIndex.guests[g.pack.key]) || [];
+    const best = (Array.isArray(list) ? list : []).filter(fits).sort((a, b) => b.v - a.v)[0];
+    if (best) out.push(best);
+    let good = null;   // the updated image that last booted here: the fallback when the newest can't be fetched
+    try { good = JSON.parse(localStorage.getItem(LS_PACK_GOOD + g.pack.key) || "null"); } catch (e) {}
+    if (good && validPackEntry(good, true) && good.api >= g.pack.api[0] && good.api <= g.pack.api[1] && good.v > g.pack.v &&
+        good.name !== f0.name && !out.some((e) => e.name === good.name)) out.push(good);
+    out.sort((a, b) => b.v - a.v);
+    out.push(builtin);
+    return out;
+  }
+  // For the boot menu: which image files belong to guest `id`, and whether a newer one is waiting.
+  window.BootboxUpdates = {
+    refresh: refreshPackIndex,
+    state(id) {
+      const g = GUESTS.find((x) => x.id === id);
+      const c = g ? packChoices(g) : [];
+      return { choices: c.map((e) => ({ v: e.v, name: e.name, mb: e.mb || Math.round(e.size / 1048576), builtin: !!e.builtin })) };
+    },
+  };
+  if (onBridge()) setTimeout(() => { refreshPackIndex(); }, 1500);   // early, so the boot menu can say "update"
+
+  // Make one pack file present and expanded. strict: an updated pack must end up expanded (it is served raw).
+  async function fetchPackFile(f, g, status, setState, strict, verb) {
+    const raw = /\.data\.gz$/.test(f.name) ? rawName(f.name) : null;   // guest packs only
+    if (raw) {
+      try { if (await expandPack(f.name, raw, g, status)) return; }   // expanded already (or just now)
+      catch (e) { if (strict) throw e; console.warn("pack expand failed; using the compressed pack:", e); return; }
+    }
+    try { if (setState) setState(verb ? "Updating…" : "Downloading…"); } catch (e) {}
+    const label = g.android ? "Android image" : "Linux image";
+    let last = -1;
+    await nativeDownload(f.url, f.name, f.size || 0, (p) => {
+      const mb = (p.received / 1048576) | 0;
+      const pct = p.total > 0 ? (Math.round(p.received / p.total * 100) + "% ") : "";
+      if (mb === last) return;
+      last = mb;
+      status.textContent = (verb || "Downloading " + label + " (one-time, ~" + f.mb + " MB)… ") + pct + mb + " MB";
+    });
+    if (raw) {
+      let ok = false;
+      try { ok = await expandPack(f.name, raw, g, status); }
+      catch (e) { if (strict) throw e; console.warn("pack expand failed; using the compressed pack:", e); return; }
+      if (strict && !ok) throw new Error("the downloaded image could not be prepared");
+    }
+  }
+
+  // Ensure the guest's image is on the device before booting. Sets g._pack to the updated image in use
+  // (null = the built-in one). opt.noUpdate: don't start a download when some version is already here
+  // (auto-boot of an unattended iPad).
+  async function ensureRootfs(g, status, setState, opt) {
+    const cfg = ROOTFS_REMOTE[g && g.base];
+    if (g) g._pack = null;
     if (!cfg) return;
     if (!window.Bridge || typeof Bridge.call !== "function") return;
-    for (const f of cfg.files) {                     // download each part (aarch64 = engine + rootfs)
-      const raw = /\.data\.gz$/.test(f.name) ? f.name.replace(/\.gz$/, "") : null;   // guest packs only
-      if (raw) {
-        try { if (await expandPack(f.name, raw, g, status)) continue; }   // expanded already (or just now)
-        catch (e) { console.warn("pack expand failed; using the compressed pack:", e); continue; }
+    const noUpdate = !!(opt && opt.noUpdate);
+    let choices = [];
+    if (g.pack && onBridge()) {
+      if (!noUpdate) await Promise.race([refreshPackIndex(), new Promise((r) => setTimeout(r, 6000))]);
+      choices = packChoices(g);
+    }
+    if (choices.length > 1) {
+      const have = await importNames();
+      const here = (e) => have.includes(rawName(e.name)) || (e.builtin && have.includes(e.name));
+      for (let i = 0; i < choices.length - 1; i++) {
+        const e = choices[i];
+        const fallback = choices.slice(i + 1).some(here);
+        if (noUpdate && !here(e) && fallback) continue;
+        const mb = e.mb || Math.round(e.size / 1048576);
+        const what = (g.android ? "Android" : "Linux") + " image";
+        try {
+          await fetchPackFile({ url: e.url, name: e.name, size: e.size, mb }, g, status, setState, true,
+            here(e) ? null : (fallback ? "Updating the " + what + " to version " + e.v : "Downloading the " + what) + " (~" + mb + " MB)… ");
+        } catch (err) {
+          console.warn("guest update to v" + e.v + " failed:", err);
+          try { status.textContent = "Couldn't get version " + e.v + " (" + ((err && err.message) || err) + ") — starting the installed one."; } catch (e2) {}
+          continue;
+        }
+        g._pack = e;
+        try { localStorage.setItem(LS_PACK_GOOD + g.pack.key, JSON.stringify(e)); } catch (e2) {}
+        break;
       }
-      let r;
-      try { r = await Bridge.call("binary", "download", { url: f.url, name: f.name, size: f.size || 0 }); }
-      catch (e) { throw new Error("couldn't start the image download — " + ((e && e.message) || e)); }
-      if (r && r.cached) continue;                   // already downloaded on a previous boot
-      try { if (setState) setState("Downloading…"); } catch (e) {}
-      await new Promise((resolve, reject) => {
-        let last = -1;
-        const handler = (p) => {
-          if (!p || p.name !== f.name) return;
-          if (p.done) { if (Bridge.offEvent) Bridge.offEvent("downloadProgress", handler); p.ok ? resolve() : reject(new Error(p.error || "download failed")); return; }
-          const mb = (p.received / 1048576) | 0;
-          const pct = p.total > 0 ? (Math.round(p.received / p.total * 100) + "% ") : "";
-          if (mb !== last) {
-            last = mb;
-            try {
-              const label = g.android ? "Android image" : "Linux image";
-              status.textContent = "Downloading " + label + " (one-time, ~" + f.mb + " MB)… " + pct + mb + " MB";
-            } catch (e) {}
-          }
-        };
-        Bridge.onEvent("downloadProgress", handler);
-      });
-      if (raw) {
-        try { await expandPack(f.name, raw, g, status); }
-        catch (e) { console.warn("pack expand failed; using the compressed pack:", e); }
+    }
+    if (!g._pack) {
+      for (const f of cfg.files) await fetchPackFile(f, g, status, setState, false, null);   // (aarch64 = engine + rootfs)
+      if (g.pack) { try { localStorage.removeItem(LS_PACK_GOOD + g.pack.key); } catch (e) {} }
+    }
+    // The other versions of this guest are dead weight now (0.4-2.3 GB each).
+    if (choices.length > 1) {
+      const keep = g._pack ? g._pack.name : cfg.files[0].name;
+      for (const e of choices) {
+        if (e.name === keep) continue;
+        for (const n of [e.name, rawName(e.name)]) { try { await Bridge.call("binary", "delete", { name: n }); } catch (e2) {} }
       }
     }
   }
@@ -1259,7 +1417,7 @@
             if (!window.QEMU_WASM) {
               await new Promise((res, rej) => {
                 const s = document.createElement("script");
-                s.src = "vendor/qemu/run.js?v=11";
+                s.src = "vendor/qemu/run.js?v=12";
                 s.onload = res; s.onerror = () => rej(new Error("missing QEMU-Wasm pack"));
                 document.head.appendChild(s);
               });
@@ -1278,7 +1436,7 @@
             // "Desktop" guest → full-screen graphical desktop (no console); plain 64-bit → [ terminal | GUI-only ].
             const panel64 = window.QEMU_PANEL.make(body.querySelector("#screen_container"), { mode: g.gui ? "desktop" : "console" });
             // Download the rootfs on first boot (hosted on GitHub; cached after). No-op if bundled/cached.
-            try { await ensureRootfs(g, status, setState); }
+            try { await ensureRootfs(g, status, setState, { noUpdate: !!(args && args.noUpdate) }); }
             catch (e) {
               setState("Download needed");
               status.textContent = "Couldn't download the " + (g.android ? "Android" : "64-bit Linux") + " image (needs internet on first boot): " + ((e && e.message) || e);
@@ -1397,6 +1555,8 @@
             await window.QEMU_WASM.run({
               screen_container: panel64.termHost,
               base: g.base || "vendor/qemu/",   // per-guest engine/rootfs dir (qemu-aload = the Python/Wine Alpine)
+              // an updated guest image (ensureRootfs): its file in the imports store, file table and QEMU arguments
+              pack: g._pack ? { url: location.origin + "/vmres/" + rawName(g._pack.name), files: g._pack.files, size: g._pack.rawSize, args: g._pack.args } : undefined,
               engineBase: g.engineBase || undefined,   // terminal support files; Android may use a distinct engine module
               engineModuleBase: g.engineModuleBase || undefined,
               wasm: g.wasm || "qemu-system-x86_64.wasm",   // engine binary name (aarch64 guest = qemu-system-aarch64.wasm)
@@ -1455,7 +1615,7 @@
                   status.textContent = "Running — x86_64 Linux. Type in the left terminal; the GUI stays OFF (saves power) until you launch a graphical program and TAP the right pane to show it.";
                 }
               },
-              onError: (e) => { setState("64-bit error"); status.textContent = e.message; },
+              onError: (e) => { setState("64-bit error"); status.textContent = e.message; try { console.error("[q64] engine error:", (e && (e.stack || e.message)) || e); } catch (e2) {} },
             });
           } catch (e) {
             setState("64-bit pack needed");
