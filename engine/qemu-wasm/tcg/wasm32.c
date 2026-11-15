@@ -143,6 +143,20 @@ EM_JS(int, instantiate_wasm, (uint32_t key_tb, uint32_t gen, int share), {
 
 /* Bootbox regions: instantiate a module assembled by bb_region_build() (bytes + the table indices
  * of the helpers it imports). Same result convention as instantiate_wasm. */
+/* Bootbox regions, indirect jumps (see tcg_wasm_out_lookup_inline, bb_region_compile) */
+int bb_soft_svc = 1;           /* softsvc: ARM64 SVC records its exception and returns (no longjmp) */
+int wasm_region_ind = 2;       /* indreg: indirect jumps in regions (0 off, 1 compare after the lookup,
+                                * 2 also answer the lookup in place; 3 as 2 but indirect targets never join
+                                * a region on their own; 4 as 2 but they only take leftover slots) */
+const WasmTbState *wasm32_tb_state;
+struct bb_ind_site bb_ind_tab[BB_IND_TAB];
+__thread uint64_t bb_last_lookup_pc;
+#define BB_IND_RECORD(site_, target_) do { \
+        struct bb_ind_site *e_ = &bb_ind_tab[((uint32_t)(uintptr_t)(site_) >> 2) & (BB_IND_TAB - 1)]; \
+        e_->site = (uint32_t)(uintptr_t)(site_); e_->target = (uint32_t)(uintptr_t)(target_); \
+        e_->pc = bb_last_lookup_pc; \
+    } while (0)
+
 EM_JS(int, instantiate_region, (uint32_t ptr, uint32_t len, uint32_t hptr, uint32_t hn), {
         const wasmBytes = HEAPU8.slice(ptr, ptr + len);
         const memory_v = new DataView(HEAP8.buffer);
@@ -1642,6 +1656,7 @@ static uintptr_t tcg_qemu_tb_exec_tci_full(CPUArchState *env, uint32_t *start, i
                 ctx.tb_ptr = 0;
                 return 0;
             }
+            BB_IND_RECORD(tb_ptr, ptr);
             tb_ptr = ptr;
 
             ctx.tb_ptr = tb_ptr;
@@ -1833,6 +1848,7 @@ int wasm_chain_nested;
 int wasm_chain_budget = WASM_CHAIN_BUDGET;
 int wasm_reg_locals = 1;
 int wasm_region_k;             /* /bootbox-tune region=K: TBs per region module (0 = off) */
+
 uint8_t *bb_region_compile(CPUState *cpu, const void *tc_ptr, int kmax,
                            uint32_t *len, uint32_t **helpers, uint32_t *nh);
 
@@ -2098,6 +2114,7 @@ __attribute__((noinline)) uintptr_t tci_hot_loop(CPUArchState *env, uint32_t *st
                 ctx.tb_ptr = 0;
                 return 0;
             }
+            BB_IND_RECORD(tb_ptr, ptr);
             tb_ptr = ptr;
             ctx.tb_ptr = tb_ptr;
             tb_counter_ptr = (uint32_t)tb_ptr + counter_vec_off;
@@ -2190,6 +2207,10 @@ void bootbox_tune_init(void)
                 }
             } else if (!strcmp(key, "chainmax") && v >= 2 && v <= WASM_CHAIN_BUDGET) {
                 wasm_chain_budget = v;
+            } else if (!strcmp(key, "softsvc") && v >= 0 && v <= 1) {
+                bb_soft_svc = v;
+            } else if (!strcmp(key, "indreg") && v >= 0 && v <= 4) {
+                wasm_region_ind = v;
             } else if (!strcmp(key, "regloc")) {
                 wasm_reg_locals = v != 0;
             } else if (!strcmp(key, "hotshare")) {
@@ -2234,11 +2255,11 @@ void bootbox_tune_init(void)
         }
         fclose(f);
         wasm_hot_num = (wasm_hot_share || wasm_sum_count) ? wasm_instantiate_num / 16 : wasm_instantiate_num;
-        fprintf(stderr, "[bootbox-tune] jit=%d max=%d fpinline=%d chain=%d/%s/%d regloc=%d hotshare=%d sumcnt=%d tsc=%d fasttci=%d lazywasm=%d hammock=%d repbulk=%d simdinline=%d gvecool=%d sseatom=%d gflush=%d region=%d\n",
+        fprintf(stderr, "[bootbox-tune] jit=%d max=%d fpinline=%d chain=%d/%s/%d regloc=%d hotshare=%d sumcnt=%d tsc=%d fasttci=%d lazywasm=%d hammock=%d repbulk=%d simdinline=%d gvecool=%d sseatom=%d gflush=%d region=%d indreg=%d\n",
                 wasm_instantiate_num, wasm_max_instance_alive, wasm_fp_inline_enabled,
                 wasm_tail_chain, wasm_chain_nested ? "nested" : "tail", wasm_chain_budget,
                 wasm_reg_locals, wasm_hot_share, wasm_sum_count, bootbox_tsc_lockfree, wasm_fast_tci, bb_lazy_wasm,
-                bb_hammock, bb_repbulk, wasm_simd_inline_enabled, wasm_gvec_ool_enabled, bb_sse_atom16, bb_gflush, wasm_region_k);
+                bb_hammock, bb_repbulk, wasm_simd_inline_enabled, wasm_gvec_ool_enabled, bb_sse_atom16, bb_gflush, wasm_region_k, wasm_region_ind);
     }
     qatomic_set(&state, 2);
 }

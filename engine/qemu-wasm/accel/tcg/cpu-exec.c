@@ -238,6 +238,24 @@ static TranslationBlock *tb_htable_lookup(CPUState *cpu, vaddr pc,
     return qht_lookup_custom(&tb_ctx.htable, &desc, h, tb_lookup_cmp);
 }
 
+#if defined(EMSCRIPTEN) && !defined(CONFIG_TCG_INTERPRETER)
+extern __thread uint64_t bb_last_lookup_pc;
+/* Bootbox regions (translate-all.c): where pc sits in a jump cache, and what a lookup would use */
+uint32_t bb_jc_entry_off(vaddr pc);
+uint32_t bb_curr_cflags(CPUState *cpu);
+uint32_t bb_jc_entry_off(vaddr pc)
+{
+    return offsetof(CPUJumpCache, array) +
+           tb_jmp_cache_hash_func(pc) * sizeof(((CPUJumpCache *)0)->array[0]);
+}
+uint32_t bb_curr_cflags(CPUState *cpu)
+{
+    return curr_cflags(cpu);
+}
+QEMU_BUILD_BUG_ON(offsetof(CPUJumpCache, array[0].pc) - offsetof(CPUJumpCache, array[0].tb) != 8);
+QEMU_BUILD_BUG_ON(sizeof(((CPUJumpCache *)0)->array[0].tb) != 4);
+#endif
+
 /* Might cause an exception, so have a longjmp destination ready */
 static inline TranslationBlock *tb_lookup(CPUState *cpu, vaddr pc,
                                           uint64_t cs_base, uint32_t flags,
@@ -414,6 +432,9 @@ const void *HELPER(lookup_tb_ptr)(CPUArchState *env)
     uint32_t flags, cflags;
 
     cpu_get_tb_cpu_state(env, &pc, &cs_base, &flags);
+#if defined(EMSCRIPTEN) && !defined(CONFIG_TCG_INTERPRETER)
+    bb_last_lookup_pc = pc;    /* Bootbox regions: the interpreter's goto_ptr records it per site */
+#endif
 
     cflags = curr_cflags(cpu);
     if (check_for_breakpoints(cpu, pc, &cflags)) {
@@ -1040,6 +1061,13 @@ cpu_exec_loop(CPUState *cpu, SyncClocks *sc)
 
             cpu_loop_exec_tb(cpu, tb, pc, &last_tb, &tb_exit);
 
+#ifdef EMSCRIPTEN
+            /* Bootbox: a helper recorded an exception and returned instead of longjmp-ing
+             * (softsvc): deliver it now, ahead of interrupts, as the longjmp path would. */
+            if (unlikely(cpu->exception_index >= 0)) {
+                break;
+            }
+#endif
             /* Try to align the host and virtual clocks
                if the guest is in advance */
             align_clocks(sc, cpu);

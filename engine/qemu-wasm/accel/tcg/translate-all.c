@@ -498,8 +498,15 @@ uint32_t bb_region_member_tb(int i);
 bool bb_region_has(uint32_t tb);
 bool bb_region_capture(uint32_t tb, uint32_t t0, uint32_t t1);
 uint8_t *bb_region_build(uint32_t *len, uint32_t **helpers, uint32_t *nh);
+#include "../../tcg/wasm32.h"
+uint32_t bb_region_ind_site(int i, int n);
+void bb_region_ind_set(int i, int n, uint32_t target, uint32_t tbs, uint32_t ent_off, uint64_t pc,
+                       uint32_t tflags, uint64_t tcs, int inl);
+uint32_t bb_jc_entry_off(vaddr pc);
+uint32_t bb_curr_cflags(CPUState *cpu);
 /* [0] magic, [1] regions built, [2] members in them, [3] head not re-translatable,
- * [4] successor not re-translatable, [5] build failed */
+ * [4] successor not re-translatable, [5] build failed, [6] indirect jumps predicted,
+ * [7] of those, lookups answered in place */
 uint32_t bb_region_stats[8] __attribute__((used)) = { 0x52474e31 };
 
 static uint32_t bb_tb_slot(const TranslationBlock *tb, int n)
@@ -508,6 +515,41 @@ static uint32_t bb_tb_slot(const TranslationBlock *tb, int n)
         return 0;
     }
     return (uint32_t)qatomic_read(&tb->jmp_target_addr[n]);
+}
+
+/*
+ * Where the n-th indirect jump (goto_ptr) of region member i went the last time the interpreter
+ * ran it: 0, or the code address of a live TB. Records the prediction with the member; when that
+ * TB is of the kind the target described (wasm32_tb_state) and is what a lookup at the recorded pc
+ * would be allowed to return, the member may also answer the lookup itself (see tcg_wasm_out_lookup_inline).
+ */
+static uint32_t bb_region_ind_target(CPUState *cpu, int i, int n)
+{
+    uint32_t site = bb_region_ind_site(i, n);
+    if (!site) {
+        return 0;
+    }
+    struct bb_ind_site e = bb_ind_tab[(site >> 2) & (BB_IND_TAB - 1)];
+    if (e.site != site || !e.target) {
+        return 0;
+    }
+    const TranslationBlock *tb = tcg_tb_lookup(e.target);
+    const TranslationBlock *mtb = tcg_tb_lookup(bb_region_member_tb(i));
+    if (!tb || !mtb || (uint32_t)(uintptr_t)tb->tc.ptr != e.target || (tb->cflags & CF_INVALID)) {
+        return 0;
+    }
+    const WasmTbState *d = wasm32_tb_state;
+    int inl = d && (tb->cflags & CF_PCREL) && tb_cflags(tb) == bb_curr_cflags(cpu) &&
+              (tb->flags & d->need_set) == d->need_set && !(tb->flags & d->need_clr) &&
+              (d->cs_off >= 0 || tb->cs_base == 0) &&
+              ((e.pc ^ tb_page_addr0(tb)) & ~TARGET_PAGE_MASK) == 0;
+    bb_region_ind_set(i, n, e.target, (uint32_t)(uintptr_t)tb, bb_jc_entry_off(e.pc), e.pc,
+                      tb->flags, tb->cs_base, inl);
+    qatomic_inc(&bb_region_stats[6]);
+    if (inl) {
+        qatomic_inc(&bb_region_stats[7]);
+    }
+    return e.target;
 }
 
 /*
@@ -536,8 +578,12 @@ uint8_t *bb_region_compile(CPUState *cpu, const void *tc_ptr, int kmax,
     for (int i = 0; i < bb_region_count() && bb_region_count() < kmax; i++) {
         uint32_t self = bb_region_member_tb(i);
         const TranslationBlock *mtb = tcg_tb_lookup(self);
-        for (int n = 0; n < 2 && bb_region_count() < kmax; n++) {
-            uint32_t t = bb_tb_slot(mtb, n);
+        for (int n = 0; n < 4 && bb_region_count() < kmax; n++) {
+            /* its two direct jumps, then (indreg) where its indirect jumps last went */
+            /* indreg 1/2: indirect targets compete with direct ones for the member slots */
+            uint32_t t = n < 2 ? bb_tb_slot(mtb, n)
+                               : (wasm_region_ind == 1 || wasm_region_ind == 2
+                                  ? bb_region_ind_target(cpu, i, n - 2) : 0);
             if (!t || t == self || bb_region_has(t)) {
                 continue;
             }
@@ -547,6 +593,20 @@ uint8_t *bb_region_compile(CPUState *cpu, const void *tc_ptr, int kmax,
             }
             const TranslationBlock *ttb = tcg_tb_lookup(t);
             bb_region_capture(t, bb_tb_slot(ttb, 0), bb_tb_slot(ttb, 1));
+        }
+    }
+    if (wasm_region_ind) {
+        /* predictions of the members the walk above did not reach (the region filled up first) */
+        for (int i = 0; i < bb_region_count(); i++) {
+            for (int n = 0; n < 2; n++) {
+                uint32_t t = bb_region_ind_target(cpu, i, n);
+                /* indreg 4: indirect targets only take the slots the direct walk left free */
+                if (wasm_region_ind == 4 && t && bb_region_count() < kmax && !bb_region_has(t) &&
+                    bb_tb_regen_member(cpu, (const void *)(uintptr_t)t, pc)) {
+                    const TranslationBlock *ttb = tcg_tb_lookup(t);
+                    bb_region_capture(t, bb_tb_slot(ttb, 0), bb_tb_slot(ttb, 1));
+                }
+            }
         }
     }
     uint8_t *mod = bb_region_build(len, helpers, nh);

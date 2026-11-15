@@ -7395,6 +7395,20 @@ void tcg_x86_init(void)
 #if defined(EMSCRIPTEN) && !defined(CONFIG_TCG_INTERPRETER)
     QEMU_BUILD_BUG_ON(float_round_nearest_even != 0);
     wasm32_fp_inline = &x86_wasm_fp_inline;
+    /* cpu_get_tb_cpu_state() for 64-bit code: pc = eip, cs_base = 0,
+     * flags = hflags | (eflags & (IOPL | TF | RF | VM | AC)) */
+    static const WasmTbState x86_wasm_tb_state = {
+        .pc_off = offsetof(CPUX86State, eip),
+        .jc_off = (int)offsetof(X86CPU, parent_obj.tb_jmp_cache) - (int)offsetof(X86CPU, env),
+        .cs_off = -1, .cs2_off = -1,
+        .need_set = HF_CS64_MASK,
+        .nterm = 2,
+        .term = { { offsetof(CPUX86State, hflags), 0xffffffffu, 0 },
+                  { offsetof(CPUX86State, eflags),
+                    IOPL_MASK | TF_MASK | RF_MASK | VM_MASK | AC_MASK, 0 } },
+    };
+    QEMU_BUILD_BUG_ON(sizeof(((CPUX86State *)0)->eip) != 8);
+    wasm32_tb_state = &x86_wasm_tb_state;
     wasm32_simd_inline = x86_wasm_simd_inline;
     wasm32_simd_inline_n = ARRAY_SIZE(x86_wasm_simd_inline);
 #endif

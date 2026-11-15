@@ -1259,7 +1259,7 @@
             if (!window.QEMU_WASM) {
               await new Promise((res, rej) => {
                 const s = document.createElement("script");
-                s.src = "vendor/qemu/run.js?v=10";
+                s.src = "vendor/qemu/run.js?v=11";
                 s.onload = res; s.onerror = () => rej(new Error("missing QEMU-Wasm pack"));
                 document.head.appendChild(s);
               });
@@ -1355,13 +1355,13 @@
               // Build 26 engine: regions (region=4) - a hot block and the blocks it jumps to compile into one
               // function. Mac WebKit, same engine with and without: CoreMark ARM64 ~1700 -> ~2400, x86-64
               // ~635 -> ~930; Android, 6 cold app launches 135 -> 96 s. Full speed only: every step down has it off.
-              { name: "full speed", tune: Object.assign({ region: 4 }, fastTci ? { fasttci: 1 } : {}) },
-              { name: "classic interpreter, modules stored with every block", tune: { lazywasm: 0, split: 0, hammock: 0, gflush: 0 } },
-              { name: "no TB chaining", tune: { chain: 0, lazywasm: 0, split: 0, hammock: 0, gflush: 0 } },
-              { name: "no TB chaining, no SIMD float/integer inlining", tune: { chain: 0, fpinline: 0, simdinline: 0, lazywasm: 0, split: 0, hammock: 0, gflush: 0 } },
-              { name: "no chaining/SIMD inlining/register locals/bulk string ops", tune: { chain: 0, fpinline: 0, simdinline: 0, repbulk: 0, regloc: 0, lazywasm: 0, split: 0, hammock: 0, gflush: 0 } },
-              { name: "the above + fixed-size memory, fewer compiled blocks", tune: { chain: 0, fpinline: 0, simdinline: 0, repbulk: 0, regloc: 0, max: 8000, lazywasm: 0, split: 0, hammock: 0, gflush: 0 }, presize: true },
-              { name: "interpreter only (slow)", tune: { chain: 0, fpinline: 0, simdinline: 0, repbulk: 0, regloc: 0, max: 8000, jit: 1000000000, lazywasm: 0, split: 0, hammock: 0, gflush: 0 }, presize: true },
+              { name: "full speed", tune: Object.assign({ region: 4, indreg: 3 }, fastTci ? { fasttci: 1 } : {}) },
+              { name: "classic interpreter, modules stored with every block", tune: { lazywasm: 0, split: 0, hammock: 0, gflush: 0, indreg: 0, softsvc: 0 } },
+              { name: "no TB chaining", tune: { chain: 0, lazywasm: 0, split: 0, hammock: 0, gflush: 0, indreg: 0, softsvc: 0 } },
+              { name: "no TB chaining, no SIMD float/integer inlining", tune: { chain: 0, fpinline: 0, simdinline: 0, lazywasm: 0, split: 0, hammock: 0, gflush: 0, indreg: 0, softsvc: 0 } },
+              { name: "no chaining/SIMD inlining/register locals/bulk string ops", tune: { chain: 0, fpinline: 0, simdinline: 0, repbulk: 0, regloc: 0, lazywasm: 0, split: 0, hammock: 0, gflush: 0, indreg: 0, softsvc: 0 } },
+              { name: "the above + fixed-size memory, fewer compiled blocks", tune: { chain: 0, fpinline: 0, simdinline: 0, repbulk: 0, regloc: 0, max: 8000, lazywasm: 0, split: 0, hammock: 0, gflush: 0, indreg: 0, softsvc: 0 }, presize: true },
+              { name: "interpreter only (slow)", tune: { chain: 0, fpinline: 0, simdinline: 0, repbulk: 0, regloc: 0, max: 8000, jit: 1000000000, lazywasm: 0, split: 0, hammock: 0, gflush: 0, indreg: 0, softsvc: 0 }, presize: true },
             ];
             let safe = cfg().q64safe6 || { level: 0 };
             try {

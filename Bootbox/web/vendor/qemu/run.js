@@ -386,6 +386,12 @@
       // to, as ONE function, so those hops are branches instead of calls into another module instance
       // (WebKit: a loop spanning 2 blocks 9.6 -> 3.9 ns per iteration, 4 blocks 20.9 -> 7.3). Older engines ignore it.
       if (t.region) tune += "region=" + (t.region | 0) + "\n";
+      // Build 27 engine. indreg: indirect jumps (returns, calls through pointers) whose last target is a
+      // member of the same region are answered in place (3 = in-place lookup, targets never join a region
+      // on their own). softsvc: an ARM64 system call returns to the execution loop instead of throwing a
+      // JavaScript exception. Both default ON in the engine; the safety ladder turns them off.
+      if (t.indreg !== undefined) tune += "indreg=" + (t.indreg | 0) + "\n";
+      if (t.softsvc !== undefined) tune += "softsvc=" + (t.softsvc | 0) + "\n";
       if (t.extra) tune += String(t.extra).replace(/[^a-z0-9=\n]/g, "") + "\n";   // harness experiments: raw key=value lines
       if (tune) mod.FS.writeFile("/bootbox-tune", tune);
     });

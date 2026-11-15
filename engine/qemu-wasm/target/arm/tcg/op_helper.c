@@ -410,6 +410,25 @@ void HELPER(exception_with_syndrome)(CPUARMState *env, uint32_t excp,
     raise_exception(env, excp, syndrome, exception_target_el(env));
 }
 
+/*
+ * Bootbox: a system call (SVC) without the longjmp. Under emscripten a longjmp is a JavaScript
+ * throw (JSC walks the whole stack for it): ~6 us per guest system call. This only records the
+ * exception, exactly as raise_exception() does; the TB then returns to the execution loop, which
+ * delivers a pending exception before anything else (see cpu_exec_loop).
+ */
+void HELPER(bb_svc_soft)(CPUARMState *env, uint32_t syndrome)
+{
+    CPUState *cs = env_cpu(env);
+    uint32_t target_el = exception_target_el(env);
+
+    if (target_el == 1 && (arm_hcr_el2_eff(env) & HCR_TGE)) {
+        target_el = 2;
+    }
+    cs->exception_index = EXCP_SWI;
+    env->exception.syndrome = syndrome;
+    env->exception.target_el = target_el;
+}
+
 uint32_t HELPER(cpsr_read)(CPUARMState *env)
 {
     return cpsr_read(env) & ~CPSR_EXEC;

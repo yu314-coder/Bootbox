@@ -659,11 +659,22 @@ static void tcg_wasm_out_op_return(TCGContext *s)
 #define BB_RPATCH_MAX 512
 #define BB_RPATCH_CALL 0      /* off: 2-byte LEB128 helper import index */
 #define BB_RPATCH_GOTO 1      /* off: 5-byte i32.const target; off2: 2-byte sel; off3: 2-byte br depth */
+#define BB_RPATCH_IND 2       /* inline TB lookup: off: 1-byte enable; off2/off3: 10-byte i64.const pc;
+                               * off4: 5-byte jump-cache entry offset; off5: 5-byte TranslationBlock *;
+                               * off6: 5-byte predicted code address; off7: 5-byte flags;
+                               * off8: 10-byte cs_base (0 = the target has none to compare) */
 struct bb_rpatch {
-    uint32_t off, off2, off3;
-    uint16_t val;
-    uint8_t kind, which;
+    uint32_t off, off2, off3, off4, off5, off6, off7, off8;
+    uint32_t tci_off;          /* GOTO from goto_ptr: interpreter-code offset just after the goto_ptr */
+    uint16_t val;              /* CALL: helper number; GOTO from goto_ptr: 1 + index of its IND patch */
+    uint8_t kind, which;       /* GOTO: 0/1 = the TB's direct jumps, 2 = goto_ptr */
+    /* filled in when the region is assembled (goto_ptr sites) */
+    uint32_t target, tbs, ent_off, tflags;
+    uint64_t pc, tcs;
+    uint8_t inl;
 };
+extern int wasm_region_ind;
+static __thread int bb_ind_pending;   /* 1 + index of the IND patch waiting for its goto_ptr */
 __thread struct bb_rpatch bb_rpatch[BB_RPATCH_MAX];
 __thread int bb_rpatch_n;
 __thread bool bb_rpatch_overflow;
@@ -676,6 +687,7 @@ static struct bb_rpatch *bb_rpatch_new(int kind)
         return &bb_rpatch[BB_RPATCH_MAX - 1];
     }
     struct bb_rpatch *r = &bb_rpatch[bb_rpatch_n++];
+    memset(r, 0, sizeof(*r));
     r->kind = kind;
     return r;
 }
@@ -1991,8 +2003,18 @@ static void tcg_wasm_out_region_hook(TCGContext *s, int which)
     if (!wasm_region_k || !wasm_reg_locals || !wasm_tail_chain) {
         return;
     }
+    if (which == 2 && !wasm_region_ind) {
+        return;
+    }
     struct bb_rpatch *r = bb_rpatch_new(BB_RPATCH_GOTO);
     r->which = which;
+    r->val = 0;
+    r->tci_off = 0;
+    if (which == 2) {
+        r->tci_off = tcg_current_code_size(s);
+        r->val = bb_ind_pending;
+        bb_ind_pending = 0;
+    }
     tcg_wasm_out_op_local_get(s, TMP32_LOCAL_0_IDX);
     tcg_wasm_out8(s, 0x41);                                    /* i32.const <target> */
     r->off = cur_sub_buf_off_rel();
@@ -2033,9 +2055,13 @@ static void tcg_wasm_out_goto_ptr(TCGContext *s, TCGReg arg)
         tcg_wasm_out_op_i32_wrap_i64(s);
         tcg_wasm_out_op_local_tee(s, TMP32_LOCAL_0_IDX);
         tcg_wasm_out_op_if_noret(s);
+        /* Bootbox regions: the target this indirect jump had when the region was assembled is a
+         * member too - the looked-up TB is compared with it exactly as a direct jump's slot is. */
+        tcg_wasm_out_region_hook(s, 2);
         tcg_wasm_out_chain(s);
         tcg_wasm_out_op_end(s);
     }
+    bb_ind_pending = 0;
     tcg_wasm_out_op_i32_const(s, 0);
     tcg_wasm_out_op_return(s);
 }
@@ -3237,6 +3263,147 @@ static bool tcg_wasm_out_simd_inline(TCGContext *s, const tcg_insn_unit *func,
     return false;
 }
 
+/*
+ * Bootbox regions, indirect jumps: helper_lookup_tb_ptr answered in place when the jump goes where
+ * it went when the region was assembled. The test is tb_lookup()'s own fast path with the
+ * predicted TB T as the candidate: this vCPU's jump cache entry for the pc still holds T for that
+ * pc, and the CPU state that selects a TB (flags, cs_base - described by the target in
+ * wasm32_tb_state) equals this TB's, which the assembler checked T shares. Then the helper would
+ * return T's code address, so that constant is the result; anything else calls the helper.
+ * Emitted disabled (the leading constant 0); bb_region_build enables and fills it in.
+ * Returns true with an open `if..else`: the caller emits the helper call and the `end`.
+ */
+extern const void *helper_lookup_tb_ptr(CPUArchState *env);
+static void bb_out_pad5(TCGContext *s)
+{
+    tcg_wasm_out8(s, 0x80); tcg_wasm_out8(s, 0x80); tcg_wasm_out8(s, 0x80); tcg_wasm_out8(s, 0x80);
+    tcg_wasm_out8(s, 0x00);
+}
+static void bb_out_pad10(TCGContext *s)
+{
+    for (int i = 0; i < 9; i++) {
+        tcg_wasm_out8(s, 0x80);
+    }
+    tcg_wasm_out8(s, 0x00);
+}
+static void bb_out_env_i32(TCGContext *s, int off, bool wide)
+{
+    tcg_wasm_out_op_global_get_r_i32(s, TCG_AREG0);
+    if (off < 0) {
+        tcg_wasm_out_op_i32_const(s, off);
+        tcg_wasm_out_op_i32_add(s);
+        off = 0;
+    }
+    if (wide) {
+        tcg_wasm_out_op_i64_load(s, 0, off);
+    } else {
+        tcg_wasm_out_op_i32_load(s, 0, off);
+    }
+}
+static bool tcg_wasm_out_lookup_inline(TCGContext *s, const tcg_insn_unit *func)
+{
+    const WasmTbState *d = wasm32_tb_state;
+    const TranslationBlock *tb = s->gen_tb;
+
+    bb_ind_pending = 0;
+    if ((const void *)func != (const void *)helper_lookup_tb_ptr || wasm_region_ind < 2 ||
+        !wasm_region_k || !wasm_tail_chain || !d || !tb || !(tb->cflags & CF_PCREL) ||
+        (tb->flags & d->need_set) != d->need_set || (tb->flags & d->need_clr)) {
+        return false;          /* the jump stays in the same kind of code: its target qualifies too */
+    }
+    struct bb_rpatch *r = bb_rpatch_new(BB_RPATCH_IND);
+    if (bb_rpatch_overflow) {
+        return false;
+    }
+    bb_ind_pending = bb_rpatch_n;      /* 1 + index */
+
+    tcg_wasm_out8(s, 0x41);                                    /* i32.const 0|1: enabled */
+    r->off = cur_sub_buf_off_rel();
+    tcg_wasm_out8(s, 0x00);
+    tcg_wasm_out_op_if_ret_i32(s);
+    env_cached = false;                /* the env local is (re)loaded inside this arm only */
+    /* pc == T's pc */
+    bb_out_env_i32(s, d->pc_off, true);
+    tcg_wasm_out8(s, 0x42);                                    /* i64.const */
+    r->off2 = cur_sub_buf_off_rel();
+    bb_out_pad10(s);
+    tcg_wasm_out_op_i64_eq(s);
+    /* jc = cpu->tb_jmp_cache; jc->array[hash(pc)].tb == T */
+    bb_out_env_i32(s, d->jc_off, false);
+    tcg_wasm_out8(s, 0x41);                                    /* i32.const entry offset */
+    r->off4 = cur_sub_buf_off_rel();
+    bb_out_pad5(s);
+    tcg_wasm_out_op_i32_add(s);
+    tcg_wasm_out_op_local_tee(s, TMP32_LOCAL_0_IDX);
+    tcg_wasm_out_op_i32_load(s, 0, 0);
+    tcg_wasm_out8(s, 0x41);                                    /* i32.const T */
+    r->off5 = cur_sub_buf_off_rel();
+    bb_out_pad5(s);
+    tcg_wasm_out_op_i32_eq(s);
+    tcg_wasm_out_op_i32_and(s);
+    /* jc->array[hash(pc)].pc == pc */
+    tcg_wasm_out_op_local_get(s, TMP32_LOCAL_0_IDX);
+    tcg_wasm_out_op_i64_load(s, 0, 8);
+    tcg_wasm_out8(s, 0x42);
+    r->off3 = cur_sub_buf_off_rel();
+    bb_out_pad10(s);
+    tcg_wasm_out_op_i64_eq(s);
+    tcg_wasm_out_op_i32_and(s);
+    /* the flags cpu_get_tb_cpu_state() would compute == this TB's */
+    for (int i = 0; i < d->nterm; i++) {
+        bb_out_env_i32(s, d->term[i].off, false);
+        if (d->term[i].mask != 0xffffffffu) {
+            tcg_wasm_out_op_i32_const(s, (int32_t)d->term[i].mask);
+            tcg_wasm_out_op_i32_and(s);
+        }
+        if (d->term[i].shift) {
+            tcg_wasm_out_op_i32_const(s, d->term[i].shift);
+            tcg_wasm_out_op_i32_shl(s);
+        }
+        if (i) {
+            tcg_wasm_out_op_i32_or(s);
+        }
+    }
+    tcg_wasm_out8(s, 0x41);                                    /* i32.const T's flags */
+    r->off7 = cur_sub_buf_off_rel();
+    bb_out_pad5(s);
+    tcg_wasm_out_op_i32_eq(s);
+    tcg_wasm_out_op_i32_and(s);
+    if (d->cs_off >= 0) {
+        bb_out_env_i32(s, d->cs_off, true);
+        if (d->cs_mask != ~(uint64_t)0) {
+            tcg_wasm_out_op_i64_const(s, (int64_t)d->cs_mask);
+            tcg_wasm_out_op_i64_and(s);
+        }
+        if (d->cs2_off >= 0) {
+            bb_out_env_i32(s, d->cs2_off, false);
+            tcg_wasm_out_op_i64_extend_i32_u(s);
+            tcg_wasm_out_op_i64_const(s, d->cs2_shift);
+            tcg_wasm_out_op_i64_shl(s);
+            tcg_wasm_out_op_i64_or(s);
+        }
+        tcg_wasm_out8(s, 0x42);                                /* i64.const T's cs_base */
+        r->off8 = cur_sub_buf_off_rel();
+        bb_out_pad10(s);
+        tcg_wasm_out_op_i64_eq(s);
+        tcg_wasm_out_op_i32_and(s);
+    }
+    tcg_wasm_out_op_else(s);
+    tcg_wasm_out_op_i32_const(s, 0);
+    tcg_wasm_out_op_end(s);
+    env_cached = false;
+
+    tcg_wasm_out_op_if_noret(s);
+    tcg_wasm_out8(s, 0x41);                                    /* i32.const T's code address */
+    r->off6 = cur_sub_buf_off_rel();
+    bb_out_pad5(s);
+    tcg_wasm_out_op_i64_extend_i32_s(s);
+    tcg_wasm_out_op_global_set_r(s, TCG_REG_R0);
+    tcg_wasm_out_op_else(s);
+    env_cached = false;
+    return true;
+}
+
 static void tcg_wasm_out_call(TCGContext *s, const tcg_insn_unit *func,
                          const TCGHelperInfo *info)
 {
@@ -3264,6 +3431,12 @@ static void tcg_wasm_out_call(TCGContext *s, const tcg_insn_unit *func,
      * the resume block, unwinding flag and register spill that a resumable call needs.
      */
     if (wasm_reg_locals && (info->flags & TCG_CALL_NO_SIDE_EFFECTS)) {
+        if (tcg_wasm_out_lookup_inline(s, func)) {
+            gen_func_wrapper_code(s, func, info, func_idx);
+            tcg_wasm_out_op_end(s);
+            env_cached = false;
+            return;
+        }
         gen_func_wrapper_code(s, func, info, func_idx);
         return;
     }
@@ -4987,6 +5160,7 @@ void tcg_out_init() {
     wasm_fp_locals = false;
     bb_rpatch_n = 0;
     bb_rpatch_overflow = false;
+    bb_ind_pending = 0;
 }
 
 /* Test if a constant matches the constraint. */

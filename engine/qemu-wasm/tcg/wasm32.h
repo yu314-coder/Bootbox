@@ -95,6 +95,30 @@ typedef struct WasmFpInline {
     int cc_src_off;   /* the comis* helpers write the condition codes here (target_ulong) */
 } WasmFpInline;
 extern const WasmFpInline *wasm32_fp_inline;
+/*
+ * How the target's cpu_get_tb_cpu_state() computes a TB's identity, for TBs whose flags have
+ * need_set set and need_clr clear: pc is the 64-bit value at pc_off; flags is the OR of
+ * ((u32 at term.off) & term.mask) << term.shift; cs_base is the 64-bit value at cs_off, or 0 when
+ * cs_off < 0 (see cs_mask below for a second part). Offsets are from CPUArchState; jc_off is CPUState.tb_jmp_cache seen from there.
+ * Registered by the target; lets a region answer an indirect jump's TB lookup in place.
+ */
+typedef struct WasmTbState {
+    int pc_off, jc_off, cs_off;
+    uint32_t need_set, need_clr;
+    int nterm;
+    struct { int off; uint32_t mask; int shift; } term[2];
+    /* cs_base = ((u64 at cs_off) & cs_mask) | ((u32 at cs2_off) << cs2_shift) when cs2_off >= 0 */
+    uint64_t cs_mask;
+    int cs2_off, cs2_shift;
+} WasmTbState;
+extern const WasmTbState *wasm32_tb_state;
+/* Last target of each interpreted indirect jump, keyed by the address just after its goto_ptr. */
+struct bb_ind_site { uint32_t site, target; uint64_t pc; };
+#define BB_IND_TAB 8192
+extern struct bb_ind_site bb_ind_tab[BB_IND_TAB];
+extern __thread uint64_t bb_last_lookup_pc;   /* pc of this thread's last helper_lookup_tb_ptr */
+extern int bb_soft_svc;                       /* /bootbox-tune softsvc=0|1 */
+extern int wasm_region_ind;                   /* /bootbox-tune indreg=0|1|2 */
 extern int wasm_fp_inline_enabled;   /* /bootbox-tune "fpinline=0" turns it off */
 
 /*

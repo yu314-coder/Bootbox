@@ -18,6 +18,9 @@
  */
 #include "qemu/osdep.h"
 
+#if defined(EMSCRIPTEN) && !defined(CONFIG_TCG_INTERPRETER)
+#include "../../../tcg/wasm32.h"
+#endif
 #include "translate.h"
 #include "translate-a64.h"
 #include "qemu/log.h"
@@ -89,6 +92,27 @@ typedef struct AArch64DecodeTable {
 /* initialize TCG globals.  */
 void a64_translate_init(void)
 {
+#if defined(EMSCRIPTEN) && !defined(CONFIG_TCG_INTERPRETER)
+    /* cpu_get_tb_cpu_state() for AArch64 code that is not single-stepping: pc = env->pc,
+     * flags = hflags.flags, cs_base = hflags.flags2 with BTYPE (never cached there) taken from
+     * env->btype, which stays 0 on a CPU without BTI. With SS_ACTIVE set in the CPU the flags
+     * differ from a TB whose bit is clear, and a TB with it set is not described here. */
+    static const WasmTbState a64_wasm_tb_state = {
+        .pc_off = offsetof(CPUARMState, pc),
+        .jc_off = (int)offsetof(ARMCPU, parent_obj.tb_jmp_cache) - (int)offsetof(ARMCPU, env),
+        .need_set = R_TBFLAG_ANY_AARCH64_STATE_MASK,
+        .need_clr = R_TBFLAG_ANY_SS_ACTIVE_MASK | R_TBFLAG_ANY_PSTATE__SS_MASK,
+        .nterm = 1,
+        .term = { { offsetof(CPUARMState, hflags.flags), 0xffffffffu, 0 } },
+        .cs_off = offsetof(CPUARMState, hflags.flags2),
+        .cs_mask = ~(uint64_t)R_TBFLAG_A64_BTYPE_MASK,
+        .cs2_off = offsetof(CPUARMState, btype), .cs2_shift = R_TBFLAG_A64_BTYPE_SHIFT,
+    };
+    QEMU_BUILD_BUG_ON(sizeof(((CPUARMState *)0)->hflags.flags2) != 8);
+    QEMU_BUILD_BUG_ON(sizeof(((CPUARMState *)0)->btype) != 4);
+    wasm32_tb_state = &a64_wasm_tb_state;
+#endif
+
     int i;
 
     cpu_pc = tcg_global_mem_new_i64(tcg_env,
@@ -2345,6 +2369,16 @@ static bool trans_SVC(DisasContext *s, arg_i *a)
         return true;
     }
     gen_ss_advance(s);
+#ifdef EMSCRIPTEN
+    if (bb_soft_svc) {
+        /* no longjmp: record the exception and return to the execution loop */
+        gen_a64_update_pc(s, 4);
+        gen_helper_bb_svc_soft(tcg_env, tcg_constant_i32(syndrome));
+        tcg_gen_exit_tb(NULL, 0);
+        s->base.is_jmp = DISAS_NORETURN;
+        return true;
+    }
+#endif
     gen_exception_insn(s, 4, EXCP_SWI, syndrome);
     return true;
 }

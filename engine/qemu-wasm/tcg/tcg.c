@@ -6458,6 +6458,54 @@ static uint8_t *bb_out_sleb5(uint8_t *p, int32_t v)
     return p;
 }
 
+static uint8_t *bb_out_sleb10(uint8_t *p, int64_t v)
+{
+    for (int i = 0; i < 9; i++) {
+        *p++ = ((v >> (7 * i)) & 0x7f) | 0x80;
+    }
+    *p++ = (v >> 63) & 0x7f;
+    return p;
+}
+
+/* The goto_ptr sites of member i: n-th site's key (0 when there is no such site), and the
+ * prediction for it (translate-all.c resolves it; inl = the lookup may be answered in place). */
+uint32_t bb_region_ind_site(int i, int n);
+void bb_region_ind_set(int i, int n, uint32_t target, uint32_t tbs, uint32_t ent_off, uint64_t pc,
+                       uint32_t tflags, uint64_t tcs, int inl);
+static struct bb_rpatch *bb_region_ind_patch(int i, int n)
+{
+    if (i < 0 || i >= bbr.n) {
+        return NULL;
+    }
+    struct bb_region_member *m = &bbr.m[i];
+    for (uint32_t x = 0; x < m->npatch; x++) {
+        struct bb_rpatch *r = &bbr.patch[m->patch_base + x];
+        if (r->kind == BB_RPATCH_GOTO && r->which == 2 && n-- == 0) {
+            return r;
+        }
+    }
+    return NULL;
+}
+uint32_t bb_region_ind_site(int i, int n)
+{
+    struct bb_rpatch *r = bb_region_ind_patch(i, n);
+    return r ? bbr.m[i].tb + r->tci_off : 0;
+}
+void bb_region_ind_set(int i, int n, uint32_t target, uint32_t tbs, uint32_t ent_off, uint64_t pc,
+                       uint32_t tflags, uint64_t tcs, int inl)
+{
+    struct bb_rpatch *r = bb_region_ind_patch(i, n);
+    if (r) {
+        r->target = target;
+        r->tbs = tbs;
+        r->ent_off = ent_off;
+        r->pc = pc;
+        r->tflags = tflags;
+        r->tcs = tcs;
+        r->inl = inl;
+    }
+}
+
 static uint8_t *bb_out_uleb5(uint8_t *p, uint32_t v)
 {
     for (int i = 0; i < 4; i++) {
@@ -6485,8 +6533,10 @@ uint8_t *bb_region_build(uint32_t *len, uint32_t **helpers, uint32_t *nh)
                 uint32_t idx = m->helper_base + r->val;
                 b[r->off] = 0x80 | (idx & 0x7f);
                 b[r->off + 1] = idx >> 7;
+            } else if (r->kind == BB_RPATCH_IND) {
+                continue;           /* enabled from its goto_ptr's patch below */
             } else {
-                uint32_t t = m->target[r->which & 1];
+                uint32_t t = r->which == 2 ? r->target : m->target[r->which & 1];
                 int j = -1;
                 for (int x = 0; t && x < k; x++) {
                     if (bbr.m[x].tb == t) {
@@ -6502,6 +6552,22 @@ uint8_t *bb_region_build(uint32_t *len, uint32_t **helpers, uint32_t *nh)
                 b[r->off2 + 1] = 0;
                 b[r->off3] = 0x80 | (depth & 0x7f);
                 b[r->off3 + 1] = depth >> 7;
+                if (r->which == 2 && r->inl && r->val && r->val <= m->npatch) {
+                    /* the lookup itself: this jump's predicted TB, answered in place */
+                    struct bb_rpatch *q = &bbr.patch[m->patch_base + r->val - 1];
+                    if (q->kind == BB_RPATCH_IND) {
+                        bb_out_sleb10(b + q->off2, (int64_t)r->pc);
+                        bb_out_sleb10(b + q->off3, (int64_t)r->pc);
+                        bb_out_sleb5(b + q->off4, (int32_t)r->ent_off);
+                        bb_out_sleb5(b + q->off5, (int32_t)r->tbs);
+                        bb_out_sleb5(b + q->off6, (int32_t)t);
+                        bb_out_sleb5(b + q->off7, (int32_t)r->tflags);
+                        if (q->off8) {
+                            bb_out_sleb10(b + q->off8, (int64_t)r->tcs);
+                        }
+                        b[q->off] = 1;
+                    }
+                }
             }
         }
     }
