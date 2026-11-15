@@ -118,5 +118,7 @@ enum VMStorage {
         "qemu-android64-arm11-2201066306.data",
         "qemu-android64-arm12-2239371889.data.gz",  // Android v12 → v13 (zram, no KPTI)
         "qemu-android64-arm12-2239371889.data",
+        "qemu-android64-arm13-2301600864.data.gz",  // Android v13 (black home screen) → v14
+        "qemu-android64-arm13-2301600864.data",
     ]
 }

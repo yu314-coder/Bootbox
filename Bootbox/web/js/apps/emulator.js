@@ -74,7 +74,7 @@
       // on the Classic interpreter, which WebKit runs bimodally). macOS WebKit, same engine, Settings / Contacts /
       // Settings again: 8.1 / 6.2 / 5.0 s -> 6.0 / 3.6 / 1.4 s (and 5.3 / 3.0 / 2.0 s in a repeat).
       tune: { max: 45000, lazywasm: 1, tsc: 1 }, fastTci: true,
-      pack: { key: "android", v: 13, api: [1, 1] } },
+      pack: { key: "android", v: 14, api: [1, 1] } },
     // (The ARM64 guest — vendor/qemu-aarch64/, its own engine — is no longer offered: the systems are
     // Linux Desktop, Linux Terminal, Android, and the Windows images through the ISO/disk path.)
   ];
@@ -157,8 +157,11 @@
       // page cache, so apps stay alive and launches stop re-reading ~230 MB of system files (switching back to
       // Settings after other apps 15 -> 2.8 s, cold launches ~2x faster); nokaslr/kpti=0 (the kernel forced
       // page-table isolation on and the emulator flushed its TLB on every syscall: 21 -> 4.5 us).
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v13/qemu-android64-v13.data.gz",
-        name: "qemu-android64-arm13-2301600864.data.gz", mb: 986, size: 1033922513 },
+      // v14 (Nov 16): v13 resumed with an EMPTY BLACK HOME SCREEN - the launcher's window was hidden when the snapshot
+      // was taken (a race at the end of the preparation; nobody looked at the capture's screenshot). Same system,
+      // captured with the home screen checked.
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/android64-v14/qemu-android64-v14.data.gz",
+        name: "qemu-android64-arm14-2305144440.data.gz", mb: 994, size: 1042537937 },
     ] },
   };
   // The boot menu (biosmenu.js) shows whether each system is downloaded and how big it is.

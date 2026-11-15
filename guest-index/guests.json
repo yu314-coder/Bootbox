@@ -106,13 +106,13 @@
   ],
   "android": [
    {
-    "v": 13,
+    "v": 14,
     "api": 1,
-    "url": "https://github.com/yu314-coder/Bootbox/releases/download/android64-v13/qemu-android64-v13.data.gz",
-    "name": "qemu-android64-arm13-2301600864.data.gz",
-    "size": 1033922513,
-    "mb": 986,
-    "rawSize": 2301600864,
+    "url": "https://github.com/yu314-coder/Bootbox/releases/download/android64-v14/qemu-android64-v14.data.gz",
+    "name": "qemu-android64-arm14-2305144440.data.gz",
+    "size": 1042537937,
+    "mb": 994,
+    "rawSize": 2305144440,
     "files": [
      {
       "filename": "/pack/Image",
@@ -137,15 +137,15 @@
      {
       "filename": "/pack/userdata.qcow2",
       "start": 691348429,
-      "end": 917578701
+      "end": 917775309
      },
      {
       "filename": "/pack/vm.state",
-      "start": 917578701,
-      "end": 2301600864
+      "start": 917775309,
+      "end": 2305144440
      }
     ],
-    "notes": "ARM64 Android 12, zram, no KPTI"
+    "notes": "ARM64 Android 12; home screen fixed (v13 resumed black)"
    }
   ]
  }

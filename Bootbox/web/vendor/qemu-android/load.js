@@ -263,6 +263,6 @@ Module['FS_createPath']("/", "pack", true, true);
     }
     // Bootbox guest updates: a newer guest pack (run.js opts.pack, from the hosted version list) brings its own
     // file table - plain data, same shape as the built-in one below.
-    loadPackage((typeof self !== "undefined" && self.BootboxPackIndex) || {"files": [{"filename": "/pack/Image", "start": 0, "end": 38728192}, {"filename": "/pack/efi-virtio.rom", "start": 38728192, "end": 38888960}, {"filename": "/pack/initrd.gz", "start": 38888960, "end": 39547853}, {"filename": "/pack/rootfs.bin", "start": 39547853, "end": 691348429}, {"filename": "/pack/userdata.qcow2", "start": 691348429, "end": 917578701}, {"filename": "/pack/vm.state", "start": 917578701, "end": 2301600864}], "remote_package_size": 2301600864});
+    loadPackage((typeof self !== "undefined" && self.BootboxPackIndex) || {"files": [{"filename": "/pack/Image", "start": 0, "end": 38728192}, {"filename": "/pack/efi-virtio.rom", "start": 38728192, "end": 38888960}, {"filename": "/pack/initrd.gz", "start": 38888960, "end": 39547853}, {"filename": "/pack/rootfs.bin", "start": 39547853, "end": 691348429}, {"filename": "/pack/userdata.qcow2", "start": 691348429, "end": 917775309}, {"filename": "/pack/vm.state", "start": 917775309, "end": 2305144440}], "remote_package_size": 2305144440});
 
   })();
