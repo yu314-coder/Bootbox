@@ -52,7 +52,7 @@ int print_insn_tci(bfd_vma addr, disassemble_info *info)
  */
 EM_JS(int, bb_share_has, (uint32_t tb, uint32_t gen), {
         const s = Module.__bbShare;
-        return s && s.mods.has(tb + gen * 4294967296) ? 1 : 0;
+        return s && s.mods.has((tb >>> 0) + gen * 4294967296) ? 1 : 0;
 });
 
 /* yield to this worker's event loop (receive posted modules): a MessageChannel round trip, not
@@ -71,7 +71,7 @@ EM_ASYNC_JS(void, bb_yield_js, (), {
  * (if share) is set to 1 when this thread compiled the module and posted it */
 EM_JS(int, instantiate_wasm, (uint32_t key_tb, uint32_t gen, int share), {
         const s = share ? Module.__bbShare : null;
-        const key = key_tb + gen * 4294967296;
+        const key = (key_tb >>> 0) + gen * 4294967296;
         let mod = null, helperIdx = null;
         if (s) {
             const e = s.mods.get(key);
@@ -83,7 +83,12 @@ EM_JS(int, instantiate_wasm, (uint32_t key_tb, uint32_t gen, int share), {
         if (!mod) {
         const memory_v = new DataView(HEAP8.buffer);
 
-        const tb_ptr = memory_v.getInt32(Module.__wasm32_tb.tb_ptr_ptr, true);
+        /* Addresses are unsigned: the engine's memory passes 2 GB as soon as the guest's RAM is
+         * allocated, and everything a vCPU thread allocates later (its re-translation scratch, its region
+         * arena) lies above it. Read as int32 such an address is negative: DataView throws a RangeError
+         * (the vCPU thread dies - a guest that hangs while booting) and HEAPU8.slice() returns the wrong
+         * bytes ("region compile refused ... doesn't start with \0asm", seen since build 26). */
+        const tb_ptr = memory_v.getUint32(Module.__wasm32_tb.tb_ptr_ptr, true);
         const export_vec_size = memory_v.getInt32(tb_ptr + 4, true);
         const export_vec_begin = tb_ptr + 4 + 4;
 
@@ -158,6 +163,7 @@ __thread uint64_t bb_last_lookup_pc;
     } while (0)
 
 EM_JS(int, instantiate_region, (uint32_t ptr, uint32_t len, uint32_t hptr, uint32_t hn), {
+        ptr >>>= 0; hptr >>>= 0; len >>>= 0; hn >>>= 0;     /* see instantiate_wasm: addresses above 2 GB */
         const wasmBytes = HEAPU8.slice(ptr, ptr + len);
         const memory_v = new DataView(HEAP8.buffer);
         const helper = {};
@@ -251,6 +257,19 @@ __thread int instance_free_n = 0;
 __thread static int to_remove_instance[TO_REMOVE_INSTANCE_SIZE];
 __thread static int to_remove_instance_idx = 0;
 
+/* /bootbox-tune stats=1: one line every 5 s - compiles, evictions, runs interpreted because the cap was
+ * full, interpreter entries, blocks translated, cache flushes (diagnosis only) */
+int bb_stats;
+uint32_t bb_st_compile, bb_st_evict, bb_st_capruns, bb_st_tci, bb_st_refused, bb_st_disp;
+uint32_t bb_st_tbgen;               /* accel/tcg/translate-all.c */
+uint32_t bb_st_halt;                /* system/cpus.c: idle waits */
+uint32_t bb_st_members;             /* TBs registered as members of another TB's region */
+extern int bb_region_members;       /* tcg/tcg.c: /bootbox-tune regmem */
+int bb_region_count(void);
+uint32_t bb_region_member_tb(int i);
+static double bb_st_last;
+static uint32_t bb_st_prev[8];
+
 static bool can_add_instance()
 {
     return qatomic_read(&instance_alive_global) < wasm_max_instance_alive;
@@ -289,13 +308,30 @@ static void check_instance_garbage_collected()
  * TB that may have been freed by tb_flush (a stale slot just ages out); a TB whose slot was
  * reused sees slot->tb != tb and recompiles, exactly as before.
  */
+/*
+ * Bootbox regmem: one region instance can be registered for several TBs (its members), each with a
+ * slot of its own. The module is freed when its last slot goes; the live cap counts modules.
+ */
+static __thread uint8_t *fidx_refs;
+static __thread int fidx_refs_n;
+static void fidx_refs_set(int fidx, int n)
+{
+    if (fidx >= fidx_refs_n) {
+        int nn = fidx + 8192;
+        fidx_refs = g_realloc(fidx_refs, nn);
+        memset(fidx_refs + fidx_refs_n, 0, nn - fidx_refs_n);
+        fidx_refs_n = nn;
+    }
+    fidx_refs[fidx] = n;
+}
+
 static void remove_instance_running_local()
 {
-    int want = instance_running_local / 8;
+    int want = instance_alive_local / 8;
     if (want < 1) {
-        want = instance_running_local;
+        want = instance_alive_local;
     }
-    int freed = 0;
+    int freed = 0, slots = 0;
     for (int scanned = 0; freed < want && scanned < 2 * instance_slots_hw; scanned++) {
         struct instance_info *e = &instance_running[instance_clock_hand];
         int idx = instance_clock_hand;
@@ -310,19 +346,28 @@ static void remove_instance_running_local()
             continue;
         }
         e->tb = NULL;
-        to_remove_instance[to_remove_instance_idx++] = e->fidx;
         instance_free_slots[instance_free_n++] = idx;
+        slots++;
+        if (e->fidx < fidx_refs_n && fidx_refs[e->fidx] > 1) {
+            fidx_refs[e->fidx]--;       /* a region other members are still registered for */
+            continue;
+        }
+        if (e->fidx < fidx_refs_n) {
+            fidx_refs[e->fidx] = 0;
+        }
+        to_remove_instance[to_remove_instance_idx++] = e->fidx;
         freed++;
     }
     if (to_remove_instance_idx > 0) {
         remove_module_js();
     }
-    instance_running_local -= freed;
+    bb_st_evict += freed;
+    instance_running_local -= slots;
     instance_alive_local -= freed;
     qatomic_sub(&instance_alive_global, freed);
 }
 
-static void add_instance_running_local(int fidx, void *tb_ptr)
+static void add_instance_running_local(int fidx, void *tb_ptr, bool member)
 {
     int idx;
     if (instance_free_n == 0 && instance_slots_hw >= INSTANCE_RUNNING_LEN) {
@@ -340,10 +385,31 @@ static void add_instance_running_local(int fidx, void *tb_ptr)
     int tb_export_ptr = (uint32_t)tb_ptr + export_vec_off;
     *(uint32_t*)tb_export_ptr = (uint32_t)(&(instance_running[idx]));
 
+    if (member) {
+        /* one more TB served by a region instance that is already counted */
+        int tb_counter_ptr = (uint32_t)tb_ptr + counter_vec_off;
+        if (*(int32_t *)tb_counter_ptr >= 0 && *(int32_t *)tb_counter_ptr < wasm_instantiate_num) {
+            *(int32_t *)tb_counter_ptr = wasm_instantiate_num;   /* the interpreter hands it over */
+        }
+        fidx_refs_set(fidx, (fidx < fidx_refs_n ? fidx_refs[fidx] : 0) + 1);
+        instance_running_local++;
+        bb_st_members++;
+        return;
+    }
+    fidx_refs_set(fidx, 1);
     inc_instance_local();
     qatomic_inc(&instance_alive_global);
+    bb_st_compile++;
 }
 
+/* this thread has a live instance registered for the TB */
+static bool instance_live_local(void *tb_ptr)
+{
+    struct instance_info *elm = (struct instance_info *)(*(uint32_t *)((uint32_t)tb_ptr + export_vec_off));
+    return elm && elm->tb == tb_ptr;
+}
+
+int bb_evict_cold = 1;   /* /bootbox-tune evcold=0 */
 static int get_instance_running_local(void *tb_ptr)
 {
     int tb_export_ptr = (uint32_t)tb_ptr + export_vec_off;
@@ -354,7 +420,16 @@ static int get_instance_running_local(void *tb_ptr)
     if (elm->tb != tb_ptr) {
         *(uint32_t*)tb_export_ptr = 0;
         int tb_counter_ptr = (uint32_t)tb_ptr + counter_vec_off;
-        *(uint32_t*)tb_counter_ptr = wasm_instantiate_num; // will be instanciated immediately
+        /*
+         * This block's instance was evicted (the live cap was full and it had not run since the previous
+         * sweep). It used to be re-instantiated on its very next run: its counter was put straight back
+         * at the threshold. With a working set above the cap (Android: 45000 live blocks are full about a
+         * minute after the resume) that made eviction pointless - whatever was thrown out came back the
+         * next time it ran, 400-3500 compiles a second for as long as the guest was used (stats=1, Nov 16),
+         * and at the 15000 default 20000 a second. An evicted block now earns its compile again
+         * (/bootbox-tune evcold=0 = the old behaviour).
+         */
+        *(uint32_t*)tb_counter_ptr = bb_evict_cold ? 0 : wasm_instantiate_num;
         return 0;
     }
     elm->used = 1;
@@ -548,11 +623,11 @@ EM_JS(void, init_wasm32_js, (int tb_ptr_ptr, int cur_core_num, int to_remove_ins
             for (var i = base + add - 1; i >= base; i--) freeTableIndexes.push(i);
         } catch (e) {}
         Module.__wasm32_tb = {
-            tb_ptr_ptr: tb_ptr_ptr,
+            tb_ptr_ptr: tb_ptr_ptr >>> 0,
             cur_core_num: cur_core_num,
-            to_remove_instance_ptr: to_remove_instance_ptr,
-            to_remove_instance_idx_ptr: to_remove_instance_idx_ptr,
-            instance_garbage_collected_ptr: instance_garbage_collected_ptr,
+            to_remove_instance_ptr: to_remove_instance_ptr >>> 0,
+            to_remove_instance_idx_ptr: to_remove_instance_idx_ptr >>> 0,
+            instance_garbage_collected_ptr: instance_garbage_collected_ptr >>> 0,
             inst_gc_registry: new FinalizationRegistry((i) => {
                     if (i == "instance") {
                         const memory_v = new DataView(HEAP8.buffer);
@@ -2250,6 +2325,18 @@ void bootbox_tune_init(void)
                 bb_sse_atom16 = v != 0;
             } else if (!strcmp(key, "gflush") && v >= 0 && v <= 3) {
                 bb_gflush = v;   /* CR3 writes keep global TLB entries (1) and kernel jump-cache entries (2) */
+            } else if (!strcmp(key, "two64")) {
+                extern int bb_two64;   /* tcg/tcg-op-ldst.c */
+                bb_two64 = v != 0;
+            } else if (!strcmp(key, "regfp")) {
+                extern int bb_region_fp;    /* tcg/tcg.c */
+                bb_region_fp = v != 0;
+            } else if (!strcmp(key, "regmem")) {
+                bb_region_members = v != 0;
+            } else if (!strcmp(key, "evcold")) {
+                bb_evict_cold = v != 0;
+            } else if (!strcmp(key, "stats")) {
+                bb_stats = v != 0;
             } else if (!strcmp(key, "tlbstats")) {
                 bb_tlbstats = v != 0;
             }
@@ -2274,6 +2361,24 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
     ctx.do_init = 1;
     while (true) {
         trysleep();
+        if (bb_stats) {
+            bb_st_disp++;
+            if ((exec_cnt & 1023) == 0) {
+                double now = bb_clock_ms();
+                if (now - bb_st_last > 5000) {
+                    uint32_t v[8] = { bb_st_compile, bb_st_evict, bb_st_capruns, bb_st_tci, bb_st_refused,
+                                      bb_st_tbgen, bb_tb_flush_gen(), bb_st_disp }; static uint32_t ph, pm; uint32_t h = bb_st_halt, mm = bb_st_members;
+                    bb_st_last = now;
+                    fprintf(stderr, "[bbstat] live=%d cap=%d | 5s: compiled=%u evicted=%u capruns=%u tci=%u refused=%u tbgen=%u flushes=%u dispatch=%u halts=%u members=%u\n",
+                            qatomic_read(&instance_alive_global), wasm_max_instance_alive, v[0] - bb_st_prev[0],
+                            v[1] - bb_st_prev[1], v[2] - bb_st_prev[2], v[3] - bb_st_prev[3], v[4] - bb_st_prev[4],
+                            v[5] - bb_st_prev[5], v[6] - bb_st_prev[6], v[7] - bb_st_prev[7], h - ph, mm - pm);
+                    ph = h;
+                    pm = mm;
+                    memcpy(bb_st_prev, v, sizeof(v));
+                }
+            }
+        }
         int tb_counter_ptr = (uint32_t)ctx.tb_ptr + counter_vec_off;
         uint32_t res;
         int fidx = get_instance_running_local(ctx.tb_ptr);
@@ -2282,8 +2387,10 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
             res = ((wasm_func_ptr)(fidx))(&ctx);
         } else if (tb_wants_tci(*(int32_t*)tb_counter_ptr, ctx.tb_ptr)) {
             *(int32_t*)tb_counter_ptr += 1;
+            bb_st_tci++;
             res = tci_exec(env);
         } else if (!can_add_instance()) {
+            bb_st_capruns++;
             remove_instance_running_local();
             check_instance_garbage_collected();
             res = tci_exec(env);
@@ -2296,6 +2403,7 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
             uint32_t key = (uint32_t)(uintptr_t)ctx.tb_ptr;
             uint32_t rlen = 0, rnh = 0, *rh = NULL;
             uint8_t *rmod = NULL;
+            bool from_region = false;
             if (wasm_region_k > 0 && wasm_reg_locals && wasm_tail_chain && !bb_share_on) {
                 rmod = bb_region_compile(env_cpu(env), ctx.tb_ptr, wasm_region_k, &rlen, &rh, &rnh);
             }
@@ -2310,7 +2418,7 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
              * for Android that is constant evict/recompile churn.
              */
             if (fidx > 0) {
-                /* the region is in */
+                from_region = true;     /* the region is in */
             } else if (bb_share_on && bb_share_has(key, gen)) {
                 fidx = instantiate_wasm(key, gen, 1);      /* compiled on another vCPU */
             } else if (*(const uint32_t *)(body + *(const uint32_t *)(body - 4)) == 0) {
@@ -2339,7 +2447,19 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
                 *(int32_t*)tb_counter_ptr = 0;
                 res = tci_exec(env);
             } else if (fidx > 0) {
-                add_instance_running_local(fidx, ctx.tb_ptr);
+                add_instance_running_local(fidx, ctx.tb_ptr, false);
+                if (from_region && bb_region_members) {
+                    /* the other members of the region are compiled too: enter them here as well */
+                    for (int i = 1; i < bb_region_count(); i++) {
+                        void *mt = (void *)(uintptr_t)bb_region_member_tb(i);
+                        if (instance_free_n == 0 && instance_slots_hw >= INSTANCE_RUNNING_LEN) {
+                            break;      /* no free slot: taking one would sweep, maybe this very region */
+                        }
+                        if (mt && mt != (void *)ctx.tb_ptr && !instance_live_local(mt)) {
+                            add_instance_running_local(fidx, mt, true);
+                        }
+                    }
+                }
                 ctx.chain_budget = wasm_chain_budget;
                 res = ((wasm_func_ptr)(fidx))(&ctx);
             } else {
@@ -2351,6 +2471,7 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
                  */
                 int alive = qatomic_read(&instance_alive_global);
                 int cap = MAX(MAX_INSTANCE_ALIVE, alive - alive / 8);
+                bb_st_refused++;
                 if (cap < wasm_max_instance_alive) {
                     wasm_max_instance_alive = cap;
                 }

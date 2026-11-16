@@ -416,10 +416,17 @@ void tcg_gen_qemu_st_i64_chk(TCGv_i64 val, TCGTemp *addr, TCGArg idx,
  * does not require 16-byte atomicity, and it would be adventagous
  * to avoid a call to a helper function.
  */
+int bb_two64;   /* /bootbox-tune two64=1 */
 static bool use_two_i64_for_i128(MemOp mop)
 {
-    /* Two softmmu tlb lookups is larger than one function call. */
-    if (tcg_use_softmmu) {
+    /*
+     * Two softmmu tlb lookups is larger than one function call - natively. In the wasm engine the
+     * helper is the slow one: ARM64 LDP/STP (every function entry and exit) went through
+     * helper_ld_i128/helper_st_i128 + mmu_lookup, ~9% of the busy vCPU time while Android opens an
+     * app (Nov 16 profile), and each call spills the block's registers. /bootbox-tune two64=1 emits
+     * two inline 8-byte accesses instead (only where 8-byte atomicity is all the guest asked for).
+     */
+    if (tcg_use_softmmu && !bb_two64) {
         return false;
     }
 

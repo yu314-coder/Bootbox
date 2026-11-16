@@ -6410,6 +6410,7 @@ bool bb_region_has(uint32_t tb)
 
 /* Take the TB that was just generated on this thread (its body is still in sub_buf) as the next
  * member. tb = the live TB's code address, t0/t1 = what its direct jumps are linked to. */
+int bb_region_fp = 1;        /* /bootbox-tune regfp=0 */
 bool bb_region_capture(uint32_t tb, uint32_t t0, uint32_t t1)
 {
     uint8_t hdr[512];
@@ -6418,6 +6419,14 @@ bool bb_region_capture(uint32_t tb, uint32_t t0, uint32_t t1)
                   (wasm_fp_locals ? sizeof(mod_header_d_locals_fp) : sizeof(mod_header_d_locals));
     uint32_t body = sub_buf_ptr - sub_buf;
 
+    /*
+     * regfp=0: a TB with float/SIMD locals stays out of regions (alone, as before regions). CPU-Z's
+     * benchmark loop (SSE code) ran ~30% slower single-threaded inside regions under WebKit, in steady
+     * state (Nov 16: 9.6 vs 13.5 on the second run of a boot), while integer code gains from them.
+     */
+    if (!bb_region_fp && wasm_fp_locals) {
+        return false;
+    }
     if (bbr.n >= BB_REGION_MAX || bb_rpatch_overflow || !wasm_reg_locals || !wasm_tail_chain ||
         hd > sizeof(hdr) || body < 2 || sub_buf_ptr[-1] != 0x0b ||
         bbr.arena_len + (hd - skip) + body > BB_REGION_ARENA) {
@@ -6517,6 +6526,7 @@ static uint8_t *bb_out_uleb5(uint8_t *p, uint32_t v)
 
 /* Assemble the captured members into one module. Returns its bytes (valid until the next
  * region on this thread) or NULL; the helper table indices to import go to *helpers / *nh. */
+int bb_region_members = 1;   /* /bootbox-tune regmem=0: only the head of a region can be entered */
 uint8_t *bb_region_build(uint32_t *len, uint32_t **helpers, uint32_t *nh)
 {
     int k = bbr.n;
@@ -6619,9 +6629,17 @@ uint8_t *bb_region_build(uint32_t *len, uint32_t **helpers, uint32_t *nh)
         p += sizeof(mod_header_d_locals);
     }
     if (k > 1) {
-        /* resuming after an unwind (do_init == 0): the member that unwound is ctx.tb_ptr */
-        *p++ = 0x20; *p++ = 0x00; *p++ = 0x28; *p++ = 0; *p++ = DO_INIT_OFF;
-        *p++ = 0x45; *p++ = 0x04; *p++ = 0x40;
+        /*
+         * resuming after an unwind (do_init == 0): the member that unwound is ctx.tb_ptr.
+         * regmem (the default): the same test on EVERY entry - ctx.tb_ptr always names the TB being
+         * entered (dispatcher and chained calls store it first), so a member can be entered from
+         * outside too and tcg_qemu_tb_exec registers this instance for all of them: the other
+         * members no longer each need a region of their own when they turn hot.
+         */
+        if (!bb_region_members) {
+            *p++ = 0x20; *p++ = 0x00; *p++ = 0x28; *p++ = 0; *p++ = DO_INIT_OFF;
+            *p++ = 0x45; *p++ = 0x04; *p++ = 0x40;
+        }
         for (int i = 1; i < k; i++) {
             *p++ = 0x20; *p++ = 0x00; *p++ = 0x28; *p++ = 0; *p++ = TB_PTR_OFF;
             *p++ = 0x41;
@@ -6631,7 +6649,9 @@ uint8_t *bb_region_build(uint32_t *len, uint32_t **helpers, uint32_t *nh)
             *p++ = 0x21; *p++ = TMP32_LOCAL_ENV_IDX;
             *p++ = 0x0b;
         }
-        *p++ = 0x0b;
+        if (!bb_region_members) {
+            *p++ = 0x0b;
+        }
     }
     *p++ = 0x03; *p++ = 0x40;                       /* loop $R */
     for (int i = 0; i < k; i++) {

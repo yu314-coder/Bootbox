@@ -40,7 +40,9 @@
       w.addEventListener("message", function (e) {
         const d = e.data;
         if (!d || !d.bbgpu) return;
-        if (d.bbgpu === "hello") self.__bbgpuHello = d;
+        // addresses in the engine's memory are unsigned (it is larger than 2 GB): a negative one made every
+        // typed-array view on it throw (no direct display, no direct touch)
+        if (d.bbgpu === "hello") { for (const k of ["addr", "touch", "disp"]) if (typeof d[k] === "number") d[k] = d[k] >>> 0; self.__bbgpuHello = d; }
         const h = self.__bbgpuHost;
         if (h) h.onMessage(d);
         else if (d.bitmap) { try { d.bitmap.close(); } catch (x) {} }

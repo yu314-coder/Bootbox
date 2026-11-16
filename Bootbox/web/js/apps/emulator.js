@@ -1420,7 +1420,7 @@
             if (!window.QEMU_WASM) {
               await new Promise((res, rej) => {
                 const s = document.createElement("script");
-                s.src = "vendor/qemu/run.js?v=12";
+                s.src = "vendor/qemu/run.js?v=13";
                 s.onload = res; s.onerror = () => rej(new Error("missing QEMU-Wasm pack"));
                 document.head.appendChild(s);
               });

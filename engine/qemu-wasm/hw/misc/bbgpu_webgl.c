@@ -22,7 +22,7 @@ EM_JS(int, bbgpu_webgl_create, (void *host, void *touch, void *disp), {
         self.__bbgpuCanvas = c;
         self.__bbgpuSent = 0;
         // hello: the page learns where bbgpu_host lives (the wasm memory is a SharedArrayBuffer)
-        try { postMessage({ bbgpu: 'hello', buffer: HEAPU8.buffer, addr: host, touch: touch, disp: disp }); } catch (e) { console.log('[bbgpu] hello failed: ' + e); }
+        try { postMessage({ bbgpu: 'hello', buffer: HEAPU8.buffer, addr: host >>> 0, touch: touch >>> 0, disp: disp >>> 0 }); } catch (e) { console.log('[bbgpu] hello failed: ' + e); }
         return GL.registerContext(ctx, { majorVersion: 2, minorVersion: 0, enableExtensionsByDefault: 1 });
     } catch (e) { console.log('[bbgpu] WebGL2 context failed: ' + e); return 0; }
 });

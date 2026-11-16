@@ -428,6 +428,10 @@ void qemu_wait_io_event(CPUState *cpu)
             slept = true;
             qemu_plugin_vcpu_idle_cb(cpu);
         }
+        {
+            extern uint32_t bb_st_halt;     /* tcg/wasm32.c: /bootbox-tune stats=1 */
+            bb_st_halt++;
+        }
         qemu_cond_wait(cpu->halt_cond, &qemu_global_mutex);
     }
     if (slept) {

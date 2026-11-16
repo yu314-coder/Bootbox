@@ -54,7 +54,7 @@ function bbgpuHost() {
         },
         onMessage(d) {
             if (d.bbgpu === 'hello') {
-                try { h.flags = new Int32Array(d.buffer, d.addr, 4); } catch (e) { h.flags = null; }
+                try { h.flags = new Int32Array(d.buffer, d.addr >>> 0, 4); } catch (e) { h.flags = null; }
                 h.setAlive();
             } else if (d.bbgpu === 'present') {
                 h.frames++;
