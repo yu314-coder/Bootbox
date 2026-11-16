@@ -779,6 +779,33 @@
       sc.onload = () => res(); sc.onerror = () => rej(new Error("can't load " + src)); document.head.appendChild(sc);
     });
   }
+  // Developer options on, without the seven taps on Settings > About phone > Build number (the row sits at
+  // the very bottom of the list and every tap takes a moment on an emulated CPU - users could not get it
+  // open). One adb command once Android's adbd answers; "Developer options" is then under Settings > System.
+  // The setting is not in the snapshot, so it is applied on every start.
+  function androidDeveloperOptions() {
+    let tries = 0, done = false;
+    const attempt = async () => {
+      if (done || ++tries > 20) return;
+      try { await loadScriptOnce("vendor/qemu/adbshell.js"); } catch (e) { console.log("[dev] " + e); return; }
+      if (!window.BootboxAdb) { setTimeout(attempt, 3000); return; }
+      let out = "", s = null, ended = false, connected = false;
+      const dec = new TextDecoder();
+      // one retry per attempt, whichever way it ends (closed, refused, or no answer at all: a connection
+      // opened while Android is still resuming from its snapshot is never answered)
+      const again = () => { if (ended) return; ended = true; try { s && s.close(); } catch (e) {} if (!done) setTimeout(attempt, 8000); };
+      s = window.BootboxAdb.open(NET_BASE + "/adb", { cols: 200, rows: 24,
+        onStatus: (t) => { if (/^connected/.test(t)) { connected = true; setTimeout(() => { try { s && s.write("settings put global development_settings_enabled 1 && echo bbdev-ok; exit\n"); } catch (e) {} }, 500); } },
+        onData: (u8) => { out += dec.decode(u8); if (!done && /bbdev-ok\r?\n/.test(out.replace(/echo bbdev-ok/g, ""))) { done = true; console.log("[dev] Android developer options enabled (try " + tries + ")"); } },
+        onExit: () => again(),
+      });
+      if (!s) { again(); return; }
+      setTimeout(() => { if (!connected) again(); }, 6000);      // adbd not up yet
+      setTimeout(() => { if (!done) again(); }, 60000);          // connected but the command never finished
+    };
+    setTimeout(attempt, 15000);
+  }
+
   function installAndroidShell(panel) {
     const gui = panel && panel.guiHost;
     if (!gui || gui.__bbShell) return;
@@ -1600,6 +1627,7 @@
                 if (g.gui) {   // full-screen desktop/Android guest
                   try { panel64.showGui(); } catch (e) {}   // the desktop IS the GUI → connect immediately
                   if (g.android) { try { installAndroidShell(panel64); } catch (e) { console.log("[shell] " + e); } }
+                  if (g.android) { try { androidDeveloperOptions(); } catch (e) { console.log("[dev] " + e); } }
                   status.textContent = g.android
                     ? "Running — Android 12 for ARM64 (arm64-v8a) in QEMU, drawn on the GPU. This is a warm-boot image: it resumes to the home screen in a few seconds (no cold boot). Touch the screen directly and use ⌨ Type for text."
                     : "Running — x86_64 Linux desktop. The panel appears ~1–2 min after the first boot. Tap Apps (bottom-left) or right-click/long-press the desktop for apps; the Benchmarks icon runs CPU-Z, 7-Zip, sysbench, GPU and web benchmarks; ⌨ Type or the Magic Keyboard types into the focused window.";

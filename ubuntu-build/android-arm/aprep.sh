@@ -16,6 +16,8 @@ $A shell 'if [ -e /sys/block/zram0 ]; then IFS=: read ma mi < /sys/block/zram0/d
   echo 100 > /proc/sys/vm/swappiness; echo 0 > /proc/sys/vm/page-cluster; fi; grep zram /proc/swaps'
 $A shell "for p in com.android.dynsystem com.android.onetimeinitializer com.android.statementservice com.android.smspush; do \
   pm disable-user --user 0 \$p >/dev/null 2>&1; done"
+# Developer options on in the image (v15+; the app also sets it over adb on every start)
+$A shell "settings put global development_settings_enabled 1"
 $A shell "settings put secure immersive_mode_confirmations confirmed; settings put global stay_on_while_plugged_in 7; \
   settings put system screen_off_timeout 2147483647; locksettings set-disabled true; settings put global hide_error_dialogs 1; \
   settings put global window_animation_scale 0.5; settings put global transition_animation_scale 0.5; \
