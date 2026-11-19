@@ -45,6 +45,8 @@ EM_JS(void, bbgpu_js_remove, (uint32_t win), {
     try { postMessage({ bbgpu: 'remove', win: win >>> 0 }); } catch (e) {}
 });
 
+double bbgpu_now_ms(void) { return emscripten_get_now(); }
+
 int bbgpu_present_ready(void)
 {
     /* at most two frames in flight: the page acknowledges each one it uploads */

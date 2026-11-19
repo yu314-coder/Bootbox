@@ -46,6 +46,7 @@ struct BBRenderer {
     char log[BBGPU_LOG_SIZE];
     uint64_t draws;
     struct { uint32_t win, w, h; int32_t dx, dy; GLuint tex; uint32_t tw, th; } pend;   /* held-back present */
+    double last_present_ms;
     uint32_t ring_size;
     /* several clients share one GL context: the fixed-function state each one set is kept (as the command
        payloads) and replayed when the GPU thread switches to it (bbr_activate) */
@@ -494,8 +495,28 @@ static int res_import(BBRenderer *r, const uint32_t *p)
 }
 
 /* ---- direct present ---- */
+/*
+ * A frame handed to the viewer costs a blit to the canvas, an ImageBitmap and a message to the page - and the
+ * page shows one per screen refresh at most. An app that draws faster than the screen (glmark2: both scenes
+ * read exactly 200 FPS on the iPad, 62 in headless Chrome - the hand-off rate, not the drawing rate) had every
+ * one of its frames handed over. Frames closer together than this are rendered as before but only the newest
+ * is handed over, when the interval has passed (the held-frame path below): what a GPU does without vsync.
+ */
+#define BB_PRESENT_MIN_MS 7.0
+double bbgpu_now_ms(void);
+static int present_due(BBRenderer *r, uint32_t win)
+{
+    if (!bbgpu_present_ready()) return 0;
+    /* Only ordinary app windows are paced. The Android compositor's output (BBGPU_WIN_OPAQUE) is published at
+     * every flush of a frame, several within a few ms, and each one has to reach the viewer: with pacing the
+     * screen stayed black and apps took 15-20 s to open (Nov 19). */
+    if (win & BBGPU_WIN_OPAQUE) return 1;
+    return bbgpu_now_ms() - r->last_present_ms >= BB_PRESENT_MIN_MS;
+}
+
 static void present_now(BBRenderer *r, GLuint tex, uint32_t win, uint32_t sx, uint32_t sy, uint32_t w, uint32_t h, int32_t dx, int32_t dy)
 {
+    r->last_present_ms = bbgpu_now_ms();
     glBindFramebuffer(GL_READ_FRAMEBUFFER, r->read_fbo);
     glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
     int scissor = glIsEnabled(GL_SCISSOR_TEST);
@@ -526,12 +547,12 @@ static int present(BBRenderer *r, const uint32_t *p)
     if (!w || !h || sx + w > o->w || sy + h > o->h || w > 8192 || h > 8192) return BBGPU_ERR_RANGE;
     if (r->pend.win && r->pend.win != win)       /* another window waits: show it first (two at most in flight) */
         bbr_present_retry(r);
-    if (bbgpu_present_ready()) {
+    if (present_due(r, win)) {
         if (r->pend.win == win) r->pend.win = 0;
         present_now(r, o->gl, win, sx, sy, w, h, dx, dy);
         return 0;
     }
-    /* the viewer is behind: keep a copy of this frame (the app will draw its next one into the same
+    /* the viewer is behind (or this frame comes too soon after the last one): keep a copy of this frame (the app will draw its next one into the same
        texture) and offer it again when the viewer has caught up; older held frames are replaced */
     if (!r->pend.tex || r->pend.tw < w || r->pend.th < h) {
         if (r->pend.tex) glDeleteTextures(1, &r->pend.tex);
@@ -559,7 +580,7 @@ int bbr_present_pending(BBRenderer *r) { return r->pend.win != 0; }
 
 void bbr_present_retry(BBRenderer *r)
 {
-    if (!r->pend.win || !bbgpu_present_ready()) return;
+    if (!r->pend.win || !present_due(r, r->pend.win)) return;
     uint32_t win = r->pend.win;
     r->pend.win = 0;
     present_now(r, r->pend.tex, win, 0, 0, r->pend.w, r->pend.h, r->pend.dx, r->pend.dy);

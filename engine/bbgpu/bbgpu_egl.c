@@ -21,6 +21,8 @@ int bbgpu_gl_context_init(void)
 #include <stdint.h>
 #include <stdlib.h>
 #include "bbgpu_render.h"
+#include <time.h>
+double bbgpu_now_ms(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec * 1000.0 + t.tv_nsec / 1e6; }
 int bbgpu_present_ready(void) { return 1; }
 void bbgpu_present_frame(uint32_t win, uint32_t sx, uint32_t sy, uint32_t w, uint32_t h, int32_t dx, int32_t dy)
 {
