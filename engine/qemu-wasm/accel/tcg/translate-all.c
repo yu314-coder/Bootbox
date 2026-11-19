@@ -633,9 +633,12 @@ TranslationBlock *tb_gen_code(CPUState *cpu,
     int64_t ti;
     void *host_pc;
     extern uint32_t bb_st_tbgen;    /* tcg/wasm32.c: /bootbox-tune stats=1 */
+    extern int bb_stats;
 
     assert_memory_lock();
-    bb_st_tbgen++;
+    if (bb_stats) {
+        bb_st_tbgen++;
+    }
     qemu_thread_jit_write();
 
     phys_pc = get_page_addr_code_hostp(env, pc, &host_pc);

@@ -259,6 +259,9 @@ __thread static int to_remove_instance_idx = 0;
 
 /* /bootbox-tune stats=1: one line every 5 s - compiles, evictions, runs interpreted because the cap was
  * full, interpreter entries, blocks translated, cache flushes (diagnosis only) */
+/* The counters below are written by every vCPU thread, so they count only with stats=1: an unconditional
+ * bb_st_tci++ on each interpreted block made the cache line it shares with read-mostly engine globals bounce
+ * between the cores (Android, 4 vCPUs: CoreMark 2450 -> 1350 from one build to the next, by data layout alone). */
 int bb_stats;
 uint32_t bb_st_compile, bb_st_evict, bb_st_capruns, bb_st_tci, bb_st_refused, bb_st_disp;
 uint32_t bb_st_tbgen;               /* accel/tcg/translate-all.c */
@@ -361,7 +364,7 @@ static void remove_instance_running_local()
     if (to_remove_instance_idx > 0) {
         remove_module_js();
     }
-    bb_st_evict += freed;
+    if (bb_stats) bb_st_evict += freed;
     instance_running_local -= slots;
     instance_alive_local -= freed;
     qatomic_sub(&instance_alive_global, freed);
@@ -393,13 +396,13 @@ static void add_instance_running_local(int fidx, void *tb_ptr, bool member)
         }
         fidx_refs_set(fidx, (fidx < fidx_refs_n ? fidx_refs[fidx] : 0) + 1);
         instance_running_local++;
-        bb_st_members++;
+        if (bb_stats) bb_st_members++;
         return;
     }
     fidx_refs_set(fidx, 1);
     inc_instance_local();
     qatomic_inc(&instance_alive_global);
-    bb_st_compile++;
+    if (bb_stats) bb_st_compile++;
 }
 
 /* this thread has a live instance registered for the TB */
@@ -2387,10 +2390,10 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
             res = ((wasm_func_ptr)(fidx))(&ctx);
         } else if (tb_wants_tci(*(int32_t*)tb_counter_ptr, ctx.tb_ptr)) {
             *(int32_t*)tb_counter_ptr += 1;
-            bb_st_tci++;
+            if (bb_stats) bb_st_tci++;
             res = tci_exec(env);
         } else if (!can_add_instance()) {
-            bb_st_capruns++;
+            if (bb_stats) bb_st_capruns++;
             remove_instance_running_local();
             check_instance_garbage_collected();
             res = tci_exec(env);
@@ -2471,7 +2474,7 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
                  */
                 int alive = qatomic_read(&instance_alive_global);
                 int cap = MAX(MAX_INSTANCE_ALIVE, alive - alive / 8);
-                bb_st_refused++;
+                if (bb_stats) bb_st_refused++;
                 if (cap < wasm_max_instance_alive) {
                     wasm_max_instance_alive = cap;
                 }

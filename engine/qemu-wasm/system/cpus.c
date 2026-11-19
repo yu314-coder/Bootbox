@@ -430,7 +430,10 @@ void qemu_wait_io_event(CPUState *cpu)
         }
         {
             extern uint32_t bb_st_halt;     /* tcg/wasm32.c: /bootbox-tune stats=1 */
-            bb_st_halt++;
+            extern int bb_stats;
+            if (bb_stats) {
+                bb_st_halt++;
+            }
         }
         qemu_cond_wait(cpu->halt_cond, &qemu_global_mutex);
     }
