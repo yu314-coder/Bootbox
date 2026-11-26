@@ -1,6 +1,16 @@
 [
  {
   "guest": "linux-desktop",
+  "v": 22,
+  "api": 1,
+  "url": "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v22/qemu-desktop22-rootfs.data.gz",
+  "name": "qemu-desktop22-rootfs-1216733120.data.gz",
+  "size": 416760204,
+  "loadjs": "Bootbox/web/vendor/qemu-desktop/load.js",
+  "notes": "CPU-Z benchmark no longer stops at \"Mutex failed\" when CPU-Z is already open"
+ },
+ {
+  "guest": "linux-desktop",
   "v": 21,
   "api": 1,
   "url": "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v21/qemu-desktop21-rootfs.data.gz",

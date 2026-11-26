@@ -124,8 +124,8 @@
       // terminal waits for its real width before the first prompt.
       // v21 (build 24): direct display - Xorg on a virtio GPU, the screen read straight from the engine's
       // memory and the pointer/keys on a virtio tablet + keyboard (no VNC server in the guest); 24-bit colour.
-      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v21/qemu-desktop21-rootfs.data.gz",
-        name: "qemu-desktop21-rootfs-1216733120.data.gz", mb: 397, size: 416759099 },
+      { url: "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v22/qemu-desktop22-rootfs.data.gz",
+        name: "qemu-desktop22-rootfs-1216733120.data.gz", mb: 397, size: 416760204 },
     ] },
     // Android is a full AOSP x86_64 userspace on Bootbox's QEMU guest kernel.
     // The rootfs is download-on-demand; the x86_64 engine is shared with Linux.

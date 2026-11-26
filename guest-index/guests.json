@@ -3,6 +3,53 @@
  "guests": {
   "linux-desktop": [
    {
+    "v": 22,
+    "api": 1,
+    "url": "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v22/qemu-desktop22-rootfs.data.gz",
+    "name": "qemu-desktop22-rootfs-1216733120.data.gz",
+    "size": 416760204,
+    "mb": 397,
+    "rawSize": 1216733120,
+    "files": [
+     {
+      "filename": "/pack/bios-256k.bin",
+      "start": 0,
+      "end": 262144
+     },
+     {
+      "filename": "/pack/bzImage",
+      "start": 262144,
+      "end": 4087744
+     },
+     {
+      "filename": "/pack/efi-virtio.rom",
+      "start": 4087744,
+      "end": 4248512
+     },
+     {
+      "filename": "/pack/kvmvapic.bin",
+      "start": 4248512,
+      "end": 4257728
+     },
+     {
+      "filename": "/pack/linuxboot_dma.bin",
+      "start": 4257728,
+      "end": 4259264
+     },
+     {
+      "filename": "/pack/rootfs.bin",
+      "start": 4259264,
+      "end": 1216693696
+     },
+     {
+      "filename": "/pack/vgabios-stdvga.bin",
+      "start": 1216693696,
+      "end": 1216733120
+     }
+    ],
+    "notes": "CPU-Z benchmark no longer stops at \"Mutex failed\" when CPU-Z is already open"
+   },
+   {
     "v": 21,
     "api": 1,
     "url": "https://github.com/yu314-coder/Bootbox/releases/download/linux-desktop-v21/qemu-desktop21-rootfs.data.gz",

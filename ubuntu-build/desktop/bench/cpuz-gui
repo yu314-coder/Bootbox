@@ -1,11 +1,11 @@
 #!/bin/sh
 # cpuz-gui - CPU-Z's window under Wine (Apps menu > CPU-Z (window)).
-# CPU-Z installs its own kernel driver for hardware access; Wine can't host it (ZwLoadDriver ...
-# cpuz160: c0000142), so CPU-Z stops at "The error code 0x45A (1114) occured during initialization.
-# Do you want to display the error log file?" and only continues once someone answers. Answer No
-# for the user: CPU-Z then runs normally on what it can read without the driver (CPUID, caches,
-# clocks, benchmark). xdotool --sync waits inside one process (no polling spawns on the slow CPU).
-. /usr/local/lib/bb-hold.sh 2>/dev/null   # v17: background work waits while this runs
+# CPU-Z's kernel driver cannot load under Wine, so CPU-Z stops at "The error code 0x45A (1114) occured
+# during initialization. Do you want to display the error log file?". Answer No for the user: CPU-Z
+# then runs normally without the driver. xdotool --sync waits in one process (no polling spawns).
+. /usr/local/lib/bb-hold.sh 2>/dev/null
+# One CPU-Z at a time ("Mutex failed" otherwise): close the open one first.
+if pgrep -f cpuz_x64 >/dev/null 2>&1; then pkill -f cpuz_x64; timeout 20 wineserver -k 2>/dev/null; sleep 2; fi
 mkdir -p /root/cpuz && cp -n /opt/cpuz/* /root/cpuz/ 2>/dev/null; cd /root/cpuz || exit 1
 export LIBGL_ALWAYS_SOFTWARE=1 WINEESYNC=1 WINEDEBUG=-all WINEDLLOVERRIDES="winemenubuilder.exe=d"
 (
@@ -21,3 +21,4 @@ export LIBGL_ALWAYS_SOFTWARE=1 WINEESYNC=1 WINEDEBUG=-all WINEDLLOVERRIDES="wine
   fi
 ) &
 wine cpuz_x64.exe "$@"   # not exec: bb-hold releases when the window closes
+#                                             
