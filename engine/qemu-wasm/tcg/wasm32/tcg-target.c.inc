@@ -4267,6 +4267,7 @@ static void tcg_tci_out_call(TCGContext *s, const tcg_insn_unit *func,
                          cif->rtype->size == 16);
         which = ctz32(cif->rtype->size) - 1;
     }
+    bb_cold_name((void *)func, info->name);   /* stats=2: names for the cold-op histogram */
     new_pool_l2(s, 20, (void*)cur_tci_ptr(s), 0, (uintptr_t)func, (uintptr_t)cif);
     insn = deposit32(insn, 0, 8, INDEX_op_call);
     insn = deposit32(insn, 8, 4, which);

@@ -69,6 +69,7 @@ extern int wasm_instantiate_num;
 
 /* Reads /bootbox-tune once (jit=, max=, fpinline=); safe to call from any thread, any time. */
 void bootbox_tune_init(void);
+void bb_cold_name(void *f, const char *name);
 
 /*
  * Target float helpers the wasm backend may emit as native wasm float/SIMD ops instead of a

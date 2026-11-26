@@ -1948,6 +1948,26 @@ static __attribute__((noinline)) int tci_hot_call(uint32_t insn, const uint32_t 
         return 1;
     }
     unsigned n = cif->nargs;
+    /* 128-bit guest loads / stores (helper_ld_i128 / helper_st_i128): every ARM64 stp / ldp, so every
+     * function entry and exit. Same direct calls as the full interpreter; the arguments are in the
+     * five register slots (env, addr, oi | env, addr, val lo, val hi, oi). */
+    if (len == 3 && n == 3 && cif->arg_types[0]->size <= 4 &&
+        cif->arg_types[1]->size == 8 && cif->arg_types[2]->size <= 4) {
+        tci_tb_ptr = (uintptr_t)tb_ptr;
+        Int128 r = ((Int128 (*)(uint32_t, uint64_t, uint32_t))func)(
+            (uint32_t)regs[8], regs[9], (uint32_t)regs[10]);
+        memcpy(&regs[TCG_REG_R0], &r, 16);
+        return 1;
+    }
+    if (len == 0 && n == 4 && cif->arg_types[0]->size <= 4 && cif->arg_types[1]->size == 8 &&
+        cif->arg_types[2]->size == 16 && cif->arg_types[3]->size <= 4) {
+        Int128 v;
+        memcpy(&v, &regs[10], 16);
+        tci_tb_ptr = (uintptr_t)tb_ptr;
+        ((void (*)(uint32_t, uint64_t, Int128, uint32_t))func)(
+            (uint32_t)regs[8], regs[9], v, (uint32_t)regs[12]);
+        return 1;
+    }
     if (n > 6 || len > 2) {
         return 0;
     }
@@ -2139,6 +2159,120 @@ __attribute__((noinline)) uintptr_t tci_hot_loop(CPUArchState *env, uint32_t *st
             tci_args_br(insn, tb_ptr, &ptr);
             tb_ptr = ptr;
             break;
+        /* The ops below are what ARM64 guests (Android) add to the hot set: without them ~every other
+         * interpreted TB left for the full interpreter (cold launches: 1M hand-offs a second). */
+        case INDEX_op_neg_i32:
+        case INDEX_op_neg_i64:
+            tci_args_rr(insn, &r0, &r1);
+            R[r0] = -R[r1];
+            break;
+        case INDEX_op_not_i32:
+        case INDEX_op_not_i64:
+            tci_args_rr(insn, &r0, &r1);
+            R[r0] = ~R[r1];
+            break;
+        case INDEX_op_extract_i64:
+            tci_args_rrbb(insn, &r0, &r1, &pos, &len);
+            R[r0] = extract64(R[r1], pos, len);
+            break;
+        case INDEX_op_sextract_i64:
+            tci_args_rrbb(insn, &r0, &r1, &pos, &len);
+            R[r0] = sextract64(R[r1], pos, len);
+            break;
+        case INDEX_op_extract_i32:
+            tci_args_rrbb(insn, &r0, &r1, &pos, &len);
+            R[r0] = extract32(R[r1], pos, len);
+            break;
+        case INDEX_op_sextract_i32:
+            tci_args_rrbb(insn, &r0, &r1, &pos, &len);
+            R[r0] = sextract32(R[r1], pos, len);
+            break;
+        case INDEX_op_mul_i32:
+        case INDEX_op_mul_i64:
+            tci_args_rrr(insn, &r0, &r1, &r2);
+            R[r0] = R[r1] * R[r2];
+            break;
+        case INDEX_op_andc_i32:
+        case INDEX_op_andc_i64:
+            tci_args_rrr(insn, &r0, &r1, &r2);
+            R[r0] = R[r1] & ~R[r2];
+            break;
+        case INDEX_op_orc_i32:
+        case INDEX_op_orc_i64:
+            tci_args_rrr(insn, &r0, &r1, &r2);
+            R[r0] = R[r1] | ~R[r2];
+            break;
+        case INDEX_op_shl_i32:
+            tci_args_rrr(insn, &r0, &r1, &r2);
+            R[r0] = (uint32_t)R[r1] << (R[r2] & 31);
+            break;
+        case INDEX_op_shr_i32:
+            tci_args_rrr(insn, &r0, &r1, &r2);
+            R[r0] = (uint32_t)R[r1] >> (R[r2] & 31);
+            break;
+        case INDEX_op_sar_i32:
+            tci_args_rrr(insn, &r0, &r1, &r2);
+            R[r0] = (int32_t)R[r1] >> (R[r2] & 31);
+            break;
+        case INDEX_op_rotl_i64:
+            tci_args_rrr(insn, &r0, &r1, &r2);
+            R[r0] = rol64(R[r1], R[r2] & 63);
+            break;
+        case INDEX_op_rotr_i64:
+            tci_args_rrr(insn, &r0, &r1, &r2);
+            R[r0] = ror64(R[r1], R[r2] & 63);
+            break;
+        case INDEX_op_rotr_i32:
+            tci_args_rrr(insn, &r0, &r1, &r2);
+            R[r0] = ror32(R[r1], R[r2] & 31);
+            break;
+        case INDEX_op_clz_i32:
+            tci_args_rrr(insn, &r0, &r1, &r2);
+            R[r0] = (uint32_t)R[r1] ? clz32(R[r1]) : R[r2];
+            break;
+        case INDEX_op_clz_i64:
+            tci_args_rrr(insn, &r0, &r1, &r2);
+            R[r0] = R[r1] ? clz64(R[r1]) : R[r2];
+            break;
+        case INDEX_op_ext8s_i32:
+        case INDEX_op_ext8s_i64:
+            tci_args_rr(insn, &r0, &r1);
+            R[r0] = (int8_t)R[r1];
+            break;
+        case INDEX_op_ext16s_i32:
+        case INDEX_op_ext16s_i64:
+            tci_args_rr(insn, &r0, &r1);
+            R[r0] = (int16_t)R[r1];
+            break;
+        case INDEX_op_ext16u_i32:
+        case INDEX_op_ext16u_i64:
+            tci_args_rr(insn, &r0, &r1);
+            R[r0] = (uint16_t)R[r1];
+            break;
+        case INDEX_op_bswap64_i64:
+            tci_args_rr(insn, &r0, &r1);
+            R[r0] = bswap64(R[r1]);
+            break;
+        case INDEX_op_add2_i64: {
+            TCGReg r5;
+            uint64_t lo, hi;
+            tci_args_rrrrrr(insn, &r0, &r1, &r2, &r3, &r4, &r5);
+            lo = R[r2] + R[r4];
+            hi = R[r3] + R[r5] + (lo < R[r2]);
+            R[r0] = lo;
+            R[r1] = hi;
+            break;
+        }
+        case INDEX_op_sub2_i64: {
+            TCGReg r5;
+            uint64_t lo, hi;
+            tci_args_rrrrrr(insn, &r0, &r1, &r2, &r3, &r4, &r5);
+            lo = R[r2] - R[r4];
+            hi = R[r3] - R[r5] - (R[r2] < R[r4]);
+            R[r0] = lo;
+            R[r1] = hi;
+            break;
+        }
         case INDEX_op_mb:
             smp_mb();
             break;
@@ -2219,6 +2353,82 @@ extern int bb_split_enabled;  /* /bootbox-tune split=0 (translate-all.c) */
 uint8_t *bb_tb_regen_wasm(CPUState *cpu, const void *tc_ptr);
 __thread int bb_fast_tci_depth, bb_force_slow_tci;
 
+/* stats=2: which ops / helper calls send a TB from the hot loop to the full interpreter */
+#define BB_COLD_N 256
+static struct { void *f; const char *name; uint32_t n; } bb_cold_fn[BB_COLD_N];
+static uint32_t bb_cold_op[256], bb_cold_total;
+void bb_cold_name(void *f, const char *name)
+{
+    bootbox_tune_init();
+    if (bb_stats < 2) {
+        return;
+    }
+    unsigned i = ((uintptr_t)f * 2654435761u) >> 24;
+    for (unsigned k = 0; k < BB_COLD_N; k++, i = (i + 1) & (BB_COLD_N - 1)) {
+        if (bb_cold_fn[i].f == f) {
+            return;
+        }
+        if (!bb_cold_fn[i].f) {
+            bb_cold_fn[i].name = name;
+            bb_cold_fn[i].f = f;
+            return;
+        }
+    }
+}
+static __attribute__((noinline)) void bb_cold_note(const uint32_t *p)
+{
+    uint32_t insn = *p, opc = insn & 0xff;
+    bb_cold_op[opc]++;
+    if (opc == INDEX_op_call) {
+        uint8_t len;
+        void *ptr;
+        tci_args_nl(insn, p + 1, &len, &ptr);
+        void *f = (void *)((uint64_t *)ptr)[0];
+        unsigned i = ((uintptr_t)f * 2654435761u) >> 24;
+        for (unsigned k = 0; k < BB_COLD_N; k++, i = (i + 1) & (BB_COLD_N - 1)) {
+            if (bb_cold_fn[i].f == f) {
+                bb_cold_fn[i].n++;
+                break;
+            }
+            if (!bb_cold_fn[i].f) {
+                break;
+            }
+        }
+    }
+    if ((++bb_cold_total & 0x3ffff) == 0) {
+        char buf[1500];
+        int o = snprintf(buf, sizeof(buf), "[bbcold] total=%u ops:", bb_cold_total);
+        for (int r = 0; r < 14; r++) {
+            int b = -1;
+            for (int j = 0; j < 256; j++) {
+                if (bb_cold_op[j] && (b < 0 || bb_cold_op[j] > bb_cold_op[b])) {
+                    b = j;
+                }
+            }
+            if (b < 0) {
+                break;
+            }
+            o += snprintf(buf + o, sizeof(buf) - o, " %s=%u", tcg_op_defs[b].name, bb_cold_op[b]);
+            bb_cold_op[b] = 0;
+        }
+        o += snprintf(buf + o, sizeof(buf) - o, " | calls:");
+        for (int r = 0; r < 14; r++) {
+            int b = -1;
+            for (int j = 0; j < BB_COLD_N; j++) {
+                if (bb_cold_fn[j].n && (b < 0 || bb_cold_fn[j].n > bb_cold_fn[b].n)) {
+                    b = j;
+                }
+            }
+            if (b < 0) {
+                break;
+            }
+            o += snprintf(buf + o, sizeof(buf) - o, " %s=%u", bb_cold_fn[b].name, bb_cold_fn[b].n);
+            bb_cold_fn[b].n = 0;
+        }
+        fprintf(stderr, "%s\n", buf);
+    }
+}
+
 static inline uintptr_t tci_exec(CPUArchState *env)
 {
     if (!wasm_fast_tci || bb_force_slow_tci) {
@@ -2235,6 +2445,9 @@ static inline uintptr_t tci_exec(CPUArchState *env)
         }
         p = bb_cold_ptr;
         bb_cold_ptr = NULL;
+        if (unlikely(bb_stats >= 2)) {
+            bb_cold_note(p);
+        }
         r = tcg_qemu_tb_exec_tci_full(env, p, 1);
         if (!bb_resume_ptr) {
             return r;
@@ -2339,7 +2552,7 @@ void bootbox_tune_init(void)
             } else if (!strcmp(key, "evcold")) {
                 bb_evict_cold = v != 0;
             } else if (!strcmp(key, "stats")) {
-                bb_stats = v != 0;
+                bb_stats = v;   /* 2 = also the cold-op histogram */
             } else if (!strcmp(key, "tlbstats")) {
                 bb_tlbstats = v != 0;
             }

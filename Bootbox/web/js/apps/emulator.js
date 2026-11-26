@@ -783,6 +783,9 @@
   // the very bottom of the list and every tap takes a moment on an emulated CPU - users could not get it
   // open). One adb command once Android's adbd answers; "Developer options" is then under Settings > System.
   // The setting is not in the snapshot, so it is applied on every start.
+  // The same command gives Android its internet: the guest kernel has no policy routing, so Android never
+  // installs a default route (every host was "unreachable"), and the clock still shows the snapshot's
+  // capture time, which makes every HTTPS certificate look invalid. Route + today's time fix both.
   function androidDeveloperOptions() {
     let tries = 0, done = false;
     const attempt = async () => {
@@ -795,7 +798,7 @@
       // opened while Android is still resuming from its snapshot is never answered)
       const again = () => { if (ended) return; ended = true; try { s && s.close(); } catch (e) {} if (!done) setTimeout(attempt, 8000); };
       s = window.BootboxAdb.open(NET_BASE + "/adb", { cols: 200, rows: 24,
-        onStatus: (t) => { if (/^connected/.test(t)) { connected = true; setTimeout(() => { try { s && s.write("settings put global development_settings_enabled 1 && echo bbdev-ok; exit\n"); } catch (e) {} }, 500); } },
+        onStatus: (t) => { if (/^connected/.test(t)) { connected = true; setTimeout(() => { try { s && s.write("ip route add default via 192.168.127.1 dev eth0 2>/dev/null; date @" + Math.floor(Date.now() / 1000) + " >/dev/null; settings put global development_settings_enabled 1 && echo bbdev-ok; exit\n"); } catch (e) {} }, 500); } },
         onData: (u8) => { out += dec.decode(u8); if (!done && /bbdev-ok\r?\n/.test(out.replace(/echo bbdev-ok/g, ""))) { done = true; console.log("[dev] Android developer options enabled (try " + tries + ")"); } },
         onExit: () => again(),
       });
