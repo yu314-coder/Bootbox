@@ -67,6 +67,33 @@ EM_ASYNC_JS(void, bb_yield_js, (), {
         if (s) { s.yields++; s.yieldMs += performance.now() - t0; }
 });
 
+/*
+ * Bootbox, gcmem=N: every N compiled modules this vCPU worker creates a throw-away 64 KB
+ * WebAssembly.Memory. Under WebKit that is the one thing found that makes a busy worker run a FULL
+ * collection: evicted instances are garbage, but a worker that never returns to its event loop and
+ * allocates little JS memory only ever gets young collections, which do not free a module that has
+ * lived through one - its compiled code then stays in WebKit's fixed pool of executable memory, and
+ * once that pool is nearly full WebKit stops tiering code up (CPU-Z in the Linux desktop: 13 -> 1).
+ * Measured with a stand-alone page (5000 live modules, 100 created per second): pool 341 MB and full
+ * without it, 78 MB flat with it. Plain garbage, ArrayBuffers that die or survive, and trips round
+ * the event loop do not do it. What it cannot fix: WebKit keeps ~5 KB of pool for every module that
+ * reached its optimizing tier, for good - share=1 (one module for all vCPUs) is what stretches that.
+ */
+int bb_gc_mem_every;
+EM_JS(void, bb_gc_mem_js, (), {
+        try {
+            new WebAssembly.Memory({ initial: 1, maximum: 16, shared: true });
+        } catch (e) {}
+});
+static __thread int bb_gc_mem_n;
+static inline void bb_gc_mem_tick(void)
+{
+    if (bb_gc_mem_every && ++bb_gc_mem_n >= bb_gc_mem_every) {
+        bb_gc_mem_n = 0;
+        bb_gc_mem_js();
+    }
+}
+
 /* returns the table index of the new instance's entry, 0 if the host refused the compile; *posted
  * (if share) is set to 1 when this thread compiled the module and posted it */
 EM_JS(int, instantiate_wasm, (uint32_t key_tb, uint32_t gen, int share), {
@@ -77,7 +104,7 @@ EM_JS(int, instantiate_wasm, (uint32_t key_tb, uint32_t gen, int share), {
             const e = s.mods.get(key);
             if (e) {
                 s.mods.delete(key); mod = e.m; helperIdx = e.h;
-                if (++s.used % 500 == 0) err("[bbshare] core " + Module.__wasm32_tb.cur_core_num + ": used " + s.used + " received " + s.recv + " posted " + s.posted + " yields " + s.yields + " yieldms " + Math.round(s.yieldMs));
+                s.used++;
             }
         }
         if (!mod) {
@@ -2551,6 +2578,8 @@ void bootbox_tune_init(void)
                 bb_region_members = v != 0;
             } else if (!strcmp(key, "evcold")) {
                 bb_evict_cold = v != 0;
+            } else if (!strcmp(key, "gcmem") && v >= 0 && v <= 1000000) {
+                bb_gc_mem_every = v;
             } else if (!strcmp(key, "stats")) {
                 bb_stats = v;   /* 2 = also the cold-op histogram */
             } else if (!strcmp(key, "tlbstats")) {
@@ -2663,6 +2692,7 @@ uintptr_t QEMU_DISABLE_CFI tcg_qemu_tb_exec(CPUArchState *env,
                 *(int32_t*)tb_counter_ptr = 0;
                 res = tci_exec(env);
             } else if (fidx > 0) {
+                bb_gc_mem_tick();
                 add_instance_running_local(fidx, ctx.tb_ptr, false);
                 if (from_region && bb_region_members) {
                     /* the other members of the region are compiled too: enter them here as well */

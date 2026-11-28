@@ -400,6 +400,13 @@
       // JavaScript exception. Both default ON in the engine; the safety ladder turns them off.
       if (t.indreg !== undefined) tune += "indreg=" + (t.indreg | 0) + "\n";
       if (t.softsvc !== undefined) tune += "softsvc=" + (t.softsvc | 0) + "\n";
+      // Build 35 engine. share=1: one compiled module per block for all vCPUs (WebKit keeps ~5 KB of its
+      // fixed pool of executable memory for every module that ever reached its optimizing tier, and
+      // without sharing each vCPU compiles its own copy); the engine turns regions off with it.
+      // gcmem=N: every N compiled modules a vCPU worker makes WebKit run a full collection, which is
+      // what frees evicted modules' code. Older engines ignore both.
+      if (t.share) tune += "share=1\n";
+      if (t.gcmem) tune += "gcmem=" + (t.gcmem | 0) + "\n";
       if (t.extra) tune += String(t.extra).replace(/[^a-z0-9=\n]/g, "") + "\n";   // harness experiments: raw key=value lines
       if (tune) mod.FS.writeFile("/bootbox-tune", tune);
     });

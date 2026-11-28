@@ -36,7 +36,12 @@
     // the working set (Mac-measured: no recompiles, growth ~5 MB/s); the engine still evicts the
     // least-recently-run blocks past it, and lowers the cap itself if the host refuses a compile.
     { id: "x64pw",     name: "Linux (Terminal)",  boot: "q64",
-      base: "vendor/qemu-aload/", url: "", ram: 1536, tune: { max: 40000, tsc: 1, lazywasm: 1 }, fastTci: true,
+      // share + gcmem (build 35): WebKit's pool of executable memory filled up after a few minutes of
+      // heavy use and everything new then ran in WebKit's own wasm interpreter - CPU-Z in the desktop,
+      // run six times in one boot (Mac WebKit, 4 vCPUs): 11.4/30 then 1.1/2.8 five times before,
+      // 10.7/24, 11.5/33, 12.3/36, 13.6/36, 13.9/37, 13.7/37 with these. The price: no regions
+      // (CoreMark 3000 -> 2080). Full speed only - a step down the safety ladder drops share.
+      base: "vendor/qemu-aload/", url: "", ram: 1536, tune: { max: 40000, tsc: 1, lazywasm: 1, share: 1, gcmem: 300 }, fastTci: true,
       pack: { key: "linux-terminal", v: 5, api: [1, 1] },   // guest updates: see PACK_INDEX_URL below
       cpuModelId: "Bootbox x86-64 (emulated in WebAssembly)" },   // CPU-Z "Specification" (run.js)
     // Lightweight graphical desktop: its OWN image. openbox/tint2 + a bash terminal, PCManFM, the bbweb
@@ -47,7 +52,7 @@
       // used to keep its own copy of out.js beside a wasm path into qemu-aload, and that copy went stale when the
       // engine was rebuilt (builds 22-27: "import function a:tc must be callable" - the desktop never started).
       base: "vendor/qemu-desktop/", engineBase: "vendor/qemu-aload/", url: "", ram: 1536, gui: true,
-      tune: { max: 40000, tsc: 1, lazywasm: 1 }, fastTci: true, cpuModelId: "Bootbox x86-64 (emulated in WebAssembly)",
+      tune: { max: 40000, tsc: 1, lazywasm: 1, share: 1, gcmem: 300 }, fastTci: true, cpuModelId: "Bootbox x86-64 (emulated in WebAssembly)",
       gpu: true, directDisplay: true,   // same reason as x64pw
       pack: { key: "linux-desktop", v: 21, api: [1, 1] } },
     // directDisplay (desktop v21 + build 24 engine): the guest's Xorg draws on a virtio GPU and the viewer reads
@@ -1584,6 +1589,7 @@
             const userJit = biosJit();   // UEFI Setup's compile threshold (the safety ladder's own settings still win)
             const tune = Object.assign({}, g.tune || {}, iosBase, userJit ? { jit: userJit } : {}, level.tune || {});
             if (g.tune && g.tune.max && level.tune && level.tune.max) tune.max = Math.min(g.tune.max, level.tune.max);
+            if (safe.level) delete tune.share;
             if (g.gui) { try { panel64.showGui(); } catch (e) {} }   // the start-up card shows on the (still empty) screen
             await window.QEMU_WASM.run({
               screen_container: panel64.termHost,
